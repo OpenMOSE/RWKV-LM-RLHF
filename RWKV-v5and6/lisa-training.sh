@@ -1,0 +1,17 @@
+python train.py --load_model "RWKV-5-World-0.4B-v2-20231113-ctx4096.pth"\
+ --wandb "RWKV5-LM-LISA 04b" --proj_dir "04b-output2"\
+ --data_file "output"\
+ --data_type "binidx" --vocab_size 65536 --ctx_len 4096 \
+ --epoch_steps 200 --epoch_count 1000 --epoch_begin 0 --epoch_save 1 \
+ --micro_bsz 1 --n_layer 24 --n_embd 1024\
+ --lr_init 1e-4 --lr_final 1e-6 \
+ --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
+ --accelerator gpu --devices 2 --precision bf16 \
+ --grad_cp 1 --my_testing "r2r3r4" \
+ --strategy deepspeed_stage_2_offload \
+ --lisa 1 \
+ --lisa_active_layer 2 \
+ --lisa_interval_steps 10 \
+ --lisa_debug 1 \
+ --lisa_rand_seed 0 \
+ --gpu_arch rocm
