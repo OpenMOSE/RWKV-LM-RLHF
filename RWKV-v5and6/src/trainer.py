@@ -41,6 +41,7 @@ class train_callback(pl.Callback):
                 for name, param in pl_module.named_parameters():
                     if 'blocks' in name:
                         param.requires_grad = False
+                        param.grad = None
                         #print(f"Freezed: {name}")  # 凍結したパラメータの名前を表示
                 self.active_layers_indices = np.random.choice(range(args.n_layer), args.lisa_active_layer, replace=False)
                 for idx in self.active_layers_indices:
