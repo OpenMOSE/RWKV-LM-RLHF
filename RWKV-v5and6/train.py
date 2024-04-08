@@ -81,6 +81,12 @@ if __name__ == "__main__":
 
     parser.add_argument("--gpu_arch",default="rocm",type=str)# if cuda set cuda
 
+    parser.add_argument("--lisa_plus_enabled",default=0,type=int)# Enable LISA+ Training
+    parser.add_argument("--lisa_plus_att_train_params",default='att.receptance.weight,att.key.weight,att.value.weight,att.gate.weight,att.output.weight',type=str)
+    parser.add_argument("--lisa_plus_att_active_weight",default=3,type=int)
+    parser.add_argument("--lisa_plus_ffn_train_params",default='ffn.receptance.weight,ffn.key.weight,ffn.value.weight',type=str)
+    parser.add_argument("--lisa_plus_ffn_active_weight",default=2,type=int)
+
 
     
 

@@ -37,12 +37,27 @@ class train_callback(pl.Callback):
         np.random.seed(trainer.global_step + args.lisa_rand_seed)
         
         if args.lisa:
+
+            if args.lisa_plus_enabled == 1:
+                self.att_elements = args.lisa_plus_att_train_params.split(',')
+                self.att_number_of_elements = len(self.att_elements)
+                self.ffn_elements = args.lisa_plus_ffn_train_params.split(',')
+                self.ffn_number_of_elements = len(self.ffn_elements)
+                #print(self.att_elements)
+
+
             if batch_idx % args.lisa_interval_steps == 0:  # 例として、10バッチごとに凍結
                 for name, param in pl_module.named_parameters():
                     if 'blocks' in name:
                         param.requires_grad = False
                         param.grad = None
                         #print(f"Freezed: {name}")  # 凍結したパラメータの名前を表示
+                if args.lisa_plus_enabled == 1:
+                    self.att_disable_elements_indices = np.random.choice(range(self.att_number_of_elements),
+                                                                 self.att_number_of_elements-args.lisa_plus_att_active_weight, replace=False)
+                    self.ffn_disable_elements_indices = np.random.choice(range(self.ffn_number_of_elements),
+                                                                 self.ffn_number_of_elements-args.lisa_plus_ffn_active_weight, replace=False)
+                
                 self.active_layers_indices = np.random.choice(range(args.n_layer), args.lisa_active_layer, replace=False)
                 for idx in self.active_layers_indices:
                         if args.lisa_debug == 1:
@@ -50,6 +65,19 @@ class train_callback(pl.Callback):
                         for name, param in pl_module.named_parameters():
                             if 'blocks' in name and f'.{str(idx)}.' in name:
                                 param.requires_grad = True
+                                if args.lisa_plus_enabled == 1:
+                                    for idx2 in self.att_disable_elements_indices:
+                                        if f'{self.att_elements[idx2]}' in name:
+                                            param.requires_grad = False
+                                            param.grad=None
+                                            if args.lisa_debug == 1:
+                                                print(f'Now Layer {name} Element {self.att_elements[idx2]} is Disabled')
+                                    for idx2 in self.ffn_disable_elements_indices:
+                                        if f'{self.ffn_elements[idx2]}' in name:
+                                            param.requires_grad = False
+                                            param.grad=None
+                                            if args.lisa_debug == 1:
+                                                print(f'Now Layer {name} Element {self.ffn_elements[idx2]} is Disabled')   
                                 #print(f'Now Layer {name} is enabled')
         
         

@@ -1,17 +1,22 @@
-python train.py --load_model "RWKV-5-World-0.4B-v2-20231113-ctx4096.pth"\
- --wandb "RWKV5-LM-LISA 04b" --proj_dir "04b-output2"\
- --data_file "output"\
+python train.py --load_model "base_model/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth"\
+ --wandb "RWKV-LM-LISA+ v6 1.6b" --proj_dir "1.6b-output_may"\
+ --data_file "dataset/output"\
  --data_type "binidx" --vocab_size 65536 --ctx_len 4096 \
- --epoch_steps 200 --epoch_count 1000 --epoch_begin 0 --epoch_save 1 \
- --micro_bsz 1 --n_layer 24 --n_embd 1024\
- --lr_init 1e-4 --lr_final 1e-6 \
+ --epoch_steps 2000 --epoch_count 1000 --epoch_begin 0 --epoch_save 1 \
+ --micro_bsz 4 --n_layer 24 --n_embd 2048\
+ --lr_init 1e-6 --lr_final 1e-7 \
  --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
  --accelerator gpu --devices 2 --precision bf16 \
- --grad_cp 1 --my_testing "r2r3r4" \
- --strategy deepspeed_stage_2_offload \
+ --grad_cp 1 --my_testing "x060" \
+ --strategy deepspeed_stage_1 \
  --lisa 1 \
- --lisa_active_layer 2 \
- --lisa_interval_steps 10 \
+ --lisa_active_layer 1 \
+ --lisa_interval_steps 5 \
  --lisa_debug 1 \
  --lisa_rand_seed 0 \
+ --lisa_plus_enabled 1 \
+ --lisa_plus_att_train_params "att.receptance.weight,att.key.weight,att.value.weight,att.gate.weight,att.output.weight" \
+ --lisa_plus_att_active_weight 3 \
+ --lisa_plus_ffn_train_params "ffn.receptance.weight,ffn.key.weight,ffn.value.weight" \
+ --lisa_plus_ffn_active_weight 2 \
  --gpu_arch rocm
