@@ -1,12 +1,12 @@
 python train.py --load_model "base_model/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth"\
- --wandb "RWKV-LM-LISA+ v6 1.6b" --proj_dir "1.6b-output_may"\
- --data_file "dataset/output"\
+ --wandb "RWKV-LM-LISA+ v6 1.6b" --proj_dir "1.6b-output"\
+ --data_file "dataset/dataset"\
  --data_type "binidx" --vocab_size 65536 --ctx_len 4096 \
  --epoch_steps 2000 --epoch_count 1000 --epoch_begin 0 --epoch_save 1 \
  --micro_bsz 4 --n_layer 24 --n_embd 2048\
  --lr_init 1e-6 --lr_final 1e-7 \
  --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
- --accelerator gpu --devices 2 --precision bf16 \
+ --accelerator gpu --devices 1 --precision bf16 \
  --grad_cp 1 --my_testing "x060" \
  --strategy deepspeed_stage_1 \
  --lisa 1 \
@@ -19,4 +19,8 @@ python train.py --load_model "base_model/RWKV-x060-World-1B6-v2.1-20240328-ctx40
  --lisa_plus_att_active_weight 3 \
  --lisa_plus_ffn_train_params "ffn.receptance.weight,ffn.key.weight,ffn.value.weight" \
  --lisa_plus_ffn_active_weight 2 \
- --gpu_arch rocm
+ --lisa_plus_att_permanent_freeze_params '' \
+ --lisa_plus_ffn_permanent_freeze_params '' \
+ --lisa_plus_custom_layer_probabilities 1\
+ --lisa_plus_custom_layer_probabilities_profile 'layerprofile/24_Flat.csv' \
+ --gpu_arch cuda

@@ -1,4 +1,5 @@
 import os, math, time, datetime, subprocess
+import pandas as pd
 import torch
 import numpy as np
 from torch.utils.data import DataLoader
@@ -43,6 +44,65 @@ class train_callback(pl.Callback):
                 self.att_number_of_elements = len(self.att_elements)
                 self.ffn_elements = args.lisa_plus_ffn_train_params.split(',')
                 self.ffn_number_of_elements = len(self.ffn_elements)
+
+                self.lisa_plus_att_permanent_freeze_params = args.lisa_plus_att_permanent_freeze_params.split(',')
+                self.lisa_plus_att_permanent_freeze_params_number_of_elements = len(self.lisa_plus_att_permanent_freeze_params)
+                self.lisa_plus_ffn_permanent_freeze_params = args.lisa_plus_ffn_permanent_freeze_params.split(',')
+                self.lisa_plus_ffn_permanent_freeze_params_number_of_elements = len(self.lisa_plus_ffn_permanent_freeze_params)
+
+                #print(f'self.lisa_plus_att_permanent_freeze_params_number_of_elements={self.lisa_plus_att_permanent_freeze_params_number_of_elements}')
+                # Permanent Freeze リストを含む要素を削除
+                if self.lisa_plus_att_permanent_freeze_params_number_of_elements > 0 and args.lisa_plus_att_permanent_freeze_params != '':
+                    self.att_elements = [item for item in self.att_elements if all(s not in item for s in self.lisa_plus_att_permanent_freeze_params)]
+                    #print(self.att_elements)
+                    self.att_number_of_elements = len(self.att_elements)
+                    if self.att_number_of_elements < args.lisa_plus_att_active_weight:
+                        args.lisa_plus_att_active_weight = self.att_number_of_elements
+                    #print(self.att_number_of_elements)
+
+                if self.lisa_plus_ffn_permanent_freeze_params_number_of_elements > 0 and args.lisa_plus_ffn_permanent_freeze_params != '':
+                    self.ffn_elements = [item for item in self.ffn_elements if all(s not in item for s in self.lisa_plus_ffn_permanent_freeze_params)]
+                    self.ffn_number_of_elements = len(self.ffn_elements)
+                    if self.ffn_number_of_elements < args.lisa_plus_ffn_active_weight:
+                        args.lisa_plus_ffn_active_weight = self.ffn_number_of_elements
+                    #print(self.ffn_elements)
+
+                if args.lisa_plus_custom_layer_probabilities:
+                    #Custom Layer Probabilities Mode Enabled
+                    # CSVファイルのパス
+                    csv_file_path = args.lisa_plus_custom_layer_probabilities_profile
+                    # CSVファイルを読み込む
+                    df = pd.read_csv(csv_file_path)
+                    # 'Position'列を整数に変換
+                    df['Position'] = df['Position'].astype(int)
+                    # 'Value'列を浮動小数点数に変換
+                    df['Value'] = df['Value'].astype(float)
+                    # 空の辞書を作成
+                    profile = []
+                    # 辞書にデータを格納
+                    i=0
+                    for index, row in df.iterrows():
+                        profile.append(row['Value'])
+                        i=i+1
+                    #Initialize probabilities
+                    probabilities = np.ones(args.n_layer)
+                    if args.n_layer != len(profile):
+                        #Miss match profile maybe Wrong Profile Length or wrong n_layer
+                        raise "The number of profile layers and the number of model layers do not match. Please check it"
+                    
+                    for i in range(0,args.n_layer):
+                        probabilities[i]=profile[i]
+                        #print(f'Layer {i} is now probability value {profile[i]}')
+                    
+                    probabilities /= probabilities.sum()  # 確率の合計が1になるように正規化
+                else:
+                    probabilities = np.ones(args.n_layer)
+                    probabilities /= probabilities.sum()  # 確率の合計が1になるように正規化
+
+                    
+
+
+
                 #print(self.att_elements)
 
 
@@ -53,20 +113,26 @@ class train_callback(pl.Callback):
                         param.grad = None
                         #print(f"Freezed: {name}")  # 凍結したパラメータの名前を表示
                 if args.lisa_plus_enabled == 1:
+                    #print(f'np random self.att_number_of_elements={self.att_number_of_elements} , args.lisa_plus_att_active_weight={args.lisa_plus_att_active_weight}')
                     self.att_disable_elements_indices = np.random.choice(range(self.att_number_of_elements),
                                                                  self.att_number_of_elements-args.lisa_plus_att_active_weight, replace=False)
                     self.ffn_disable_elements_indices = np.random.choice(range(self.ffn_number_of_elements),
                                                                  self.ffn_number_of_elements-args.lisa_plus_ffn_active_weight, replace=False)
                 
-                self.active_layers_indices = np.random.choice(range(args.n_layer), args.lisa_active_layer, replace=False)
+                self.active_layers_indices = np.random.choice(range(args.n_layer), args.lisa_active_layer, replace=False,p=probabilities)
                 for idx in self.active_layers_indices:
                         if args.lisa_debug == 1:
                             print(f'Now Activate Layer is {idx}')
                         for name, param in pl_module.named_parameters():
                             if 'blocks' in name and f'.{str(idx)}.' in name:
                                 param.requires_grad = True
+                                #print(name)
+
+                                #print(f'self.att_disable_elements_indices = {self.att_disable_elements_indices}')
+
                                 if args.lisa_plus_enabled == 1:
                                     for idx2 in self.att_disable_elements_indices:
+                                        #print(f'{self.att_elements[idx2]} in name {name}')
                                         if f'{self.att_elements[idx2]}' in name:
                                             param.requires_grad = False
                                             param.grad=None
@@ -78,6 +144,20 @@ class train_callback(pl.Callback):
                                             param.grad=None
                                             if args.lisa_debug == 1:
                                                 print(f'Now Layer {name} Element {self.ffn_elements[idx2]} is Disabled')   
+                                    for FreezeName in self.lisa_plus_att_permanent_freeze_params:
+                                        if FreezeName in name and FreezeName != '':
+                                            param.requires_grad = False
+                                            param.grad=None
+                                            if args.lisa_debug == 1:
+                                                print(f'Now Layer {name} Element {FreezeName} is Disabled Permanently') 
+                                    for FreezeName in self.lisa_plus_ffn_permanent_freeze_params:
+                                        if FreezeName in name and FreezeName != '':
+                                            param.requires_grad = False
+                                            param.grad=None
+                                            if args.lisa_debug == 1:
+                                                print(f'Now Layer {name} Element {FreezeName} is Disabled Permanently') 
+
+
                                 #print(f'Now Layer {name} is enabled')
         
         

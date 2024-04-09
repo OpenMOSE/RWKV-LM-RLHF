@@ -87,6 +87,13 @@ if __name__ == "__main__":
     parser.add_argument("--lisa_plus_ffn_train_params",default='ffn.receptance.weight,ffn.key.weight,ffn.value.weight',type=str)
     parser.add_argument("--lisa_plus_ffn_active_weight",default=2,type=int)
 
+    parser.add_argument("--lisa_plus_att_permanent_freeze_params",default='att.output.weight',type=str)
+    parser.add_argument("--lisa_plus_ffn_permanent_freeze_params",default='ffn.value.weight',type=str)
+
+    parser.add_argument("--lisa_plus_custom_layer_probabilities",default=1,type=int)# Enable Custom Layer Probabilities
+    parser.add_argument("--lisa_plus_custom_layer_probabilities_profile",default="layerprofile/24_IncreaseExtreme.csv",type=str) #Layer Profile File(CSV)
+
+
 
     
 
