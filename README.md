@@ -7,9 +7,9 @@ Test implement of Layerwise Importance Sampled AdamW
 ## 2024.04.10 Update
 1. Implemented layer selection probability profiling
    - You can now change the selection probability for each layer in CSV format. Perhaps under certain conditions it should be able to contribute to loss optimization
+![probabilityprofilesample](probabilityprofilesample.jpg)
 2. Implemented permanent freezing function in layers
    - You can now permanently freeze certain elements during training. This makes it possible to consider modifying the Loss and creating a merge model.
-![probabilityprofilesample](probabilityprofilesample.jpg)
 ## 2024.04.09 Update
 1. Implemented random element freezing function(LISA+)
    - In addition to the existing LISA training method, we randomly freeze some of the elements in the specified layer to improve VRAM efficiency and training speed.
