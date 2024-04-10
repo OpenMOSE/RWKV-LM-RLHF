@@ -8,6 +8,8 @@ Test implement of Layerwise Importance Sampled AdamW
 1. Implemented layer selection probability profiling
    - You can now change the selection probability for each layer in CSV format. Perhaps under certain conditions it should be able to contribute to loss optimization
 ![probabilityprofilesample](probabilityprofilesample.jpg)
+   - we examined the changes in Loss for each layer selection probability profile. Noticeable changes in Loss were observed, with the lowest Loss found in the Valley Profile.
+![selectionprofilevsloss](selectionprofilevsloss.jpeg)
 2. Implemented permanent freezing function in layers
    - You can now permanently freeze certain elements during training. This makes it possible to consider modifying the Loss and creating a merge model.
 ## 2024.04.09 Update
