@@ -2,6 +2,7 @@
 # The RWKV Language Model - https://github.com/BlinkDL/RWKV-LM
 ########################################################################################################
 
+import functools
 import os, math, gc, importlib
 import torch
 # torch._C._jit_set_profiling_executor(True)
@@ -529,6 +530,7 @@ class RWKV(pl.LightningModule):
     def __init__(self, args):
         super().__init__()
         self.args = args
+        self.inputtalkmax = 0
         if not hasattr(args, 'dim_att'):
             args.dim_att = args.n_embd
         if not hasattr(args, 'dim_ffn'):
@@ -678,6 +680,74 @@ class RWKV(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         args = self.args
+
+        if args.dpo:
+            batch_general, batch_dpo = batch
+            idx, targets = batch_general
+
+            loss1 = 0.0
+            self.trainer.loss_1_general_or_sft = float(loss1) # for logging
+            
+            try: self.trainer.pref_match_percentage
+            except (NameError, AttributeError): self.trainer.pref_match_percentage = 0.5
+            pref_matches = 0
+            bsz = len(batch_dpo)
+            loss2 = 0.0
+            for s in range(bsz):
+                chosen_input,chosen_output,length_chosen,chosen_ref_prob, reject_input,reject_output,length_reject,reject_ref_prob = batch_dpo[s]
+
+                chosen_input_len = len(chosen_input)
+                chosen_output_len = len(chosen_output)
+
+                reject_input_len = len(reject_input)
+                reject_output_len=len(reject_output)
+
+                if self.inputtalkmax < chosen_input_len:
+                    self.inputtalkmax = chosen_input_len
+                if self.inputtalkmax < chosen_output_len:
+                    self.inputtalkmax = chosen_output_len
+                if self.inputtalkmax < reject_input_len:
+                    self.inputtalkmax = reject_input_len
+                if self.inputtalkmax < reject_output_len:
+                    self.inputtalkmax = reject_output_len
+                
+                # self.inputtalkmax is total proceed tokens per batch
+        
+                #print(f'Tokens max = {self.inputtalkmax}')
+                chosen_logits = self(chosen_input)
+                loss_chosen = F.cross_entropy(chosen_logits.view(-1, chosen_logits.size(-1)), chosen_output.view(-1), reduction='none') # .squeeze()
+                del chosen_logits
+                gc.collect()
+                torch.cuda.empty_cache()
+                chosen_prob = -torch.sum(loss_chosen[-length_chosen:])
+                reject_logits = self(reject_input)
+                loss_reject = F.cross_entropy(reject_logits.view(-1, reject_logits.size(-1)), reject_output.view(-1), reduction='none') # .squeeze()
+                del reject_logits
+                gc.collect()
+                torch.cuda.empty_cache()
+                reject_prob = -torch.sum(loss_reject[-length_reject:])
+                del loss_chosen
+                del loss_reject
+                gc.collect()
+                torch.cuda.empty_cache()
+                pref_ratio = args.dpo_beta * (chosen_prob - reject_prob - chosen_ref_prob + reject_ref_prob)
+                pref_matches += (pref_ratio > 0)
+                loss2 = loss2 - F.logsigmoid(pref_ratio)
+            loss2 = loss2 / bsz
+            self.trainer.loss_2_dpo = float(loss2)
+            self.trainer.pref_match_percentage = 0.9 * self.trainer.pref_match_percentage + 0.1 * (pref_matches / bsz)
+
+            
+            
+
+            #return args.dpo_general_corpus_ratio * loss1 + (1-args.dpo_general_corpus_ratio) * loss2
+            return loss2
+        ################################################################################################################# dpo
+
+        #basically already returned if dpo mode
+
+
+
         if args.my_qa_mask != 1:
             idx, targets = batch
             logits = self(idx)
