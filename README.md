@@ -4,6 +4,12 @@
 This repo is forked from RWKV-LM
 
 Test implement of Layerwise Importance Sampled AdamW
+## 2024.04.12 Update
+1. Implemented Direct Preference Optimization
+   - It aims to directly incorporate human preferences and evaluations into the learning model. It directly assesses the desirability of actions taken by the model and optimizes the learning process based on that assessment.
+   - This is experimental code.
+   - VRAM Heavy. With 24GB of VRAM, dpo-tuning up to 3b is possible. To tune 7b, a minimum of 32GB of VRAM is required....
+   - i'm looking for alternatives to grad_cp....
 ## 2024.04.10 Update
 1. Implemented layer selection probability profiling
    - You can now change the selection probability for each layer in CSV format. Perhaps under certain conditions it should be able to contribute to loss optimization
@@ -34,6 +40,18 @@ Test implement of Layerwise Importance Sampled AdamW
    - if use layer selection probability profiling set --lisa_plus_custom_layer_probabilities 1
    - --lisa_plus_custom_layer_probabilities_profile Enter the file name of the profile in CSV format
 
+## DPO Usages
+1. Prepare DPO Dataset
+   - download pref data from HuggingFaceH4/ultrafeedback_binarized
+   - edit target rwkv model and target dataset filename in prepare_dpo_dataset.py
+   - run prepare_dpo_dataset.py
+2. Run `train.py`:
+   - Configure LISA
+   - set --dpo 1
+   - --dpo_train_file DPO dataset filename
+   - --dpo_beta the parameter beta plays a crucial role as it controls how much to weight the preference of the reference model.
+   - --dpo_max_corpus_len it means dpo dataset is limited by dpo_max_corpus_len(ex. prompt 400,chosen 400,reject 400)
+
 
 ## This repo works
    - 1. Freeze all layers
@@ -43,6 +61,7 @@ Test implement of Layerwise Importance Sampled AdamW
 
 I wish performance close to full parameter learning
  
+## SFT Mode
 My training command is provided as follows:
 ```
 python train.py --load_model "base_model/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth"\
@@ -73,14 +92,50 @@ python train.py --load_model "base_model/RWKV-x060-World-1B6-v2.1-20240328-ctx40
  --gpu_arch rocm
 ```
 
+## DPO Mode
+My dpo training command is provided as follows:
+```
+python train.py --load_model "base_model/RWKV-5-World-3B-v2-20231113-ctx4096.pth"\
+ --wandb "RWKV-LM-LISA+ DPO 3b" --proj_dir "3b-dpo"\
+ --vocab_size 65536 --ctx_len 4096 \
+ --epoch_steps 200 --epoch_count 1000 --epoch_begin 0 --epoch_save 1 \
+ --micro_bsz 1 --n_layer 32 --n_embd 2560\
+ --lr_init 1e-6 --lr_final 1e-7 \
+ --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
+ --accelerator gpu --devices 1 --precision bf16 \
+ --grad_cp 0 --my_testing "" \
+ --strategy deepspeed_stage_2_offload \
+ --gpu_arch cuda \
+ --lisa 1 \
+ --lisa_active_layer 1 \
+ --lisa_interval_steps 5 \
+ --lisa_debug 1 \
+ --lisa_rand_seed 0 \
+ --lisa_plus_enabled 1 \
+ --lisa_plus_att_train_params "att.receptance.weight,att.key.weight,att.value.weight,att.gate.weight,att.output.weight" \
+ --lisa_plus_att_active_weight 3 \
+ --lisa_plus_ffn_train_params "ffn.receptance.weight,ffn.key.weight,ffn.value.weight" \
+ --lisa_plus_ffn_active_weight 2 \
+ --lisa_plus_att_permanent_freeze_params '' \
+ --lisa_plus_ffn_permanent_freeze_params '' \
+ --lisa_plus_custom_layer_probabilities 1 \
+ --lisa_plus_custom_layer_probabilities_profile 'layerprofile/32_Valley.csv' \
+ --dpo 1 \
+ --dpo_train_file trainset.save \
+ --dpo_beta 0.08 \
+ --dpo_max_corpus_len 600
+```
+
 ## Todo
    - 1. (Done)Make a layer selection probability profile
-   - 2. Implement Direct Preference Optimization with LISA
+   - 2. (Done?)Implement Direct Preference Optimization with LISA
 
 
 # And Thanks to:
 RWKV-LM @BlinkDL
+RWKV-LM-RLHF-DPO @Triang-jyed-driung
 LMFlow @OptimalScale
+
 
 
 # License
