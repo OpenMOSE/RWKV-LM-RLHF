@@ -136,7 +136,7 @@ python train.py --load_model "base_model/RWKV-5-World-3B-v2-20231113-ctx4096.pth
  --rlhf_max_corpus_len 600
 ```
 
-## DPO Mode
+## Orpo Mode
 My dpo training command is provided as follows:
 ```
 python train.py --load_model "base_model/RWKV-5-World-0.4B-v2-20231113-ctx4096.pth"\
