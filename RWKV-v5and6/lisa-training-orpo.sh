@@ -26,5 +26,5 @@ python train.py --load_model "base_model/RWKV-5-World-0.4B-v2-20231113-ctx4096.p
  --gpu_arch cuda \
  --orpo 1 \
  --orpo_alpha 0.01 \
- --orpo_general_corpus_ratio 0.9 \
+ --rlhf_train_file trainset.save \
  --rlhf_max_corpus_len 600

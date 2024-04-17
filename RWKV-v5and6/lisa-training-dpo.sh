@@ -24,7 +24,7 @@ python train.py --load_model "base_model/rwkv-x052-7b-world-v2-79%trained-202312
  --lisa_plus_custom_layer_probabilities 1 \
  --lisa_plus_custom_layer_probabilities_profile 'layerprofile/32_Valley.csv' \
  --dpo 1 \
- --dpo_train_file trainset.save \
  --dpo_beta 0.08 \
+ --rlhf_train_file trainset.save \
  --rlhf_max_corpus_len 600
  

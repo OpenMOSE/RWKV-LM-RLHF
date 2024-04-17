@@ -95,7 +95,7 @@ if __name__ == "__main__":
 
 
     parser.add_argument("--dpo", default=0, type=int) 
-    parser.add_argument("--dpo_train_file", default="trainset.save", type=str)#need pytorch tensor type input 
+    
     parser.add_argument("--dpo_beta", default=0.01, type=float)
     #parser.add_argument("--dpo_general_corpus_ratio", default=0, type=float) #now deleted combined mode you can set only 0
 
@@ -104,6 +104,7 @@ if __name__ == "__main__":
     parser.add_argument("--orpo_debug", default=1, type=int) #orpo
 
     parser.add_argument("--rlhf_max_corpus_len", default=600, type=int) #limit maximum dpo dataset token per dpo item. if avoid OoM decrease this value
+    parser.add_argument("--rlhf_train_file", default="trainset.save", type=str)#need pytorch tensor type input 
 
 
 
