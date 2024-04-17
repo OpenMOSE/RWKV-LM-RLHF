@@ -1,13 +1,13 @@
-python train.py --load_model "base_model/rwkv-x052-7b-world-v2-79%trained-20231208-ctx4k.pth"\
- --wandb "RWKV-LM-LISA+ DPO Experiment 7b" --proj_dir "7b-dpo"\
+python train.py --load_model "base_model/RWKV-5-World-0.4B-v2-20231113-ctx4096.pth"\
+ --wandb "RWKV-LM-LISA+ DPO 0.4b" --proj_dir "0b4-dpo"\
  --vocab_size 65536 --ctx_len 4096 \
  --epoch_steps 200 --epoch_count 1000 --epoch_begin 0 --epoch_save 1 \
- --micro_bsz 1 --n_layer 32 --n_embd 4096\
+ --micro_bsz 1 --n_layer 24 --n_embd 1024\
  --lr_init 1e-6 --lr_final 1e-7 \
  --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
  --accelerator gpu --devices 1 --precision bf16 \
  --grad_cp 0 --my_testing "" \
- --strategy deepspeed_stage_3_offload \
+ --strategy deepspeed_stage_1 \
  --gpu_arch cuda \
  --lisa 1 \
  --lisa_active_layer 1 \

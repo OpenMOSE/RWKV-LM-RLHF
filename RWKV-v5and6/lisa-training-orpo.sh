@@ -1,9 +1,8 @@
 python train.py --load_model "base_model/RWKV-5-World-0.4B-v2-20231113-ctx4096.pth"\
  --wandb "RWKV-LM-LISA+ Valley v5 0.4b orpo experiment" --proj_dir "0b4"\
- --data_file "dataset/dataset"\
- --data_type "binidx" --vocab_size 65536 --ctx_len 4096 \
+ --vocab_size 65536 --ctx_len 4096 \
  --epoch_steps 1250 --epoch_count 1000 --epoch_begin 0 --epoch_save 1 \
- --micro_bsz 12 --n_layer 24 --n_embd 1024\
+ --micro_bsz 1 --n_layer 24 --n_embd 1024\
  --lr_init 5e-6 --lr_final 1e-6 \
  --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
  --accelerator gpu --devices 1 --precision bf16 \
