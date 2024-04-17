@@ -8,7 +8,7 @@ class DPODataset(Dataset):
     def __init__(self, args):
         self.args = args
         # TODO: to args.dpo_train_file
-        self.data = torch.load(args.dpo_train_file)
+        self.data = torch.load(args.rlhf_train_file)
         # TODO: to 
         self.precision = {
             "bf16": torch.bfloat16,
