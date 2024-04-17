@@ -4,6 +4,16 @@
 This repo is forked from RWKV-LM
 
 Test implement of Layerwise Importance Sampled AdamW
+
+if LISA is disabled, it operates in full parameter training mode.
+## 2024.04.17 Update
+1. Implemented Odds Ratio Preference Optimization
+   - Orpo adds a penalty based on odds ratio to the usual loss method to tell apart preferred and less preferred response styles.
+   - This is experimental code. In Development.(It probably includes incorrect code)
+   - If there is a dataset with Chosen and Reject pairs in a common structure along with the DPO dataset, training can be started
+   - currently, in testing on RWKV x052 L24D1024 (maybe x060 also work)
+   - i think it's better SFT + (Orpo or dpo)
+![orpoloss](orpoloss.png)
 ## 2024.04.12 Update
 1. Implemented Direct Preference Optimization
    - It aims to directly incorporate human preferences and evaluations into the learning model. It directly assesses the desirability of actions taken by the model and optimizes the learning process based on that assessment.
@@ -123,18 +133,56 @@ python train.py --load_model "base_model/RWKV-5-World-3B-v2-20231113-ctx4096.pth
  --dpo 1 \
  --dpo_train_file trainset.save \
  --dpo_beta 0.08 \
- --dpo_max_corpus_len 600
+ --rlhf_max_corpus_len 600
+```
+
+## DPO Mode
+My dpo training command is provided as follows:
+```
+python train.py --load_model "base_model/RWKV-5-World-0.4B-v2-20231113-ctx4096.pth"\
+ --wandb "RWKV-LM-LISA+ Valley v5 0.4b orpo experiment" --proj_dir "0b4orpo"\
+ --data_file "dataset/dataset"\
+ --data_type "binidx" --vocab_size 65536 --ctx_len 4096 \
+ --epoch_steps 1250 --epoch_count 1000 --epoch_begin 0 --epoch_save 1 \
+ --micro_bsz 12 --n_layer 24 --n_embd 1024\
+ --lr_init 5e-6 --lr_final 1e-6 \
+ --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
+ --accelerator gpu --devices 1 --precision bf16 \
+ --grad_cp 0 --my_testing "" \
+ --strategy deepspeed_stage_1\
+ --lisa 1 \
+ --lisa_active_layer 1 \
+ --lisa_interval_steps 5 \
+ --lisa_debug 1 \
+ --lisa_rand_seed 0 \
+ --lisa_plus_enabled 1 \
+ --lisa_plus_att_train_params "att.receptance.weight,att.key.weight,att.value.weight,att.gate.weight,att.output.weight" \
+ --lisa_plus_att_active_weight 2 \
+ --lisa_plus_ffn_train_params "ffn.receptance.weight,ffn.key.weight,ffn.value.weight" \
+ --lisa_plus_ffn_active_weight 2 \
+ --lisa_plus_att_permanent_freeze_params '' \
+ --lisa_plus_ffn_permanent_freeze_params '' \
+ --lisa_plus_custom_layer_probabilities 1\
+ --lisa_plus_custom_layer_probabilities_profile 'layerprofile/24_Valley.csv' \
+ --gpu_arch cuda \
+ --orpo 1 \
+ --orpo_alpha 0.01 \
+ --orpo_general_corpus_ratio 0.9 \
+ --rlhf_max_corpus_len 600
 ```
 
 ## Todo
    - 1. (Done)Make a layer selection probability profile
    - 2. (Done?)Implement Direct Preference Optimization with LISA
+   - 3. (In development)Implement Odds Ratio Preference Optimization with LISA
 
 
 # And Thanks to:
-RWKV-LM @BlinkDL
-RWKV-LM-RLHF-DPO @Triang-jyed-driung
-LMFlow @OptimalScale
+   - RWKV-LM @BlinkDL
+   - RWKV-LM-RLHF-DPO @Triang-jyed-driung
+   - LMFlow @OptimalScale
+   - Orpo @xfactlab
+
 
 
 
