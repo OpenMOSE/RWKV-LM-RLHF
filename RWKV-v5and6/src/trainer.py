@@ -282,6 +282,10 @@ class train_callback(pl.Callback):
                     try:
                         lll |= {"pref_percentage": trainer.pref_match_percentage, "loss_1": trainer.loss_1_general_or_sft, "loss_2_dpo": trainer.loss_2_dpo}
                     except: pass
+                if args.orpo:
+                    try:
+                        lll |= {"pref_percentage": trainer.pref_match_percentage, "loss_1": trainer.loss_1_general_or_sft, "loss_2_orpo": trainer.loss_2_orpo}
+                    except: pass
                 trainer.my_wandb.log(lll, step=int(real_step))
         if (trainer.is_global_zero) or ('deepspeed_stage_3' in args.strategy): # save pth
             if args.magic_prime > 0:
@@ -302,7 +306,7 @@ class train_callback(pl.Callback):
         else:
             dataset = trainer.train_dataloader.dataset.datasets
         assert "MyDataset" in str(dataset)
-        if args.dpo:
+        if args.dpo or args.orpo:
             dataset[0].global_rank = trainer.global_rank
             dataset[0].real_epoch = int(args.epoch_begin + trainer.current_epoch)
             dataset[0].world_size = trainer.world_size
@@ -337,7 +341,7 @@ class train_callback(pl.Callback):
                     print('Error\n\n', e, '\n\n')
 
         if trainer.is_global_zero:  # logging
-            trainer.my_log.write(f"{args.epoch_begin + trainer.current_epoch} {trainer.my_epoch_loss:.6f} {math.exp(trainer.my_epoch_loss):.4f} {trainer.my_lr:.8f} {datetime.datetime.now()} {trainer.current_epoch}\n")
+            trainer.my_log.write(f"{args.epoch_begin + trainer.current_epoch} {trainer.my_epoch_loss:.6f} {(trainer.my_epoch_loss):.6f} {trainer.my_lr:.8f} {datetime.datetime.now()} {trainer.current_epoch}\n")
             trainer.my_log.flush()
 
             trainer.my_loss_sum = 0

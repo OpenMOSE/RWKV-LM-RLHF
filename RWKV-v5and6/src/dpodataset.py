@@ -26,15 +26,15 @@ class DPODataset(Dataset):
     def __getitem__(self, idx):
         idx = random.randrange(len(self.data))
         prompt_tokens, chosen_tokens, reject_tokens, chosen_base_prob, reject_base_prob = self.data[idx]
-        if len(prompt_tokens) > self.args.dpo_max_corpus_len:
-            prompt_tokens = prompt_tokens[:self.args.dpo_max_corpus_len]
+        if len(prompt_tokens) > self.args.rlhf_max_corpus_len:
+            prompt_tokens = prompt_tokens[:self.args.rlhf_max_corpus_len]
 
-        if len(chosen_tokens) > self.args.dpo_max_corpus_len:
-            chosen_tokens = chosen_tokens[:self.args.dpo_max_corpus_len]
+        if len(chosen_tokens) > self.args.rlhf_max_corpus_len:
+            chosen_tokens = chosen_tokens[:self.args.rlhf_max_corpus_len]
             
 
-        if len(reject_tokens) > self.args.dpo_max_corpus_len:
-            reject_tokens = reject_tokens[:self.args.dpo_max_corpus_len]
+        if len(reject_tokens) > self.args.rlhf_max_corpus_len:
+            reject_tokens = reject_tokens[:self.args.rlhf_max_corpus_len]
             
         #print(f'prompt tokens {len(prompt_tokens) }')
         #print(f'chosen_tokens {len(chosen_tokens) }')

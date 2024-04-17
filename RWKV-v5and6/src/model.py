@@ -5,6 +5,7 @@
 import functools
 import os, math, gc, importlib
 import torch
+from torch.nn.utils.rnn import pad_sequence
 # torch._C._jit_set_profiling_executor(True)
 # torch._C._jit_set_profiling_mode(True)
 import torch.nn as nn
@@ -90,6 +91,13 @@ if 'x060' in os.environ["RWKV_MY_TESTING"]:
                 gw = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
                 gu = torch.empty((B, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
                 wkv6_cuda.backward(B, T, C, H, r, k, v, ew, u, gy, gr, gk, gv, gw, gu)
+#                del r
+#                del k
+#                del v
+#                del ew
+#                del u
+#                gc.collect()
+#                torch.cuda.empty_cache()
                 gu = torch.sum(gu, 0).view(H, C//H)
                 return (None, None, None, None, gr, gk, gv, gw, gu)
 
@@ -145,6 +153,7 @@ else:
                 gw = torch.empty((B, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format) # .uniform_(-1, 1)
                 gu = torch.empty((B, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format) # .uniform_(-1, 1)
                 wkv5_cuda.backward(B, T, C, H, r, k, v, eew, ew, u, gy, gr, gk, gv, gw, gu)
+                
                 gw = torch.sum(gw, 0).view(H, C//H)
                 gu = torch.sum(gu, 0).view(H, C//H)
                 return (None, None, None, None, gr, gk, gv, gw, gu)
@@ -264,6 +273,8 @@ class RWKV_Tmix_x060(MyModule):
             self.time_maa_g = nn.Parameter(1.0 - torch.pow(ddd, 0.5 * ratio_1_to_almost0))
 
             TIME_MIX_EXTRA_DIM = 32 # generate TIME_MIX for w,k,v,r,g
+            if args.n_embd == 4096 and args.n_layer == 32:
+                TIME_MIX_EXTRA_DIM = 64 
             self.time_maa_w1 = nn.Parameter(torch.zeros(args.n_embd, TIME_MIX_EXTRA_DIM*5).uniform_(-1e-4, 1e-4))
             self.time_maa_w2 = nn.Parameter(torch.zeros(5, TIME_MIX_EXTRA_DIM, args.n_embd).uniform_(-1e-4, 1e-4))
 
@@ -274,6 +285,8 @@ class RWKV_Tmix_x060(MyModule):
             self.time_decay = nn.Parameter(decay_speed.reshape(1,1,args.dim_att))
 
             TIME_DECAY_EXTRA_DIM = 64
+            if args.n_embd == 4096 and args.n_layer == 32:
+                TIME_DECAY_EXTRA_DIM = 128
             self.time_decay_w1 = nn.Parameter(torch.zeros(args.n_embd, TIME_DECAY_EXTRA_DIM).uniform_(-1e-4, 1e-4))
             self.time_decay_w2 = nn.Parameter(torch.zeros(TIME_DECAY_EXTRA_DIM, args.dim_att).uniform_(-1e-4, 1e-4))
 
@@ -677,9 +690,111 @@ class RWKV(pl.LightningModule):
             x = self.head(x)
 
         return x
+    def compute_logps_simple(self, chosen_inputs, logits):
+        chosen_inputs = chosen_inputs[:, :-1]
+        log_probs = torch.log_softmax(logits[:, :-1, :], dim=-1)
+        gathered_log_probs = torch.gather(log_probs, dim=-1, index=chosen_inputs[:, 1:].unsqueeze(-1)).squeeze(-1)
+        sequence_logps = gathered_log_probs.sum(dim=1) # im not sure correct or not
+        
+        return sequence_logps
+    def pad_sequences2(self, sequences):
+        max_length = 0  # Initialize maximum length
 
+        for tensor in sequences:
+            max_length = max(max_length, tensor.shape[1])  # Update maximum length for all shapes
+
+        padded_sequences = []
+
+        for tensor in sequences:
+            pad_width = (0, max_length - tensor.shape[1])  # Calculate padding width for current tensor
+            padded_tensor = torch.nn.functional.pad(tensor, pad_width)  # Pad using pad_width
+            padded_sequences.append(padded_tensor)
+            print(f'padded_sequences = {padded_tensor.shape}')
+            
+
+        return padded_sequences
+    def pad_sequences(self,sequences):
+        max_length = 0  # Initialize maximum length
+
+        for tensor in sequences:
+            max_length = max(max_length, tensor.shape[0])  # Update maximum length for all shapes
+
+        padded_sequences = []
+
+        for tensor in sequences:
+            pad_width = (0, max_length - tensor.shape[0])  # Calculate padding width for current tensor
+            padded_tensor = torch.nn.functional.pad(tensor, pad_width)  # Pad using pad_width
+            padded_sequences.append(padded_tensor)
+            #print(f'padded_sequences = {padded_tensor.shape}')
+        return padded_sequences
     def training_step(self, batch, batch_idx):
+        
         args = self.args
+
+        if args.orpo:
+            batch_general, batch_orpo = batch
+            idx, targets = batch_general
+
+            print(f'len(idx) = {len(idx)}')
+            print(f'len(targets) = {len(idx)}')
+
+
+            loss1 = 0.0
+            #self.trainer.loss_1_general_or_sft = float(loss1) # for logging
+            
+            try: self.trainer.pref_match_percentage
+            except (NameError, AttributeError): self.trainer.pref_match_percentage = 0.5
+            pref_matches = 0
+            bsz = len(batch_orpo)
+            loss2 = 0.0
+
+            SFT_idx = []
+            SFT_targets = []
+            for s in range(bsz):
+                chosen_input,chosen_output,length_chosen,chosen_ref_prob, reject_input,reject_output,length_reject,reject_ref_prob = batch_orpo[s]
+
+                chosen_input_len = len(chosen_input)
+                chosen_output_len = len(chosen_output)
+
+
+                reject_input_len = len(reject_input)
+                reject_output_len=len(reject_output)
+
+                outputs_pos = self(chosen_input)
+                outputs_neg = self(reject_input)
+
+                # Calculate Chosen Loss
+                l2_pos_loss = F.cross_entropy(outputs_pos.view(-1, outputs_pos.size(-1)), chosen_output.view(-1))
+
+                # Compute Probs pos and neg
+                pos_prob = self.compute_logps_simple(chosen_output.unsqueeze(0),outputs_pos)
+                neg_prob = self.compute_logps_simple(reject_output.unsqueeze(0),outputs_neg)
+
+                # Calculate log odds
+                orpo_ratio = log_odds = (pos_prob - neg_prob) - (torch.log1p(-torch.exp(pos_prob)) - torch.log1p(-torch.exp(neg_prob)))
+                
+                pref_matches += (orpo_ratio > 0)
+
+                orpo_ratio = -F.logsigmoid(args.orpo_alpha*orpo_ratio)
+
+                if args.orpo_debug == 1:
+                    print(f'orpo_ratio={orpo_ratio}')
+
+                orpo_loss = torch.mean(l2_pos_loss + orpo_ratio)
+                orpo_loss = L2Wrap.apply(orpo_loss, outputs_pos) #im not sure is this correct?
+
+                loss2 = loss2 + orpo_loss
+
+                gc.collect()
+                torch.cuda.empty_cache()
+               
+            loss2 = loss2 / bsz
+
+            self.trainer.loss_2_orpo = float(loss2)
+            self.trainer.loss_1_general_or_sft = float(loss1)
+            self.trainer.pref_match_percentage = 0.9 * self.trainer.pref_match_percentage + 0.1 * (pref_matches / bsz)
+
+            return loss2
 
         if args.dpo:
             batch_general, batch_dpo = batch
@@ -726,10 +841,10 @@ class RWKV(pl.LightningModule):
                 gc.collect()
                 torch.cuda.empty_cache()
                 reject_prob = -torch.sum(loss_reject[-length_reject:])
-                del loss_chosen
-                del loss_reject
-                gc.collect()
-                torch.cuda.empty_cache()
+                #del loss_chosen
+                #del loss_reject
+                #gc.collect()
+                #torch.cuda.empty_cache()
                 pref_ratio = args.dpo_beta * (chosen_prob - reject_prob - chosen_ref_prob + reject_ref_prob)
                 pref_matches += (pref_ratio > 0)
                 loss2 = loss2 - F.logsigmoid(pref_ratio)

@@ -20,8 +20,8 @@ if __name__ == "__main__":
     parser.add_argument("--proj_dir", default="out", type=str)
     parser.add_argument("--random_seed", default="-1", type=int)
 
-    parser.add_argument("--data_file", default="", type=str)
-    parser.add_argument("--data_type", default="utf-8", type=str)
+    parser.add_argument("--data_file", default="default_text_document", type=str)
+    parser.add_argument("--data_type", default="binidx", type=str)
     parser.add_argument("--vocab_size", default=0, type=int)  # vocab_size = 0 means auto (for char-level LM and .txt data)
 
     parser.add_argument("--ctx_len", default=1024, type=int)
@@ -29,7 +29,7 @@ if __name__ == "__main__":
     parser.add_argument("--epoch_count", default=500, type=int)  # train for this many "epochs". will continue afterwards with lr = lr_final
     parser.add_argument("--epoch_begin", default=0, type=int)  # if you load a model trained for x "epochs", set epoch_begin = x
     parser.add_argument("--epoch_save", default=5, type=int)  # save the model every [epoch_save] "epochs"
-
+    #parser.add_argument("--max_epochs", default=500, type=int) 
     parser.add_argument("--micro_bsz", default=1, type=int)  # micro batch size (batch size per GPU) maybe not working on lisa
     parser.add_argument("--n_layer", default=6, type=int)
     parser.add_argument("--n_embd", default=512, type=int)
@@ -94,6 +94,18 @@ if __name__ == "__main__":
     parser.add_argument("--lisa_plus_custom_layer_probabilities_profile",default="layerprofile/24_IncreaseExtreme.csv",type=str) #Layer Profile File(CSV)
 
 
+    parser.add_argument("--dpo", default=0, type=int) 
+    parser.add_argument("--dpo_train_file", default="trainset.save", type=str)#need pytorch tensor type input 
+    parser.add_argument("--dpo_beta", default=0.01, type=float)
+    #parser.add_argument("--dpo_general_corpus_ratio", default=0, type=float) #now deleted combined mode you can set only 0
+
+    parser.add_argument("--orpo", default=0, type=int) #orpo
+    parser.add_argument("--orpo_alpha", default=0.1, type=float) #orpo
+    parser.add_argument("--orpo_debug", default=1, type=int) #orpo
+
+    parser.add_argument("--rlhf_max_corpus_len", default=600, type=int) #limit maximum dpo dataset token per dpo item. if avoid OoM decrease this value
+
+
 
     
 
@@ -135,7 +147,7 @@ if __name__ == "__main__":
     args.num_sanity_val_steps = 0
     args.check_val_every_n_epoch = int(1e20)
     args.log_every_n_steps = int(1e20)
-    args.max_epochs = -1  # continue forever
+    args.max_epochs = args.epoch_count  # continue forever
     args.betas = (args.beta1, args.beta2)
     args.real_bsz = int(args.num_nodes) * int(args.devices) * args.micro_bsz
     os.environ["RWKV_MY_TESTING"] = args.my_testing
@@ -267,6 +279,9 @@ if __name__ == "__main__":
 
     from src.trainer import train_callback, generate_init_weight
     from src.dataset import MyDataset
+    from src.dpodataset import DPODataset
+    if args.dpo or args.orpo:
+        dpo_train_data = DPODataset(args)
 
     train_data = MyDataset(args)
     args.vocab_size = train_data.vocab_size
@@ -278,6 +293,9 @@ if __name__ == "__main__":
                 print("LISA? Training Mode :)")
                 for name, param in model.named_parameters():
                     if 'blocks' in name and str(args.n_layer-1) not in name:
+                        param.requires_grad = False
+                        print(f"Freezed: {name}")  # 凍結したパラメータの名前を表示
+                    elif 'blocks' in name and ('ffn' in name or(('att') in name and ('receptance'in name or 'key' in name or 'value' in name) )) and str(args.n_layer-1) in name:
                         param.requires_grad = False
                         print(f"Freezed: {name}")  # 凍結したパラメータの名前を表示
 
@@ -338,5 +356,19 @@ if __name__ == "__main__":
 
     # must set shuffle=False, persistent_workers=False (because worker is in another thread)
     data_loader = DataLoader(train_data, shuffle=False, pin_memory=True, batch_size=args.micro_bsz, num_workers=1, persistent_workers=False, drop_last=True)
-
-    trainer.fit(model, data_loader)
+    if args.orpo:
+        if args.dpo == 1:
+            args.dpo = 0
+        print("Odds Ratio Preference Optimization Mode Enabled.") 
+        from pytorch_lightning.trainer.supporters import CombinedLoader
+        dpo_loader = DataLoader(dpo_train_data, shuffle=False, pin_memory=True, batch_size=args.micro_bsz, num_workers=1, persistent_workers=False, drop_last=True, collate_fn=lambda x:x)
+        combined_loader = CombinedLoader([data_loader, dpo_loader], "min_size")
+        trainer.fit(model, combined_loader)
+    if args.dpo:
+        print("Direct Preference Optimization Mode Enabled.") 
+        from pytorch_lightning.trainer.supporters import CombinedLoader
+        dpo_loader = DataLoader(dpo_train_data, shuffle=False, pin_memory=True, batch_size=args.micro_bsz, num_workers=1, persistent_workers=False, drop_last=True, collate_fn=lambda x:x)
+        combined_loader = CombinedLoader([data_loader, dpo_loader], "min_size")
+        trainer.fit(model, combined_loader)
+    else:
+        trainer.fit(model, data_loader)
