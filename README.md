@@ -131,9 +131,9 @@ python train.py --load_model "base_model/RWKV-5-World-3B-v2-20231113-ctx4096.pth
  --lisa_plus_custom_layer_probabilities 1 \
  --lisa_plus_custom_layer_probabilities_profile 'layerprofile/32_Valley.csv' \
  --dpo 1 \
- --dpo_train_file trainset.save \
  --dpo_beta 0.08 \
- --rlhf_max_corpus_len 600
+ --rlhf_max_corpus_len 600 \
+ --rlhf_train_file trainset.save
 ```
 
 ## Orpo Mode
@@ -167,7 +167,8 @@ python train.py --load_model "base_model/RWKV-5-World-0.4B-v2-20231113-ctx4096.p
  --gpu_arch cuda \
  --orpo 1 \
  --orpo_alpha 0.01 \
- --rlhf_max_corpus_len 600
+ --rlhf_max_corpus_len 600 \
+ --rlhf_train_file trainset.save
 ```
 
 ## Todo
