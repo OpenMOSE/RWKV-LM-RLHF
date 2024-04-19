@@ -109,6 +109,10 @@ if __name__ == "__main__":
     parser.add_argument("--rlhf_max_corpus_len", default=600, type=int) #limit maximum dpo dataset token per dpo item. if avoid OoM decrease this value
     parser.add_argument("--rlhf_train_file", default="trainset.save", type=str)#need pytorch tensor type input 
 
+    parser.add_argument("--anarchy_mode", default = 0, type=int) #OpenMOSE anarchy mode
+
+
+
 
 
     
@@ -333,7 +337,10 @@ if __name__ == "__main__":
         for k in model.state_dict():
             if k not in load_keys:
                 load_dict[k] = model.state_dict()[k]
-    model.load_state_dict(load_dict)
+    if args.anarchy_mode:
+        model.load_state_dict(load_dict,strict=False)
+    else:
+        model.load_state_dict(load_dict)
 
     if pl.__version__[0]=='2':
         trainer = Trainer(accelerator=args.accelerator,strategy=args.strategy,devices=args.devices,num_nodes=args.num_nodes,precision=args.precision,
