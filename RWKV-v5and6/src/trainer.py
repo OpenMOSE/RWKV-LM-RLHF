@@ -284,7 +284,7 @@ class train_callback(pl.Callback):
                     except: pass
                 if args.orpo:
                     try:
-                        lll |= {"pref_percentage": trainer.pref_match_percentage, "loss_1": trainer.loss_1_general_or_sft, "loss_2_orpo": trainer.loss_2_orpo}
+                        lll |= {"pref_percentage": trainer.pref_match_percentage, "loss_1_token_chosen": trainer.loss_1_general_or_sft, "loss_2_odds_ratio": trainer.loss_2_orpo}
                     except: pass
                 trainer.my_wandb.log(lll, step=int(real_step))
         if (trainer.is_global_zero) or ('deepspeed_stage_3' in args.strategy): # save pth

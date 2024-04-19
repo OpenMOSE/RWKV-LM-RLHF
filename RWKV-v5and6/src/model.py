@@ -697,49 +697,73 @@ class RWKV(pl.LightningModule):
         sequence_logps = gathered_log_probs.sum(dim=1) # im not sure correct or not
         
         return sequence_logps
-    def pad_sequences2(self, sequences):
-        max_length = 0  # Initialize maximum length
+#    def pad_sequences2(self, sequences):
+#        max_length = 0  # Initialize maximum length##
 
-        for tensor in sequences:
-            max_length = max(max_length, tensor.shape[1])  # Update maximum length for all shapes
+#        for tensor in sequences:
+#            max_length = max(max_length, tensor.shape[1])  # Update maximum length for all shapes
 
-        padded_sequences = []
+#        padded_sequences = []#
 
-        for tensor in sequences:
-            pad_width = (0, max_length - tensor.shape[1])  # Calculate padding width for current tensor
-            padded_tensor = torch.nn.functional.pad(tensor, pad_width)  # Pad using pad_width
-            padded_sequences.append(padded_tensor)
-            print(f'padded_sequences = {padded_tensor.shape}')
+#        for tensor in sequences:
+#            pad_width = (0, max_length - tensor.shape[1])  # Calculate padding width for current tensor
+#            padded_tensor = torch.nn.functional.pad(tensor, pad_width)  # Pad using pad_width
+#            padded_sequences.append(padded_tensor)
+#            print(f'padded_sequences = {padded_tensor.shape}')
             
 
-        return padded_sequences
-    def pad_sequences(self,sequences):
-        max_length = 0  # Initialize maximum length
+#        return padded_sequences
+#    def pad_sequences(self,sequences):
+#        max_length = self.args.orpo_maxpadtoken#0  # Initialize maximum length
 
-        for tensor in sequences:
-            max_length = max(max_length, tensor.shape[0])  # Update maximum length for all shapes
+        #for tensor in sequences:
+        #    max_length = max(max_length, tensor.shape[0])  # Update maximum length for all shapes
 
-        padded_sequences = []
+#        padded_sequences = []
 
-        for tensor in sequences:
-            pad_width = (0, max_length - tensor.shape[0])  # Calculate padding width for current tensor
-            padded_tensor = torch.nn.functional.pad(tensor, pad_width)  # Pad using pad_width
-            padded_sequences.append(padded_tensor)
+#        for tensor in sequences:
+#            pad_width = (0, max_length - tensor.shape[0])  # Calculate padding width for current tensor
+#            padded_tensor = torch.nn.functional.pad(tensor, pad_width)  # Pad using pad_width
+#            padded_sequences.append(padded_tensor)
             #print(f'padded_sequences = {padded_tensor.shape}')
-        return padded_sequences
+#       return padded_sequences
     def training_step(self, batch, batch_idx):
         
         args = self.args
+        #if args.orpo and args.orpo_mysetting:
+        #    print('orpo my setting mode')
+        #    batch_general, batch_orpo = batch
+        #    idx, targets = batch_general#
+
+        #    SFT_idx = []
+            
+        #    SFT_Input = []
+        #    SFT_Target = []
+        #    SFT_Reject = []
+
+        #    for s in range(bsz):
+        #        chosen_input,chosen_output,length_chosen,chosen_ref_prob, reject_input,reject_output,length_reject,reject_ref_prob = batch_orpo[s]
+        #        SFT_Input.append(chosen_input.squeeze(0))
+        #        SFT_Target.append(chosen_output)
+        #        SFT_Reject.append(reject_output)
+            
+        #    SFT_Input = self.pad_sequences(SFT_Input)
+        #    SFT_Target = self.pad_sequence(SFT_Target)
+        #    SFT_Reject = self.pad_sequences(SFT_Reject)
+
+        #    tensor_SFT_Input = torch.stack(SFT_Input, dim=0)
+
 
         if args.orpo:
             batch_general, batch_orpo = batch
             idx, targets = batch_general
 
-            print(f'len(idx) = {len(idx)}')
-            print(f'len(targets) = {len(idx)}')
+            #print(f'len(idx) = {len(idx)}')
+            #print(f'len(targets) = {len(idx)}')
 
 
             loss1 = 0.0
+            lossorpoonly = 0.0
             #self.trainer.loss_1_general_or_sft = float(loss1) # for logging
             
             try: self.trainer.pref_match_percentage
@@ -753,13 +777,6 @@ class RWKV(pl.LightningModule):
             for s in range(bsz):
                 chosen_input,chosen_output,length_chosen,chosen_ref_prob, reject_input,reject_output,length_reject,reject_ref_prob = batch_orpo[s]
 
-                chosen_input_len = len(chosen_input)
-                chosen_output_len = len(chosen_output)
-
-
-                reject_input_len = len(reject_input)
-                reject_output_len=len(reject_output)
-
                 outputs_pos = self(chosen_input)
                 outputs_neg = self(reject_input)
 
@@ -767,11 +784,21 @@ class RWKV(pl.LightningModule):
                 l2_pos_loss = F.cross_entropy(outputs_pos.view(-1, outputs_pos.size(-1)), chosen_output.view(-1))
 
                 # Compute Probs pos and neg
-                pos_prob = self.compute_logps_simple(chosen_output.unsqueeze(0),outputs_pos)
-                neg_prob = self.compute_logps_simple(reject_output.unsqueeze(0),outputs_neg)
+                if args.orpo_type == 0:
+                    pos_prob = self.compute_logps_simple(chosen_output.unsqueeze(0),outputs_pos)
+                    neg_prob = self.compute_logps_simple(reject_output.unsqueeze(0),outputs_neg)
+                else:
+                    l2_pos_loss_temp = F.cross_entropy(outputs_pos.view(-1, outputs_pos.size(-1)), chosen_output.view(-1), reduction='none')
+                    l2_neg_loss = F.cross_entropy(outputs_neg.view(-1, outputs_neg.size(-1)), reject_output.view(-1), reduction='none')
+                    pos_prob = -torch.sum(l2_pos_loss_temp[-length_chosen:])
+                    neg_prob = -torch.sum(l2_neg_loss[-length_chosen:])
+                    del l2_neg_loss
+                    del l2_pos_loss_temp
+                    gc.collect()
+                    torch.cuda.empty_cache()
 
                 # Calculate log odds
-                orpo_ratio = log_odds = (pos_prob - neg_prob) - (torch.log1p(-torch.exp(pos_prob)) - torch.log1p(-torch.exp(neg_prob)))
+                orpo_ratio = (pos_prob - neg_prob) - (torch.log1p(-torch.exp(pos_prob)) - torch.log1p(-torch.exp(neg_prob)))
                 
                 pref_matches += (orpo_ratio > 0)
 
@@ -780,23 +807,28 @@ class RWKV(pl.LightningModule):
                 if args.orpo_debug == 1:
                     print(f'orpo_ratio={orpo_ratio}')
 
-                orpo_loss = torch.mean(l2_pos_loss + orpo_ratio)
+                orpo_loss = torch.mean((l2_pos_loss+orpo_ratio)/2)
+                loss1 = loss1 + l2_pos_loss
                 orpo_loss = L2Wrap.apply(orpo_loss, outputs_pos) #im not sure is this correct?
 
                 loss2 = loss2 + orpo_loss
+                lossorpoonly = lossorpoonly + orpo_ratio
 
                 gc.collect()
                 torch.cuda.empty_cache()
                
             loss2 = loss2 / bsz
+            loss1 = loss1 / bsz
+            lossorpoonly = lossorpoonly / bsz
 
-            self.trainer.loss_2_orpo = float(loss2)
+
+            self.trainer.loss_2_orpo = float(lossorpoonly)
             self.trainer.loss_1_general_or_sft = float(loss1)
             self.trainer.pref_match_percentage = 0.9 * self.trainer.pref_match_percentage + 0.1 * (pref_matches / bsz)
 
             return loss2
 
-        if args.dpo:
+        elif args.dpo:
             batch_general, batch_dpo = batch
             idx, targets = batch_general
 
@@ -826,9 +858,6 @@ class RWKV(pl.LightningModule):
                 if self.inputtalkmax < reject_output_len:
                     self.inputtalkmax = reject_output_len
                 
-                # self.inputtalkmax is total proceed tokens per batch
-        
-                #print(f'Tokens max = {self.inputtalkmax}')
                 chosen_logits = self(chosen_input)
                 loss_chosen = F.cross_entropy(chosen_logits.view(-1, chosen_logits.size(-1)), chosen_output.view(-1), reduction='none') # .squeeze()
                 del chosen_logits
@@ -841,10 +870,6 @@ class RWKV(pl.LightningModule):
                 gc.collect()
                 torch.cuda.empty_cache()
                 reject_prob = -torch.sum(loss_reject[-length_reject:])
-                #del loss_chosen
-                #del loss_reject
-                #gc.collect()
-                #torch.cuda.empty_cache()
                 pref_ratio = args.dpo_beta * (chosen_prob - reject_prob - chosen_ref_prob + reject_ref_prob)
                 pref_matches += (pref_ratio > 0)
                 loss2 = loss2 - F.logsigmoid(pref_ratio)
