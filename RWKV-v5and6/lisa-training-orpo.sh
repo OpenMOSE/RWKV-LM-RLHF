@@ -9,7 +9,7 @@ python train.py --load_model "base_model/RWKV-5-World-0.4B-v2-20231113-ctx4096.p
  --grad_cp 0 --my_testing "" \
  --strategy deepspeed_stage_1\
  --lisa 1 \
- --lisa_active_layer 1 \
+ --lisa_active_layer 2 \
  --lisa_interval_steps 5 \
  --lisa_debug 1 \
  --lisa_rand_seed 0 \
@@ -21,9 +21,10 @@ python train.py --load_model "base_model/RWKV-5-World-0.4B-v2-20231113-ctx4096.p
  --lisa_plus_att_permanent_freeze_params '' \
  --lisa_plus_ffn_permanent_freeze_params '' \
  --lisa_plus_custom_layer_probabilities 1\
- --lisa_plus_custom_layer_probabilities_profile 'layerprofile/24_Valley.csv' \
+ --lisa_plus_custom_layer_probabilities_profile 'layerprofile/24_orpo_2layer.csv' \
  --gpu_arch cuda \
  --orpo 1 \
- --orpo_alpha 0.01 \
+ --orpo_alpha 0.0006 \
+ --orpo_type 1 \
  --rlhf_train_file trainset.save \
  --rlhf_max_corpus_len 600
