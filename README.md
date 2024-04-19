@@ -191,6 +191,10 @@ python train.py --load_model "base_model/RWKV-5-World-0.4B-v2-20231113-ctx4096.p
  --rlhf_train_file trainset.save
 ```
 
+## Anarchy Mode
+   - --anarchy_mode 1
+   - When Anarchy mode is enabled, you are free to add layers as you please. This allows for the addition of layers, such as 16 layers, to existing models like L24D1024, enabling training. With this feature, you can create and train models with any number of parameters you like. This functionality is entirely whimsical and comes with no guarantees. It's a mode meant for experimentation.
+
 ## Todo
    - 1. (Done)Make a layer selection probability profile
    - 2. (Done?)Implement Direct Preference Optimization with LISA
