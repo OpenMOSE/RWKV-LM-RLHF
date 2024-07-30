@@ -65,6 +65,23 @@ python train.py --load_model "models/rwkv-x060-14b-world-v2.1-81%trained-2024052
  --rlhf_max_corpus_len 1024
 ```
 
+## Model Merge
+My model merge command is provided as follows:
+```
+base_model='models/rwkv-x060-14b-world-v2.1-81%trained-20240527-ctx4k.pth'
+lora_checkpoint='14bwo-head-emb/rwkv-1.pth'
+output='14bwo-head-emb/rwkv-1-merged.pth'
+QUANT='nf4' #follow train
+TYPE='lora'
+Lora_scaling=2.0
+
+python merge.py --base_model $base_model \
+--lora_checkpoint $lora_checkpoint \
+--output $output \
+--type '$TYPE' \
+--lora_scaling $Lora_scaling
+```
+
 ## Todo
    - 1. Re-engineering DPO Algorithm with Gradient Checkpointing
    - 2. SimPO research
