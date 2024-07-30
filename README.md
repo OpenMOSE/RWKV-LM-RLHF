@@ -19,6 +19,8 @@ With layer_profile, you can configure full parameter layers, frozen layers, and 
 Frozen layers or adapter layers are compatible with Bitsandbytes NF4 quantization.
 This aims to maximize training performance within limited VRAM capacity.
 
+14B L61D4096,NF4,LoRA(A=8,R=16,Blocks only, no head,emb) on Single RTX4090 
+
 
 ## Orpo Usages
 1. Prepare Orpo Dataset
@@ -36,15 +38,6 @@ This aims to maximize training performance within limited VRAM capacity.
    - set --rlhf_train_file 'YOUR TOKENIZED DATA FILENAME'
 ## DPO Usages
 1. This is under development.
-
-
-
-
-## This repo works
-   - 1. Freeze all layers
-   - 2. Choose active layers(lisa_active_layer) randomly every lisa_interval_steps
-   - 3. In chosen layer, freeze elements randomly.(20240409Update)   
-   - 4. Foward and backward
 
 I wish performance close to full parameter learning
 
@@ -65,7 +58,7 @@ python train.py --load_model "models/rwkv-x060-14b-world-v2.1-81%trained-2024052
  --layer_profile 'layerprofile/61_TEST_head_emb.csv' \
  --quant 1 \
  --quant_mode 'nf4'\
- --gpu_arch 'cuda' \
+ --gpu_arch 'rocm' \
  --orpo 1 \
  --orpo_alpha 0.0004 \
  --rlhf_train_file dataset_3b.save \
