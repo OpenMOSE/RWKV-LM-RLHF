@@ -1,0 +1,26 @@
+python train.py --load_model "base_model/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth"\
+ --wandb "RWKV-LM-LISA+ Valley v6 1.6b orpo experiment" --proj_dir "1b6orpo"\
+ --data_file "dataset/dataset"\
+ --data_type "binidx" --vocab_size 65536 --ctx_len 2048 \
+ --epoch_steps 1250 --epoch_count 1000 --epoch_begin 0 --epoch_save 1 \
+ --micro_bsz 2 --n_layer 24 --n_embd 4096\
+ --lr_init 1e-5 --lr_final 1e-6 \
+ --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
+ --accelerator gpu --devices 1 --precision bf16 \
+ --grad_cp 1 --my_testing "x060" \
+ --strategy deepspeed_stage_3_offload \
+ --lisa 1 \
+ --lisa_active_layer 1 \
+ --lisa_interval_steps 5 \
+ --lisa_debug 1 \
+ --lisa_rand_seed 0 \
+ --lisa_plus_enabled 1 \
+ --lisa_plus_att_train_params "att.receptance.weight,att.key.weight,att.value.weight,att.gate.weight,att.output.weight" \
+ --lisa_plus_att_active_weight 2 \
+ --lisa_plus_ffn_train_params "ffn.receptance.weight,ffn.key.weight,ffn.value.weight" \
+ --lisa_plus_ffn_active_weight 2 \
+ --lisa_plus_att_permanent_freeze_params '' \
+ --lisa_plus_ffn_permanent_freeze_params '' \
+ --lisa_plus_custom_layer_probabilities 1\
+ --lisa_plus_custom_layer_probabilities_profile 'layerprofile/32_Valley.csv' \
+ --gpu_arch cuda
