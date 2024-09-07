@@ -44,7 +44,7 @@ class train_callback(pl.Callback):
         #		model.to(pl_module.device)
         	
         #print(0)
-        torch.cuda.empty_cache()
+        #torch.cuda.empty_cache()
 
         #np.random.seed(trainer.global_step + args.lisa_rand_seed)
         
@@ -163,10 +163,14 @@ class train_callback(pl.Callback):
             self.log("loss", trainer.my_epoch_loss, prog_bar=True, on_step=True)
             # self.log("s", real_step, prog_bar=True, on_step=True)
 
-            if len(args.wandb) > 0:
-                lll = {"loss": trainer.my_loss, "lr": trainer.my_lr, "wd": trainer.my_wd, "Gtokens": real_step * token_per_step / 1e9}
+            if len(args.wandb) > 0: #"wd": trainer.my_wd
+                lll = {"loss": trainer.my_loss, "lr": trainer.my_lr, "Gtokens": real_step * token_per_step / 1e9}
                 if kt_s > 0:
                     lll["kt/s"] = kt_s
+                if args.distillation:
+                    try:
+                        lll |= {"smooth_loss": trainer.smooth_loss, "kl_loss": trainer.kl_loss}
+                    except: pass
                 if args.dpo:
                     try:
                         lll |= {"pref_percentage": trainer.pref_match_percentage, "loss_1": trainer.loss_1_general_or_sft, "loss_2_dpo": trainer.loss_2_dpo}
@@ -194,7 +198,7 @@ class train_callback(pl.Callback):
             dataset = trainer.train_dataloader.dataset
         else:
             dataset = trainer.train_dataloader.dataset.datasets
-        assert "MyDataset" in str(dataset)
+        assert "MyDataset" in str(dataset) or 'HDF5TopKTensorDataset' in str(dataset)
         if args.dpo or args.orpo:
             dataset[0].global_rank = trainer.global_rank
             dataset[0].real_epoch = int(args.epoch_begin + trainer.current_epoch)

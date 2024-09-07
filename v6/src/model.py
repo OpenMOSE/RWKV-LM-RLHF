@@ -344,7 +344,29 @@ def make_emb(*args, **kwargs):
         return LoraEmbedding(*args, **kwargs)
 
 
+# class LabelSmoothingLoss(torch.nn.Module):
+#     def __init__(self, smoothing=0.1):
+#         super(LabelSmoothingLoss, self).__init__()
+#         self.smoothing = smoothing
 
+#     def forward(self, pred, target):
+#         n_classes = pred.size(-1)
+#         one_hot = torch.zeros_like(pred).scatter(1, target.unsqueeze(1), 1)
+#         smooth_one_hot = one_hot * (1 - self.smoothing) + self.smoothing / n_classes
+#         log_prob = F.log_softmax(pred, dim=-1)
+#         return torch.sum(-smooth_one_hot * log_prob, dim=-1)
+    
+class LabelSmoothingLoss(torch.nn.Module):
+    def __init__(self, smoothing=0.1):
+        super(LabelSmoothingLoss, self).__init__()
+        self.smoothing = smoothing
+
+    def forward(self, pred, target):
+        n_classes = pred.size(-1)
+        one_hot = torch.zeros_like(pred).scatter(1, target.unsqueeze(1), 1)
+        smooth_one_hot = one_hot * (1 - self.smoothing) + self.smoothing / n_classes
+        log_prob = F.log_softmax(pred, dim=-1)
+        return torch.sum(-smooth_one_hot * log_prob, dim=-1)
 
 
 
@@ -408,149 +430,10 @@ if 'x060' in os.environ["RWKV_MY_TESTING"]:
 
     def RUN_CUDA_RWKV6(B, T, C, H, r, k, v, w, u):
         return WKV_6.apply(B, T, C, H, r, k, v, w, u)
-else:
-    if 'rocm' in os.environ["RWKV_MY_ARCHITECTURE"]:
-        wkv5_cuda = load(name="wkv5", sources=["cuda/wkv5_op.cpp", f"cuda/wkv5_cuda.cu"],
-                    verbose=True, extra_cuda_cflags=["-fopenmp -ffast-math -munsafe-fp-atomics --gpu-max-threads-per-block=120 -enable-vectorize-compares", f"-D_N_={HEAD_SIZE}"])
-    else:
-        wkv5_cuda = load(name="wkv5", sources=["cuda/wkv5_op.cpp", f"cuda/wkv5_cuda.cu"],
-                    verbose=True, extra_cuda_cflags=["-res-usage", "--use_fast_math", "-O3", "-Xptxas -O3", "--extra-device-vectorization", f"-D_N_={HEAD_SIZE}"])
-        
-    class WKV_5(torch.autograd.Function):
-        @staticmethod
-        def forward(ctx, B, T, C, H, r, k, v, w, u):
-            with torch.no_grad():
-                assert r.dtype == torch.bfloat16
-                assert k.dtype == torch.bfloat16
-                assert v.dtype == torch.bfloat16
-                assert w.dtype == torch.bfloat16
-                assert u.dtype == torch.bfloat16
-                assert HEAD_SIZE == C // H
-                ctx.B = B
-                ctx.T = T
-                ctx.C = C
-                ctx.H = H
-                assert r.is_contiguous()
-                assert k.is_contiguous()
-                assert v.is_contiguous()
-                assert w.is_contiguous()
-                assert u.is_contiguous()
-                ew = (-torch.exp(w.float())).contiguous()
-                eew = (torch.exp(ew)).contiguous()
-                ctx.save_for_backward(r, k, v, eew, ew, u)
-                y = torch.empty((B, T, C), device=r.device, dtype=torch.bfloat16, memory_format=torch.contiguous_format) # .uniform_(-1, 1)
-                wkv5_cuda.forward(B, T, C, H, r, k, v, eew, u, y)
-                return y
 
-        @staticmethod
-        def backward(ctx, gy):
-            with torch.no_grad():
-                assert gy.dtype == torch.bfloat16
-                B = ctx.B
-                T = ctx.T
-                C = ctx.C
-                H = ctx.H
-                assert gy.is_contiguous()
-                r, k, v, eew, ew, u = ctx.saved_tensors
-                gr = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format) # .uniform_(-1, 1)
-                gk = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format) # .uniform_(-1, 1)
-                gv = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format) # .uniform_(-1, 1)
-                gw = torch.empty((B, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format) # .uniform_(-1, 1)
-                gu = torch.empty((B, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format) # .uniform_(-1, 1)
-                wkv5_cuda.backward(B, T, C, H, r, k, v, eew, ew, u, gy, gr, gk, gv, gw, gu)
-                
-                gw = torch.sum(gw, 0).view(H, C//H)
-                gu = torch.sum(gu, 0).view(H, C//H)
-                return (None, None, None, None, gr, gk, gv, gw, gu)
-
-    def RUN_CUDA_RWKV5(B, T, C, H, r, k, v, w, u):
-        return WKV_5.apply(B, T, C, H, r, k, v, w, u)
 
 ########################################################################################################
 
-class RWKV_TimeMix_RWKV5(MyModule):
-    def __init__(self, args, layer_id):
-        super().__init__()
-        self.args = args
-        self.layer_id = layer_id
-
-        self.head_size = args.head_size_a
-        assert HEAD_SIZE == self.head_size # change HEAD_SIZE to match args.head_size_a
-        self.n_head = args.dim_att // self.head_size
-        assert args.dim_att % self.n_head == 0
-        self.head_size_divisor = args.head_size_divisor
-
-        with torch.no_grad():
-            ratio_0_to_1 = layer_id / (args.n_layer - 1)  # 0 to 1
-            ratio_1_to_almost0 = 1.0 - (layer_id / args.n_layer)  # 1 to ~0
-            ddd = torch.ones(1, 1, args.n_embd)
-            for i in range(args.n_embd):
-                ddd[0, 0, i] = i / args.n_embd
-
-            # fancy time_mix
-            self.time_mix_k = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
-            self.time_mix_v = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0) + 0.3 * ratio_0_to_1)
-            self.time_mix_r = nn.Parameter(torch.pow(ddd, 0.5 * ratio_1_to_almost0))
-            self.time_mix_g = nn.Parameter(torch.pow(ddd, 0.5 * ratio_1_to_almost0))
-
-            # fancy time_decay
-            decay_speed = torch.ones(args.dim_att)
-            for n in range(args.dim_att):
-                decay_speed[n] = -6 + 5 * (n / (args.dim_att - 1)) ** (0.7 + 1.3 * ratio_0_to_1)
-            self.time_decay = nn.Parameter(decay_speed.reshape(self.n_head, self.head_size))
-            # print(layer_id, self.time_decay.flatten()[:3].cpu().numpy(), '...', self.time_decay.flatten()[-3:].cpu().numpy())
-
-            tmp = torch.zeros(args.dim_att)
-            for n in range(args.dim_att):
-                zigzag = ((n + 1) % 3 - 1) * 0.1
-                tmp[n] = ratio_0_to_1 * (1 - (n / (args.dim_att - 1))) + zigzag
-
-            self.time_faaaa = nn.Parameter(tmp.reshape(self.n_head, self.head_size))
-
-        self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
-        self.receptance = nn.Linear(args.n_embd, args.dim_att, bias=False)
-        self.key = nn.Linear(args.n_embd, args.dim_att, bias=False)
-
-        self.value = nn.Linear(args.n_embd, args.dim_att, bias=False)
-        self.output = nn.Linear(args.dim_att, args.n_embd, bias=False)
-        self.gate = nn.Linear(args.n_embd, args.dim_att, bias=False)
-        self.ln_x = nn.GroupNorm(self.n_head, args.dim_att)
-
-    @MyFunction
-    def jit_func(self, x):
-        B, T, C = x.size()
-
-        xx = self.time_shift(x) # Mix x with the previous timestep to produce xk, xv, xr
-        xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
-        xv = x * self.time_mix_v + xx * (1 - self.time_mix_v)
-        xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
-        xg = x * self.time_mix_g + xx * (1 - self.time_mix_g)
-
-        r = self.receptance(xr)
-        k = self.key(xk)
-        v = self.value(xv)
-        g = F.silu(self.gate(xg))
-
-        return r, k, v, g
-
-    @MyFunction
-    def jit_func_2(self, x, g):
-        B, T, C = x.size()
-        x = x.view(B * T, C)
-        
-        x = self.ln_x(x / self.head_size_divisor).view(B, T, C)
-        x = self.output(x * g)
-        return x
-
-    def forward(self, x):
-        B, T, C = x.size()
-        H = self.n_head
-
-        r, k, v, g = self.jit_func(x)
-
-        x = RUN_CUDA_RWKV5(B, T, C, H, r, k, v, w=self.time_decay, u=self.time_faaaa)
-
-        return self.jit_func_2(x, g)
 
 class RWKV_Tmix_x060(MyModule):
     def __init__(self, args, layer_id):
@@ -688,34 +571,34 @@ class RWKV_Tmix_x060(MyModule):
 
 ########################################################################################################
 
-class RWKV_ChannelMix(MyModule):
-    def __init__(self, args, layer_id):
-        super().__init__()
-        self.args = args
-        self.layer_id = layer_id
-        self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
+# class RWKV_ChannelMix(MyModule):
+#     def __init__(self, args, layer_id):
+#         super().__init__()
+#         self.args = args
+#         self.layer_id = layer_id
+#         self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
 
-        with torch.no_grad():  # fancy init of time_mix
-            ratio_1_to_almost0 = 1.0 - (layer_id / args.n_layer)  # 1 to ~0
-            ddd = torch.ones(1, 1, args.n_embd)
-            for i in range(args.n_embd):
-                ddd[0, 0, i] = i / args.n_embd
-            self.time_mix_k = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
-            self.time_mix_r = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
+#         with torch.no_grad():  # fancy init of time_mix
+#             ratio_1_to_almost0 = 1.0 - (layer_id / args.n_layer)  # 1 to ~0
+#             ddd = torch.ones(1, 1, args.n_embd)
+#             for i in range(args.n_embd):
+#                 ddd[0, 0, i] = i / args.n_embd
+#             self.time_mix_k = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
+#             self.time_mix_r = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
         
-        self.key = nn.Linear(args.n_embd, args.dim_ffn, bias=False)
-        self.receptance = nn.Linear(args.n_embd, args.n_embd, bias=False)
-        self.value = nn.Linear(args.dim_ffn, args.n_embd, bias=False)
+#         self.key = nn.Linear(args.n_embd, args.dim_ffn, bias=False)
+#         self.receptance = nn.Linear(args.n_embd, args.n_embd, bias=False)
+#         self.value = nn.Linear(args.dim_ffn, args.n_embd, bias=False)
 
-    @MyFunction
-    def forward(self, x):
-        xx = self.time_shift(x)
-        xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
-        xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
-        k = self.key(xk)
-        k = torch.relu(k) ** 2
-        kv = self.value(k)
-        return torch.sigmoid(self.receptance(xr)) * kv
+#     @MyFunction
+#     def forward(self, x):
+#         xx = self.time_shift(x)
+#         xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
+#         xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
+#         k = self.key(xk)
+#         k = torch.relu(k) ** 2
+#         kv = self.value(k)
+#         return torch.sigmoid(self.receptance(xr)) * kv
 
 class RWKV_CMix_x060(MyModule):
     def __init__(self, args, layer_id):
@@ -824,16 +707,16 @@ class Block(nn.Module):
         else:
             if 'x060' in os.environ["RWKV_MY_TESTING"]:
                 self.att = RWKV_Tmix_x060(args, layer_id)
-            else:
-                self.att = RWKV_TimeMix_RWKV5(args, layer_id)
+            # else:
+            #     self.att = RWKV_TimeMix_RWKV5(args, layer_id)
 
         if 'g' in os.environ["RWKV_MY_TESTING"]:
             self.ffn = MishGLU(args, layer_id)
         else:
             if 'x060' in os.environ["RWKV_MY_TESTING"]:
                 self.ffn = RWKV_CMix_x060(args, layer_id)
-            else:
-                self.ffn = RWKV_ChannelMix(args, layer_id)
+            # else:
+            #     self.ffn = RWKV_ChannelMix(args, layer_id)
         
         if args.tiny_att_dim > 0 and self.layer_id == args.tiny_att_layer:
             self.tiny_ln = nn.LayerNorm(args.n_embd)
@@ -1048,24 +931,29 @@ class RWKV(pl.LightningModule):
         lr_3x = set()
         for n, p in self.named_parameters():
             if (("_w1" in n) or ("_w2" in n)) and (args.layerwise_lr > 0):
-                lr_1x.add(n)
+                if args.limited_lora == False:
+                    lr_1x.add(n)
             elif (("time_mix" in n) or ("time_maa" in n)) and (args.layerwise_lr > 0):
                 if args.my_pile_stage == 2:
                     lr_2x.add(n)
                 else:
-                    lr_1x.add(n)
+                    if args.limited_lora == False:
+                        lr_1x.add(n)
             elif (("time_decay" in n) or ("time_daaaa" in n)) and (args.layerwise_lr > 0):
                 if args.my_pile_stage == 2:
                     lr_3x.add(n)
                 else:
-                    lr_2x.add(n)
+                    if args.limited_lora == False:
+                        lr_2x.add(n)
             elif ("time_faaaa" in n) and (args.layerwise_lr > 0):
                 if args.my_pile_stage == 2:
                     lr_2x.add(n)
                 else:
-                    lr_1x.add(n)
+                    if args.limited_lora == False:
+                        lr_1x.add(n)
             elif ("time_first" in n) and (args.layerwise_lr > 0):
-                lr_3x.add(n)
+                if args.limited_lora == False:
+                    lr_3x.add(n)
             elif (len(p.squeeze().shape) >= 2) and (args.weight_decay > 0):
                 lr_decay.add(n)
             else:
@@ -1205,61 +1093,133 @@ class RWKV(pl.LightningModule):
         normalized_sequence_logps = sequence_logps / effective_lengths
         
         return sequence_logps
-#    def pad_sequences2(self, sequences):
-#        max_length = 0  # Initialize maximum length##
 
-#        for tensor in sequences:
-#            max_length = max(max_length, tensor.shape[1])  # Update maximum length for all shapes
+    def distillation_loss(self, student_logits, teacher_probs, temperature):
+        student_log_probs = F.log_softmax(student_logits / temperature, dim=-1)
+        teacher_probs = F.softmax(teacher_probs / temperature, dim=-1)
+        return F.kl_div(student_log_probs, teacher_probs, reduction='batchmean') * (temperature ** 2)
+    
+    def kl_divergence_loss(self, student_logits, teacher_probs, temperature):
+        student_probs = F.softmax(student_logits / temperature, dim=-1)
+        teacher_probs = F.softmax(teacher_probs / temperature, dim=-1)
+        return F.kl_div(student_probs.log(), teacher_probs, reduction='none').sum(-1) * (temperature ** 2)
 
-#        padded_sequences = []#
 
-#        for tensor in sequences:
-#            pad_width = (0, max_length - tensor.shape[1])  # Calculate padding width for current tensor
-#            padded_tensor = torch.nn.functional.pad(tensor, pad_width)  # Pad using pad_width
-#            padded_sequences.append(padded_tensor)
-#            print(f'padded_sequences = {padded_tensor.shape}')
-            
-
-#        return padded_sequences
-#    def pad_sequences(self,sequences):
-#        max_length = self.args.orpo_maxpadtoken#0  # Initialize maximum length
-
-        #for tensor in sequences:
-        #    max_length = max(max_length, tensor.shape[0])  # Update maximum length for all shapes
-
-#        padded_sequences = []
-
-#        for tensor in sequences:
-#            pad_width = (0, max_length - tensor.shape[0])  # Calculate padding width for current tensor
-#            padded_tensor = torch.nn.functional.pad(tensor, pad_width)  # Pad using pad_width
-#            padded_sequences.append(padded_tensor)
-            #print(f'padded_sequences = {padded_tensor.shape}')
-#       return padded_sequences
     def training_step(self, batch, batch_idx):
         
         args = self.args
-        #if args.orpo and args.orpo_mysetting:
-        #    print('orpo my setting mode')
-        #    batch_general, batch_orpo = batch
-        #    idx, targets = batch_general#
 
-        #    SFT_idx = []
+        
+        
+        # if args.distillation:
+        #     #print('Distillation Training Step')
+
+        #     temperature = args.temperature
+        #     alpha = args.alpha
+        #     smoothing = args.smoothing
+
+ 
+        #     input_ids = batch['input_ids']
+        #     top_k_values = batch['top_k_values']
+        #     top_k_indices = batch['top_k_indices']
+        #     attention_mask = batch['attention_mask']
+
+        #     # get logits from student model
+        #     student_logits = self(input_ids)
+
+        #     # mask
+        #     #mask = attention_mask[:, 1:].contiguous().view(-1)
+        #     mask = attention_mask[:, 1:].contiguous().view(-1)
+        #     sum_mask = torch.sum(mask).item()
+
+        #     if sum_mask == 0:
+        #         return torch.tensor([0.0], requires_grad=True)
+
+        #     # Label Smoothing Loss
+        #     label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+        #     targets = input_ids[:, 1:].contiguous().view(-1)
+        #     student_logits_shifted = student_logits[:, :-1].contiguous().view(-1, student_logits.size(-1))
+        #     smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
+
+        #     # calc teacher probs
+        #     teacher_probs = top_k_values[:, :-1]
+        #     teacher_indices = top_k_indices[:, :-1]
             
-        #    SFT_Input = []
-        #    SFT_Target = []
-        #    SFT_Reject = []
-
-        #    for s in range(bsz):
-        #        chosen_input,chosen_output,length_chosen,chosen_ref_prob, reject_input,reject_output,length_reject,reject_ref_prob = batch_orpo[s]
-        #        SFT_Input.append(chosen_input.squeeze(0))
-        #        SFT_Target.append(chosen_output)
-        #        SFT_Reject.append(reject_output)
+        #     # calc teacher's top-k from student logits
+        #     student_top_k_logits = torch.gather(student_logits[:, :-1], -1, teacher_indices)
             
-        #    SFT_Input = self.pad_sequences(SFT_Input)
-        #    SFT_Target = self.pad_sequence(SFT_Target)
-        #    SFT_Reject = self.pad_sequences(SFT_Reject)
+        #     kl_loss = self.kl_divergence_loss(student_top_k_logits, teacher_probs, temperature)
 
-        #    tensor_SFT_Input = torch.stack(SFT_Input, dim=0)
+        #     # calc loss
+        #     if sum_mask == mask.shape[0]:
+        #         loss = alpha * smooth_loss.mean() + (1 - alpha) * kl_loss.mean()
+        #         #print('no mask')
+        #     else:
+        #         smooth_loss = torch.sum(smooth_loss * mask) / sum_mask
+        #         kl_loss = torch.sum(kl_loss.view(-1) * mask) / sum_mask
+        #         loss = alpha * smooth_loss + (1 - alpha) * kl_loss
+
+        #         self.trainer.smooth_loss = float(smooth_loss)
+        #         self.trainer.kl_loss = float(kl_loss)
+
+        #     return L2Wrap.apply(loss, student_logits)
+
+        if args.distillation:
+            temperature = args.temperature
+            alpha = args.alpha
+            smoothing = args.smoothing
+
+            input_ids = batch['input_ids']
+            top_k_values = batch['top_k_values']
+            top_k_indices = batch['top_k_indices']
+            attention_mask = batch['attention_mask']
+
+            # Forward: input_ids[:, :-1]を使用
+            student_logits = self(input_ids[:, :-1])
+
+            # 評価: input_ids[:, 1:]を使用
+            targets = input_ids[:, 1:].contiguous().view(-1)
+
+            # マスクの調整
+            mask = attention_mask[:, 1:].contiguous().view(-1)
+            sum_mask = torch.sum(mask).item()
+
+            if sum_mask == 0:
+                return torch.tensor([0.0], requires_grad=True)
+
+            # Label Smoothing Loss
+            label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+            student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
+            #print(f'shape student_logits = {student_logits.shape } targets= {targets.shape}')
+            smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
+
+            # Top-k teacher logitsを使用したKL-divergence loss
+            teacher_probs = top_k_values[:, :-1]
+            teacher_indices = top_k_indices[:, :-1]
+            
+            # 学生モデルのlogitsからTop-k値を取得
+            student_top_k_logits = torch.gather(student_logits, -1, teacher_indices)
+            
+            kl_loss = self.kl_divergence_loss(student_top_k_logits, teacher_probs, temperature)
+
+            # Lossの計算
+            if sum_mask == mask.shape[0]:
+                loss = alpha * smooth_loss.mean() + (1 - alpha) * kl_loss.mean()
+            else:
+                smooth_loss = torch.sum(smooth_loss * mask) / sum_mask
+                kl_loss = torch.sum(kl_loss.view(-1) * mask) / sum_mask
+                loss = alpha * smooth_loss + (1 - alpha) * kl_loss
+
+            self.trainer.smooth_loss = float(smooth_loss)
+            self.trainer.kl_loss = float(kl_loss)
+
+            return L2Wrap.apply(loss, student_logits)
+
+
+
+
+
+        
 
 
         if args.orpo:
@@ -1315,7 +1275,7 @@ class RWKV(pl.LightningModule):
                     reject_input = F.pad(reject_input, (0, max_len - len2))
                     reject_output = F.pad(reject_output, (0, max_len - len2))
                     reject_mask = F.pad(reject_mask, (0, max_len - len2))
-
+ 
                 #print(f'VRAM chosen_input = {self.tensor_memory_size(chosen_input)} mbytes')
                 #print(f'VRAM chosen_output = {self.tensor_memory_size(chosen_output)} mbytes')
 
@@ -1510,18 +1470,6 @@ class RWKV(pl.LightningModule):
                 loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), reduction='none')
                 # loss_raw = loss
                 loss = torch.sum(loss * mask) / sum_mask
-
-                # torch.set_printoptions(threshold=10000)
-                # if True: #self.global_rank == 1:
-                #     tmp = ''
-                #     sss = 0
-                #     ccc = 0
-                #     for i in range(mask.shape[0]):
-                #         if mask[i] > 0:
-                #             tmp += str(idx.view(-1)[i].item()) + ','
-                #             sss += loss_raw.view(-1)[i].float().item()
-                #             ccc += 1
-                #     print('rank', self.global_rank, 'loss', loss.item(), 'lavg', sss / ccc)#, 'tmp', tmp, 'input', idx)
 
         return L2Wrap.apply(loss, logits)
 

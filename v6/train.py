@@ -85,42 +85,28 @@ if __name__ == "__main__":
     parser.add_argument("--layer_profile",default='layerprofile/24_test.csv',type=str)
     parser.add_argument("--quant", default=1, type=int) #Quantize NF4 on LoRA Layers
     parser.add_argument("--quant_mode", default='nf4', type=str) #Quantize NF4 on LoRA Layers or freezing
+
+    parser.add_argument("--limited_lora", default=1, type=int)
     
-    #parser.add_argument("--lisa", default=1, type=int) #if 1 enable LISA Training mode
-    #parser.add_argument("--lisa_active_layer", default=2, type=int) # Train Active Layers on each step
-    #parser.add_argument("--lisa_interval_steps",default=10,type=int) # Change Active Layer Interval
-    #parser.add_argument("--lisa_debug",default=1,type=int)
-    #parser.add_argument("--lisa_rand_seed",default=0,type=int)
-
-    
-
-    #parser.add_argument("--lisa_plus_enabled",default=0,type=int)# Enable LISA+ Training
-    #parser.add_argument("--lisa_plus_att_train_params",default='att.receptance.weight,att.key.weight,att.value.weight,att.gate.weight,att.output.weight',type=str)
-    #parser.add_argument("--lisa_plus_att_active_weight",default=3,type=int)
-    #parser.add_argument("--lisa_plus_ffn_train_params",default='ffn.receptance.weight,ffn.key.weight,ffn.value.weight',type=str)
-    #parser.add_argument("--lisa_plus_ffn_active_weight",default=2,type=int)
-    #parser.add_argument("--lisa_plus_att_permanent_freeze_params",default='att.output.weight',type=str)
-    #parser.add_argument("--lisa_plus_ffn_permanent_freeze_params",default='ffn.value.weight',type=str)
-
-    #parser.add_argument("--lisa_plus_custom_layer_probabilities",default=1,type=int)# Enable Custom Layer Probabilities
-    #parser.add_argument("--lisa_plus_custom_layer_probabilities_profile",default="layerprofile/24_IncreaseExtreme.csv",type=str) #Layer Profile File(CSV)
 
 
     parser.add_argument("--dpo", default=0, type=int) 
     parser.add_argument("--dpo_beta", default=0.01, type=float)
-    #parser.add_argument("--dpo_general_corpus_ratio", default=0, type=float) #now deleted combined mode you can set only 0
 
     parser.add_argument("--orpo", default=0, type=int) #orpo
-    #parser.add_argument("--orpo_mysetting", default=1, type=int) #orpo
     parser.add_argument("--orpo_alpha", default=0.01, type=float) #orpo
-    #parser.add_argument("--orpo_debug", default=1, type=int) #orpo
-    #parser.add_argument("--orpo_maxpadtoken", default=1024, type=int) #orpo
-    #parser.add_argument("--orpo_type", default=0, type=int) #Orpo Type0 PaperImplement Type1 OpenMOSE Special
-
     parser.add_argument("--rlhf_max_corpus_len", default=1024, type=int) #limit maximum dpo dataset token per dpo item. if avoid OoM decrease this value
     parser.add_argument("--rlhf_train_file", default="trainset.save", type=str)#need pytorch tensor type input 
 
-    #parser.add_argument("--anarchy_mode", default = 0, type=int) #OpenMOSE anarchy mode
+    
+    parser.add_argument("--distillation", default=0, type=int)
+    parser.add_argument("--random_mode", default=1, type=int)
+    parser.add_argument("--temperature", default=2.0, type=float)
+    parser.add_argument("--alpha", default=0.5, type=float)
+    parser.add_argument("--smoothing", default=0.1, type=float)
+    parser.add_argument("--top_k", default=100, type=int)
+    parser.add_argument("--distillation_train_file", default='datasets/test_jp_logits.h5', type=str)
+
 
 
 
@@ -303,10 +289,18 @@ if __name__ == "__main__":
     from src.trainer import train_callback, generate_init_weight
     from src.dataset import MyDataset
     from src.dpodataset import DPODataset
+    from src.distillationdataset import HDF5TopKTensorDataset,collate_fn
     if args.dpo or args.orpo:
         dpo_train_data = DPODataset(args)
 
     train_data = MyDataset(args)
+
+    if args.distillation:
+        distillation_data = HDF5TopKTensorDataset(args,args.distillation_train_file,args.top_k,args.ctx_len)
+
+
+
+
     args.vocab_size = train_data.vocab_size
     
     from src.model import RWKV , LoraLinear
@@ -437,11 +431,11 @@ if __name__ == "__main__":
                     print(f'  LoRA additionally training parameter {pname}')
                     param.requires_grad = True
 
-        for i in range(args.n_layer):
-            text = f'blocks.{str(i)}.'
-            if LAYER_CONFIG[f'{str(i)}']['mode'] == 'full' and text in name:
-                print(f'  FullParameter additionally training parameter {pname}')
-                param.requires_grad = True
+        #for i in range(args.n_layer):
+        #    text = f'blocks.{str(i)}.'
+        #    if LAYER_CONFIG[f'{str(i)}']['mode'] == 'full' and text in name:
+        #        print(f'  FullParameter additionally training parameter {pname}')
+        #        param.requires_grad = True
 
 
     #if args.lisa:
@@ -524,15 +518,22 @@ if __name__ == "__main__":
         trainer.strategy.config["zero_optimization"]["reduce_bucket_size"] = args.ds_bucket_mb * 1000 * 1000
 
     # must set shuffle=False, persistent_workers=False (because worker is in another thread)
-    data_loader = DataLoader(train_data, shuffle=False, pin_memory=True, batch_size=args.micro_bsz, num_workers=1, persistent_workers=False, drop_last=True)
     if args.orpo or args.dpo:
         if args.dpo == 1:
             args.dpo = 0
         print("RLHF Mode") 
         from pytorch_lightning.trainer.supporters import CombinedLoader
+        data_loader = DataLoader(train_data, shuffle=False, pin_memory=True, batch_size=args.micro_bsz, num_workers=1, persistent_workers=False, drop_last=True)
         dpo_loader = DataLoader(dpo_train_data, shuffle=False, pin_memory=True, batch_size=args.micro_bsz, num_workers=1, persistent_workers=False, drop_last=True, collate_fn=lambda x:x)
         combined_loader = CombinedLoader([data_loader, dpo_loader], "min_size")
         trainer.fit(model, combined_loader)
+    if args.distillation:
+        print('Distillation Training Mode')
+        print('This feature is still in experiment')
+        print('')
+        data_loader = DataLoader(distillation_data, shuffle=False, pin_memory=True, batch_size=args.micro_bsz, num_workers=1, persistent_workers=False, drop_last=True, collate_fn=collate_fn)
+        #print('')
+        trainer.fit(model, data_loader)
     #if args.dpo:
     #    print("Direct Preference Optimization Mode Enabled.") 
     #    from pytorch_lightning.trainer.supporters import CombinedLoader
@@ -540,4 +541,5 @@ if __name__ == "__main__":
     #    combined_loader = CombinedLoader([data_loader, dpo_loader], "min_size")
     #    trainer.fit(model, combined_loader)
     else:
+        data_loader = DataLoader(train_data, shuffle=False, pin_memory=True, batch_size=args.micro_bsz, num_workers=1, persistent_workers=False, drop_last=True)
         trainer.fit(model, data_loader)
