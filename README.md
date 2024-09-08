@@ -11,6 +11,12 @@ CUDA and Rocm Supported.(Tested on MI100 Rocm6.1.2 + Bitsandbytes(multi backend 
 
 MultiGPU with quantization Supported.(Monkey implement) 
 
+## 2024.08.09 Distillation Test
+Test support for RWKV's distillation training.
+Using the teacher model, I obtain logits for the dataset and save them according to the set top-k. These are then used for training the student model.
+
+In my environment, using a single RTX4090, I pruned layers from L32D4096 to L25D4096, and performed recovery training using LoRA (Alpha 128).
+
 ## Refactoring of the ORPO algorithm
 A key feature of ORPO is that it allows for simultaneous SFT and aligning. By adjusting the orpo_alpha value, you can control the ratio between SFT and aligning.When the alignment training ratio is high, it seems beneficial to lower the learning rate to around 1e-6.
 
