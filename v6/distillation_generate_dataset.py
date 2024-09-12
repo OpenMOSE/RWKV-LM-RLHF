@@ -17,20 +17,23 @@ import concurrent.futures
 import h5py
 from torch.utils.data import Dataset, DataLoader
 
+
+
 parser = ArgumentParser()
 
-parser.add_argument("--load_model", default="models/RWKV-x060-Jpn-7B-20240816-ctx4096.pth", type=str)
-parser.add_argument("--input_csv", default="datasets/test_jp.csv", type=str)
-parser.add_argument("--output_parquet", default="datasets/test_jp_logits.h5", type=str)
+parser.add_argument("--load_model", default="models/RWKV-x060-Jpn-14B-20240819-ctx4096.pth", type=str)
+parser.add_argument("--load_initial_state", default="", type=str)
+parser.add_argument("--input_csv", default="datasets/test_jp_en.csv", type=str)
+parser.add_argument("--output_parquet", default="datasets/test_jp_en.h5", type=str)
 parser.add_argument("--endtoken", default="\n\n\x17", type=str)
-parser.add_argument("--target_pair_count", default=30000, type=int)
+parser.add_argument("--target_pair_count", default=60000, type=int)
 #\x17
 args2 = parser.parse_args()
 torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.allow_tf32 = True
 torch.backends.cuda.matmul.allow_tf32 = True
 os.environ["RWKV_JIT_ON"] = "1"
-os.environ["RWKV_CUDA_ON"] = "1"  # '1' to compile CUDA kernel (10x faster), requires c++ compiler & cuda libraries
+os.environ["RWKV_CUDA_ON"] = "0"  # '1' to compile CUDA kernel (10x faster), requires c++ compiler & cuda libraries
 
 from rwkv.model import RWKV
 from rwkv.utils import PIPELINE
@@ -39,7 +42,7 @@ from rwkv.utils import PIPELINE
 
 args = types.SimpleNamespace()
 
-args.strategy = "cuda fp16"  # use CUDA, fp16
+args.strategy = "cuda fp16i8"  # use CUDA, fp16
 
 args.MODEL_NAME = args2.load_model
 
@@ -64,6 +67,69 @@ model_state = None
 DPO_pair_number = args2.target_pair_count # from 2 to 61965
 
 trainset = []
+
+model_current_statetuned = None
+
+
+
+
+def load_state(state_filename):
+        global model
+        global model_current_statetuned
+        debug = 1
+        if state_filename != "":
+            try:
+                state_raw = torch.load(state_filename, map_location="cpu")
+            except Exception as e:
+                print(e)
+                return "state file failed to load"
+            state_raw_shape = next(iter(state_raw.values())).shape
+
+            args = model.args
+            if debug:
+                print(f"{len(state_raw)} != {args.n_layer}")
+                print(f"{state_raw_shape[0] * state_raw_shape[1]} != {args.n_embd}")
+
+            if (
+                len(state_raw) != args.n_layer
+                or state_raw_shape[0] * state_raw_shape[1] != args.n_embd
+            ):
+                print("state failed to load")
+                return "state shape mismatch"
+
+            strategy = model.strategy
+
+            model_current_statetuned = [None] * args.n_layer * 3
+
+            for i in range(args.n_layer):
+                dd = strategy[i]
+                dev = dd.device
+                atype = dd.atype
+                model_current_statetuned[i * 3 + 0] = torch.zeros(
+                    args.n_embd, dtype=atype, requires_grad=False, device=dev
+                ).contiguous()
+                model_current_statetuned[i * 3 + 1] = (
+                    state_raw[f"blocks.{i}.att.time_state"]
+                    .transpose(1, 2)
+                    .to(dtype=torch.float, device=dev)
+                    .requires_grad_(False)
+                    .contiguous()
+                )
+                model_current_statetuned[i * 3 + 2] = torch.zeros(
+                    args.n_embd, dtype=atype, requires_grad=False, device=dev
+                ).contiguous()
+
+            #self.model_state = None
+            #self.model_current_statetuned_filename = state_filename
+            if debug:
+                print(f"State-tune model loaded:{state_filename}")
+        elif state_filename == "":
+            print('state reset')
+            model_current_statetuned = None
+            gc.collect()
+            torch.cuda.empty_cache()
+
+load_state(args2.load_initial_state)
 
 # CSVファイルを読み込み、各項目を抽出する
 RawData = []
@@ -248,6 +314,8 @@ def create_sample_data(
     max_rows_per_file: int = 10000,
     top_k: int = 100
 ):
+    global model_current_statetuned
+    global model_state
     with h5py.File(file_path, 'w') as f:
         tokens_dataset = f.create_dataset('tokens', (0,), maxshape=(None,), dtype=h5py.vlen_dtype(np.int64),
                                           compression="gzip", compression_opts=9)
@@ -278,6 +346,11 @@ def create_sample_data(
             print(f'\n\n {i+1} / {int(DPO_pair_number)}')
 
             tokens = torch.tensor(tokenizer.encode(prompt_str + chosen_str))
+            model_state = None
+            if model_current_statetuned is not None:
+                model_state = copy.deepcopy(model_current_statetuned)
+                print('initial state deepcopy')
+
             logits = run_rnn_logits(tokens)
             
             # Top-K Logitsの計算

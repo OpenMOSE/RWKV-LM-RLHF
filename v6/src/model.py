@@ -1179,9 +1179,11 @@ class RWKV(pl.LightningModule):
 
             # 評価: input_ids[:, 1:]を使用
             targets = input_ids[:, 1:].contiguous().view(-1)
+            #del input_ids
 
             # マスクの調整
             mask = attention_mask[:, 1:].contiguous().view(-1)
+            #del attention_mask
             sum_mask = torch.sum(mask).item()
 
             if sum_mask == 0:
@@ -1196,11 +1198,16 @@ class RWKV(pl.LightningModule):
             # Top-k teacher logitsを使用したKL-divergence loss
             teacher_probs = top_k_values[:, :-1]
             teacher_indices = top_k_indices[:, :-1]
+            #del top_k_values
+            #del top_k_indices
+
             
             # 学生モデルのlogitsからTop-k値を取得
             student_top_k_logits = torch.gather(student_logits, -1, teacher_indices)
             
             kl_loss = self.kl_divergence_loss(student_top_k_logits, teacher_probs, temperature)
+
+            #del student_top_k_logits
 
             # Lossの計算
             if sum_mask == mask.shape[0]:

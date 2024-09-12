@@ -1,16 +1,15 @@
-python train.py --load_model "models/RWKV-x060-Jpn-6B.pth" \
- --wandb "RWKV-LM-RLHF 6B Distillation" --proj_dir "6B-distillation1" \
- --load_adapter '6B-distillation/rwkv-0.pth' \
+python train.py --load_model "models/x060-5B-prune.pth" \
+ --wandb "RWKV-LM-RLHF 5B Distillation" --proj_dir "5B-Distillation" \
  --vocab_size 65536 --ctx_len 2048 \
  --epoch_steps 10000 --epoch_count 1000 --epoch_begin 0 --epoch_save 1 \
- --micro_bsz 2 --n_layer 25 --n_embd 4096\
+ --micro_bsz 2 --n_layer 20 --n_embd 4096\
  --lr_init 5e-5 --lr_final 1e-6 \
  --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
  --accelerator gpu --devices 1 --precision bf16 \
  --grad_cp 1 --my_testing "x060" \
  --strategy deepspeed_stage_2 \
- --layer_profile 'layerprofile/25_TEST.csv' \
- --quant 1 \
+ --layer_profile 'layerprofile/20_TEST.csv' \
+ --quant 0 \
  --quant_mode 'int8'\
  --gpu_arch 'cuda' \
  --limited_lora 0 \

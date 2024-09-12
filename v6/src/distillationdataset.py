@@ -56,9 +56,9 @@ class HDF5TopKTensorDataset(Dataset):
         
         return {
             'input_ids': torch.from_numpy(padded_tokens),
-            'top_k_values': torch.from_numpy(padded_top_k_values),
+            'top_k_values': torch.from_numpy(padded_top_k_values).to(dtype=torch.bfloat16),
             'top_k_indices': torch.from_numpy(padded_top_k_indices),
-            'attention_mask': torch.from_numpy(attention_mask)
+            'attention_mask': torch.from_numpy(attention_mask).to(dtype=torch.bfloat16)
         }
 
 def collate_fn(batch):

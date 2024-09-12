@@ -85,6 +85,7 @@ def prune_layers(input_path: str, output_path: str, layers_to_remove: list):
 # 使用例
 input_path = "models/RWKV-x060-Jpn-7B-20240816-ctx4096.pth"
 output_path = "Output.pth"
-layers_to_remove = [3, 7, 11, 15, 19, 23, 27]
+#layers_to_remove = [3, 7, 11, 15, 19, 23, 27]
+layers_to_remove = [2,5,8,11,13,15,17,19,21,23,26,29]
 
 prune_layers(input_path, output_path, layers_to_remove)
