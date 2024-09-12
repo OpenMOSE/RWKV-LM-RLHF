@@ -389,21 +389,21 @@ if __name__ == "__main__":
 
 
     for name, module in model.named_modules():
-        if len(args.load_model) == 0:
-            if any(n.startswith("emb.") for n, _ in module.named_parameters()) and LAYER_CONFIG['emb']['mode']=='full':
-                for pname, param in module.named_parameters():
-                    if 'emb.weight'==pname:
-                        print(f'  EMB additionally training module {pname}')
-                        param.requires_grad = True
-            if any(n.startswith("head.") for n, _ in module.named_parameters()) and LAYER_CONFIG['head']['mode']=='full':
-                for pname, param in module.named_parameters():
-                    if 'head.weight'==pname:
-                        print(f'  head additionally training module {pname}')
-                        param.requires_grad = True
-            if 'ln' in name:
-                print(f'  LoRA additionally training module {name}')
-                for param in module.parameters():
-                    param.requires_grad = True
+        # if len(args.load_model) == 0:
+        #     if any(n.startswith("emb.") for n, _ in module.named_parameters()) and LAYER_CONFIG['emb']['mode']=='full':
+        #         for pname, param in module.named_parameters():
+        #             if 'emb.weight'==pname:
+        #                 print(f'  EMB additionally training module {pname}')
+        #                 param.requires_grad = True
+        #     if any(n.startswith("head.") for n, _ in module.named_parameters()) and LAYER_CONFIG['head']['mode']=='full':
+        #         for pname, param in module.named_parameters():
+        #             if 'head.weight'==pname:
+        #                 print(f'  head additionally training module {pname}')
+        #                 param.requires_grad = True
+        #     if 'ln' in name:
+        #         print(f'  LoRA additionally training module {name}')
+        #         for param in module.parameters():
+        #             param.requires_grad = True
         if any(n.startswith("emb.") for n, _ in module.named_parameters()) and LAYER_CONFIG['emb']['mode']=='full':
             for pname, param in module.named_parameters():
                 if 'emb.weight'==pname:
@@ -421,7 +421,11 @@ if __name__ == "__main__":
                 print(f'LoRA Parts Enabled Training :{pname}')
         #elif enable_ln_finetune and '.ln' in name:
         elif '.ln' in name:
-            print(f'  LoRA additionally training module {name}')
+            print(f'  additionally training module {name}')
+            for param in module.parameters():
+                param.requires_grad = True
+        elif 'ln_in' in name or 'ln_out' in name:
+            print(f'  additionally training module {name}')
             for param in module.parameters():
                 param.requires_grad = True
         #elif enable_time_finetune and any(n.startswith("time") for n, _ in module.named_parameters()):
@@ -430,12 +434,15 @@ if __name__ == "__main__":
                 if pname.startswith("time"):
                     print(f'  LoRA additionally training parameter {pname}')
                     param.requires_grad = True
+                    
 
-        #for i in range(args.n_layer):
-        #    text = f'blocks.{str(i)}.'
-        #    if LAYER_CONFIG[f'{str(i)}']['mode'] == 'full' and text in name:
-        #        print(f'  FullParameter additionally training parameter {pname}')
-        #        param.requires_grad = True
+        for i in range(args.n_layer):
+            text = f'blocks.{str(i)}.'
+            for pname, param in module.named_parameters():
+                #print(f'pname = {pname}')
+                if LAYER_CONFIG[f'{str(i)}']['mode'] == 'full' and text in name:
+                    print(f'  FullParameter additionally training parameter {name}')
+                    param.requires_grad = True
 
 
     #if args.lisa:

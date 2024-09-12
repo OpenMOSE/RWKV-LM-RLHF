@@ -1174,6 +1174,24 @@ class RWKV(pl.LightningModule):
             top_k_indices = batch['top_k_indices']
             attention_mask = batch['attention_mask']
 
+            # print(f'shapes input_ids={input_ids.shape} ')
+            # print(f'shapes top_k_values={input_ids.shape} ')
+            # print(f'shapes top_k_indices={top_k_indices.shape} ')
+            # print(f'shapes attention_mask={attention_mask.shape} ')
+
+            max_len = int(attention_mask.sum(dim=1).max().item())
+            #print(f'max attention len = {max_len}')
+
+            input_ids = input_ids[:, :max_len]
+            top_k_values = top_k_values[:, :max_len]
+            top_k_indices = top_k_indices[:, :max_len, :]
+            attention_mask = attention_mask[:, :max_len]
+
+            # print(f'shapes2 input_ids={input_ids.shape} ')
+            # print(f'shapes2 top_k_values={input_ids.shape} ')
+            # print(f'shapes2 top_k_indices={top_k_indices.shape} ')
+            # print(f'shapes2 attention_mask={attention_mask.shape} ')
+
             # Forward: input_ids[:, :-1]を使用
             student_logits = self(input_ids[:, :-1])
 
@@ -1219,6 +1237,7 @@ class RWKV(pl.LightningModule):
 
             self.trainer.smooth_loss = float(smooth_loss)
             self.trainer.kl_loss = float(kl_loss)
+            self.trainer.realproceedtokens =float(max_len)
 
             return L2Wrap.apply(loss, student_logits)
 

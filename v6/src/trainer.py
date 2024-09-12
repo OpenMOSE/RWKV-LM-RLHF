@@ -139,7 +139,11 @@ class train_callback(pl.Callback):
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         args = self.args
-        token_per_step = args.ctx_len * args.real_bsz
+
+        if args.distillation:
+            token_per_step = trainer.realproceedtokens * args.real_bsz
+        else:
+            token_per_step = args.ctx_len * args.real_bsz
         real_step = trainer.global_step + args.epoch_begin * args.epoch_steps
         if trainer.is_global_zero:  # logging
             t_now = time.time_ns()
