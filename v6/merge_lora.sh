@@ -1,6 +1,6 @@
-base_model='models/x060-6B-prune.pth'
-lora_checkpoint='6B-SRD-nsfw2/rwkv-10.pth'
-output='6B-SRD-nsfw2/rwkv-6b-nsfw-10-merged.pth'
+base_model='models/RWKV-6-World-0.4B-v2-20231113-ctx4096.pth'
+lora_checkpoint='0B4-Distillation-lgtm/rwkv-2.pth'
+output='0B4-Distillation-lgtm/rwkv0b4-lgtm-2.pth'
 QUANT='' #follow train
 TYPE='lora'
 Lora_scaling=2.0

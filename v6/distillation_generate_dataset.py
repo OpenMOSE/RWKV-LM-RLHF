@@ -23,10 +23,10 @@ parser = ArgumentParser()
 
 parser.add_argument("--load_model", default="models/RWKV-x060-Jpn-14B-20240819-ctx4096.pth", type=str)
 parser.add_argument("--load_initial_state", default="", type=str)
-parser.add_argument("--input_csv", default="datasets/test_jp_en.csv", type=str)
-parser.add_argument("--output_parquet", default="datasets/test_jp_en.h5", type=str)
+parser.add_argument("--input_csv", default="datasets/20240520_LGTM_RLHF_Dataset_LGTM1-3B.csv", type=str)
+parser.add_argument("--output_parquet", default="datasets/20240520_LGTM_RLHF_Dataset.h5", type=str)
 parser.add_argument("--endtoken", default="\n\n\x17", type=str)
-parser.add_argument("--target_pair_count", default=60000, type=int)
+parser.add_argument("--target_pair_count", default=2000, type=int)
 #\x17
 args2 = parser.parse_args()
 torch.backends.cudnn.benchmark = True

@@ -1,15 +1,15 @@
-python train.py --load_model "models/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth" \
- --wandb "RWKV-LM-RLHF 1B6 Distillation" --proj_dir "1B6-Distillation" \
+python train.py --load_model "models/x060-5B-prune.pth" \
+ --wandb "RWKV-LM-RLHF 5B Distillation" --proj_dir "5B-Distillation" \
  --vocab_size 65536 --ctx_len 2048 \
  --epoch_steps 10000 --epoch_count 1000 --epoch_begin 0 --epoch_save 1 \
- --micro_bsz 6 --n_layer 24 --n_embd 2048 \
+ --micro_bsz 2 --n_layer 20 --n_embd 4096 \
  --lr_init 5e-5 --lr_final 1e-7 \
  --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
  --accelerator gpu --devices 1 --precision bf16 \
  --grad_cp 1 --my_testing "x060" \
  --strategy deepspeed_stage_1 \
- --layer_profile 'layerprofile/24_TEST_full.csv' \
- --quant 0 \
+ --layer_profile 'layerprofile/20_TEST.csv' \
+ --quant 1 \
  --quant_mode 'int8'\
  --gpu_arch 'cuda' \
  --limited_lora 0 \
@@ -18,4 +18,4 @@ python train.py --load_model "models/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.p
  --top_k 100 \
  --alpha 0.5 \
  --smoothing 0.005 \
- --distillation_train_file 'datasets/test_jp_logits.h5'
+ --distillation_train_file 'datasets/test_jp_en.h5'

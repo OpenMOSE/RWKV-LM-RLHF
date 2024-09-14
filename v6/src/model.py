@@ -1174,11 +1174,6 @@ class RWKV(pl.LightningModule):
             top_k_indices = batch['top_k_indices']
             attention_mask = batch['attention_mask']
 
-            # print(f'shapes input_ids={input_ids.shape} ')
-            # print(f'shapes top_k_values={input_ids.shape} ')
-            # print(f'shapes top_k_indices={top_k_indices.shape} ')
-            # print(f'shapes attention_mask={attention_mask.shape} ')
-
             max_len = int(attention_mask.sum(dim=1).max().item())
             #print(f'max attention len = {max_len}')
 
@@ -1187,20 +1182,15 @@ class RWKV(pl.LightningModule):
             top_k_indices = top_k_indices[:, :max_len, :]
             attention_mask = attention_mask[:, :max_len]
 
-            # print(f'shapes2 input_ids={input_ids.shape} ')
-            # print(f'shapes2 top_k_values={input_ids.shape} ')
-            # print(f'shapes2 top_k_indices={top_k_indices.shape} ')
-            # print(f'shapes2 attention_mask={attention_mask.shape} ')
-
             # Forward: input_ids[:, :-1]を使用
             student_logits = self(input_ids[:, :-1])
 
             # 評価: input_ids[:, 1:]を使用
-            targets = input_ids[:, 1:].contiguous().view(-1)
+            targets = input_ids[:, 1:].contiguous().view(-1) #
             #del input_ids
 
             # マスクの調整
-            mask = attention_mask[:, 1:].contiguous().view(-1)
+            mask = attention_mask[:, 1:].contiguous().view(-1) #.contiguous()
             #del attention_mask
             sum_mask = torch.sum(mask).item()
 
@@ -1210,14 +1200,11 @@ class RWKV(pl.LightningModule):
             # Label Smoothing Loss
             label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
             student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
-            #print(f'shape student_logits = {student_logits.shape } targets= {targets.shape}')
             smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
 
             # Top-k teacher logitsを使用したKL-divergence loss
             teacher_probs = top_k_values[:, :-1]
             teacher_indices = top_k_indices[:, :-1]
-            #del top_k_values
-            #del top_k_indices
 
             
             # 学生モデルのlogitsからTop-k値を取得
@@ -1235,8 +1222,8 @@ class RWKV(pl.LightningModule):
                 kl_loss = torch.sum(kl_loss.view(-1) * mask) / sum_mask
                 loss = alpha * smooth_loss + (1 - alpha) * kl_loss
 
-            self.trainer.smooth_loss = float(smooth_loss)
-            self.trainer.kl_loss = float(kl_loss)
+            self.trainer.smooth_loss = float(smooth_loss.mean())
+            self.trainer.kl_loss = float(kl_loss.mean())
             self.trainer.realproceedtokens =float(max_len)
 
             return L2Wrap.apply(loss, student_logits)
