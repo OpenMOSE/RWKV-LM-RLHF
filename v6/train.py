@@ -107,6 +107,11 @@ if __name__ == "__main__":
     parser.add_argument("--top_k", default=100, type=int)
     parser.add_argument("--distillation_train_file", default='datasets/test_jp_logits.h5', type=str)
 
+    parser.add_argument("--infctx", default=1, type=int) #from RWKV-PEFT :)
+    parser.add_argument("--chunk_ctx", default=512, type=int)
+
+
+
 
 
 
@@ -162,6 +167,14 @@ if __name__ == "__main__":
     os.environ["RWKV_MY_ARCHITECTURE"] = args.gpu_arch
     os.environ["RWKV_CTXLEN"] = str(args.ctx_len)
     os.environ["RWKV_HEAD_SIZE_A"] = str(args.head_size_a)
+
+    if args.infctx:
+        os.environ["RWKV_TRAIN_TYPE"]='infctx'
+    else:
+        os.environ["RWKV_TRAIN_TYPE"]='normal'
+
+
+
     if args.dim_att <= 0:
         args.dim_att = args.n_embd
     if args.dim_ffn <= 0:
