@@ -26,6 +26,8 @@ from .infctx_module import *
 from einops import rearrange
 from fla.ops.rwkv6 import chunk_rwkv6, fused_recurrent_rwkv6
 
+
+
 from .config import LAYER_CONFIG
 
 # from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
@@ -88,9 +90,7 @@ def inspect_pytorch_variable(var, name="Variable"):
 
 
 def rwkv_quantize(quant_type, weight):
-
     global NowCurrentlyGPUNo
-    #print(f'cuda:{NowCurrentlyGPUNo}')
     if quant_type=='4bit':
         qweight, qstate= bnb.functional.quantize_4bit((weight.data))
     elif quant_type=='nf4':
@@ -104,20 +104,6 @@ def rwkv_quantize(quant_type, weight):
 
 def rwkv_dequantize(quant_type, weight, qstate):
     device = weight.device
-    #print(f'weight device = {device}')
-    #inspect_pytorch_variable(qstate)
-    #if qstate is None:
-    #    print("qstate is None")
-
-    #if qstate.device != weight.device:
-    #qstate = qstate.clone().detach().to(device)
-    #print(qstate)
-
-    #attributes = dir(qstate)
-
-    #print(attributes)
-    #qstate=qstate.to(device)
-    #i#nspect_pytorch_variable(qstate)
     if quant_type=='4bit':
         deweight= bnb.functional.dequantize_4bit(weight.data,quant_state=qstate)
     elif quant_type=='nf4':
@@ -137,19 +123,28 @@ class HeadLoraLinear(nn.Module):
         self.weight = nn.Parameter(torch.empty((out_features, in_features)))
         assert bias == False, "Biased LoraLinear not supported"
 
-        r = int(LAYER_CONFIG[f'head']['rank'])
-        alpha = int(LAYER_CONFIG[f'head']['alpha'])
+        if LAYER_CONFIG[f'head']['mode'] == 'bone':
+            print('bone mode')
+            r = int(LAYER_CONFIG[f'head']['rank'])
+            self.r = r
+            self.bone = nn.Parameter(torch.zeros(in_features//self.r, self.r, self.r))
+            self.bonemode = True
 
-        dropout = float(LAYER_CONFIG[f'head']['dropout'])
+        else:
+            r = int(LAYER_CONFIG[f'head']['rank'])
+            alpha = int(LAYER_CONFIG[f'head']['alpha'])
 
-        self.lora_A = nn.Parameter(torch.empty(r, in_features))
-        self.lora_B = nn.Parameter(torch.empty(out_features, r))
-        self.lora_dropout = nn.Dropout(dropout)
-        self.scaling = alpha / r
-        self.r = r
-        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
-        nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
-        nn.init.zeros_(self.lora_B)
+            dropout = float(LAYER_CONFIG[f'head']['dropout'])
+
+            self.lora_A = nn.Parameter(torch.empty(r, in_features))
+            self.lora_B = nn.Parameter(torch.empty(out_features, r))
+            self.lora_dropout = nn.Dropout(dropout)
+            self.scaling = alpha / r
+            self.r = r
+            nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+            nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
+            nn.init.zeros_(self.lora_B)
+            self.bonemode = False
         self.pissa = False
         #self.is_quant = False
 
@@ -168,30 +163,28 @@ class HeadLoraLinear(nn.Module):
         self.lora_A.data = lora_A
         self.lora_B.data = lora_B
         self.weight.data = self.weight.data - lora_B @ lora_A
-    #def quant(self, quant_type):
-    #    self.is_quant = True
-    #    self.quant_type = quant_type
-    #    self.weight.data, self.qstate= rwkv_quantize(self.quant_type, (self.weight.data).to('cuda'))
 
     def forward(self, x):
         if self.pissa:
             return (
                 F.linear(x, self.weight) + 
                 F.linear(F.linear(x, self.lora_A), self.lora_B))
+        if self.bonemode:
+            w = rearrange(self.weight, '(a r1) (b r2) -> a b r1 r2', r1 = self.r, r2 = self.r)@self.bone+self.bone
+            w = rearrange(w, 'a b r1 r2 ->(a r1) (b r2) ')
+            return F.linear(x,self.weight+w)
         return (
             F.linear(x, self.weight) + self.scaling *
             F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)) 
 
         
-LORA_CONFIG = {
-    "r": 0,
-    "alpha": 0,
-    "dropout": 0,
-    "parts": {"att", "ln", "time", "ffn"},
-    "quant": False,
-}
-
-
+# LORA_CONFIG = {
+#     "r": 0,
+#     "alpha": 0,
+#     "dropout": 0,
+#     "parts": {"att", "ln", "time", "ffn"},
+#     "quant": False,
+# }
     
 class LoraEmbedding(nn.Module): #Not working well. please help
     def __init__(self, num_embeddings, embedding_dim, r=8, alpha=16, dropout=0.1):
@@ -225,29 +218,34 @@ class LoraLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :) Chaos Modified
         self.weight = nn.Parameter(torch.empty((out_features, in_features)))
         assert bias == False, "Biased LoraLinear not supported"
 
-        #r, alpha, dropout = LORA_CONFIG["r"], LORA_CONFIG[
-        #    "alpha"], LORA_CONFIG["dropout"]
-        r = int(LAYER_CONFIG[f'{str(n_layer)}']['rank'])
-        alpha = int(LAYER_CONFIG[f'{str(n_layer)}']['alpha'])
-        d = LAYER_CONFIG[f'{str(n_layer)}']
-        #print(f'trying intialize layer:{n_layer} {d}')
-        dropout = float(LAYER_CONFIG[f'{str(n_layer)}']['dropout'])
+        if LAYER_CONFIG[f'{str(n_layer)}']['mode'] == 'bone':
+            print('bone mode')
+            r = int(LAYER_CONFIG[f'{str(n_layer)}']['rank'])
+            self.r = r
+            self.bone = nn.Parameter(torch.zeros(in_features//self.r, self.r, self.r))
+            self.bonemode = True
+        else:
+            r = int(LAYER_CONFIG[f'{str(n_layer)}']['rank'])
+            alpha = int(LAYER_CONFIG[f'{str(n_layer)}']['alpha'])
+            d = LAYER_CONFIG[f'{str(n_layer)}']
 
-        self.lora_A = nn.Parameter(torch.empty(r, in_features))
-        self.lora_B = nn.Parameter(torch.empty(out_features, r))
-        self.lora_dropout = nn.Dropout(dropout)
-        self.scaling = alpha / r
-        self.r = r
-        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
-        nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
-        nn.init.zeros_(self.lora_B)
+            dropout = float(LAYER_CONFIG[f'{str(n_layer)}']['dropout'])
+
+            self.lora_A = nn.Parameter(torch.empty(r, in_features))
+            self.lora_B = nn.Parameter(torch.empty(out_features, r))
+            self.lora_dropout = nn.Dropout(dropout)
+            self.scaling = alpha / r
+            self.r = r
+            nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+            nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
+            nn.init.zeros_(self.lora_B)
+            self.bonemode = False
         self.pissa = False
         self.is_quant = False
 
     def pissa_load(self, init_A, init_B):
         self.pissa = True
         self.weight.data = self.weight.data - init_B @ init_A
-
 
     def pissa_init(self, svd_niter):
 
@@ -271,6 +269,11 @@ class LoraLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :) Chaos Modified
                 return (
                     F.linear(x, rwkv_dequantize(self.quant_type, self.weight.data, self.qstate)) + 
                     F.linear(F.linear(x, self.lora_A), self.lora_B))
+            if self.bonemode:
+                temporal_weight = rwkv_dequantize(self.quant_type, self.weight.data, self.qstate)
+                w = rearrange(temporal_weight, '(a r1) (b r2) -> a b r1 r2', r1 = self.r, r2 = self.r)@self.bone+self.bone
+                w = rearrange(w, 'a b r1 r2 ->(a r1) (b r2) ')
+                return F.linear(x,temporal_weight+w)
             return (
                 F.linear(x, rwkv_dequantize(self.quant_type, self.weight.data, self.qstate)) + self.scaling *
                 F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)) 
@@ -279,6 +282,11 @@ class LoraLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :) Chaos Modified
             return (
                 F.linear(x, self.weight) + 
                 F.linear(F.linear(x, self.lora_A), self.lora_B))
+        if self.bonemode:
+            w = rearrange(self.weight, '(a r1) (b r2) -> a b r1 r2', r1 = self.r, r2 = self.r)@self.bone+self.bone
+            w = rearrange(w, 'a b r1 r2 ->(a r1) (b r2) ')
+            
+            return F.linear(x,self.weight+w)
         return (
             F.linear(x, self.weight) + self.scaling *
             F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B))  
@@ -304,7 +312,6 @@ class QuantLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :)
         else:
             return F.linear(x, self.weight)
         
-
 @functools.wraps(LoraLinear)
 def make_linear_att(*args, **kwargs):
     layer_id = kwargs.get('n_layer')
@@ -347,18 +354,6 @@ def make_emb(*args, **kwargs):
     else:
         return LoraEmbedding(*args, **kwargs)
 
-
-# class LabelSmoothingLoss(torch.nn.Module):
-#     def __init__(self, smoothing=0.1):
-#         super(LabelSmoothingLoss, self).__init__()
-#         self.smoothing = smoothing
-
-#     def forward(self, pred, target):
-#         n_classes = pred.size(-1)
-#         one_hot = torch.zeros_like(pred).scatter(1, target.unsqueeze(1), 1)
-#         smooth_one_hot = one_hot * (1 - self.smoothing) + self.smoothing / n_classes
-#         log_prob = F.log_softmax(pred, dim=-1)
-#         return torch.sum(-smooth_one_hot * log_prob, dim=-1)
     
 class LabelSmoothingLoss(torch.nn.Module):
     def __init__(self, smoothing=0.1):
@@ -588,34 +583,6 @@ class RWKV_Tmix_x060(MyModule):
 
 ########################################################################################################
 
-# class RWKV_ChannelMix(MyModule):
-#     def __init__(self, args, layer_id):
-#         super().__init__()
-#         self.args = args
-#         self.layer_id = layer_id
-#         self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
-
-#         with torch.no_grad():  # fancy init of time_mix
-#             ratio_1_to_almost0 = 1.0 - (layer_id / args.n_layer)  # 1 to ~0
-#             ddd = torch.ones(1, 1, args.n_embd)
-#             for i in range(args.n_embd):
-#                 ddd[0, 0, i] = i / args.n_embd
-#             self.time_mix_k = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
-#             self.time_mix_r = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
-        
-#         self.key = nn.Linear(args.n_embd, args.dim_ffn, bias=False)
-#         self.receptance = nn.Linear(args.n_embd, args.n_embd, bias=False)
-#         self.value = nn.Linear(args.dim_ffn, args.n_embd, bias=False)
-
-#     @MyFunction
-#     def forward(self, x):
-#         xx = self.time_shift(x)
-#         xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
-#         xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
-#         k = self.key(xk)
-#         k = torch.relu(k) ** 2
-#         kv = self.value(k)
-#         return torch.sigmoid(self.receptance(xr)) * kv
 
 class RWKV_CMix_x060(MyModule):
     def __init__(self, args, layer_id):
@@ -719,16 +686,9 @@ class RWKV_Tmix_x060_infctx(MyModule):
                 tmp[n] = ratio_0_to_1 * (1 - (n / (args.dim_att - 1))) + zigzag
 
             self.time_faaaa = nn.Parameter(tmp.reshape(self.n_head, self.head_size))
-            #self.time_state = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
 
         self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
-        # self.receptance = make_linear_att(args.n_embd, args.dim_att, bias=False)
-        # self.key = make_linear_att(args.n_embd, args.dim_att, bias=False)
-        # self.value = make_linear_att(args.n_embd, args.dim_att, bias=False)
-        # self.output = make_linear_att(args.dim_att, args.n_embd, bias=False)
-        # self.gate = make_linear_att(args.n_embd, args.dim_att, bias=False)
         Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
-        #print(f'Processing Mode = {Processing_Mode}')
 
         LinearMode = 0
 
@@ -819,9 +779,6 @@ class RWKV_CMix_x060_infctx(MyModule):
             self.time_maa_k = nn.Parameter(1.0 - torch.pow(ddd, ratio_1_to_almost0))
             self.time_maa_r = nn.Parameter(1.0 - torch.pow(ddd, ratio_1_to_almost0))
 
-        # self.key = make_linear_ffn(args.n_embd, args.dim_ffn, bias=False)
-        # self.receptance = make_linear_ffn(args.n_embd, args.n_embd, bias=False)
-        # self.value = make_linear_ffn(args.dim_ffn, args.n_embd, bias=False)
         Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
 
         LinearMode = 0
@@ -908,9 +865,9 @@ class Block(nn.Module):
 
         if self.layer_id == 0:
             self.ln0 = nn.LayerNorm(args.n_embd)
-            if args.my_pos_emb > 0:
-                self.pos_emb_x = nn.Parameter(torch.zeros((1,args.my_pos_emb,args.n_embd)))
-                self.pos_emb_y = nn.Parameter(torch.zeros((args.my_pos_emb,1,args.n_embd)))
+            # if args.my_pos_emb > 0:
+            #     self.pos_emb_x = nn.Parameter(torch.zeros((1,args.my_pos_emb,args.n_embd)))
+            #     self.pos_emb_y = nn.Parameter(torch.zeros((args.my_pos_emb,1,args.n_embd)))
 
         if self.layer_id == 0 and self.args.pre_ffn > 0:
             self.ffnPre = RWKV_ChannelMix(args, 0)
@@ -931,15 +888,7 @@ class Block(nn.Module):
                     self.ffn = RWKV_CMix_x060_infctx(args, layer_id)
                 else:
                     self.ffn = RWKV_CMix_x060(args, layer_id)
-            # else:
-            #     self.ffn = RWKV_ChannelMix(args, layer_id)
-        
-        # if args.tiny_att_dim > 0 and self.layer_id == args.tiny_att_layer:
-        #     self.tiny_ln = nn.LayerNorm(args.n_embd)
-        #     self.tiny_q = nn.Linear(args.n_embd, args.tiny_att_dim, bias=False)
-        #     self.tiny_k = nn.Linear(args.n_embd, args.tiny_att_dim, bias=False)
-        #     self.tiny_v = nn.Linear(args.n_embd, args.n_embd, bias=False)
-        #     self.register_buffer("tiny_mask", torch.tril(torch.ones(args.ctx_len, args.ctx_len)))
+ 
 
         if args.dropout > 0:
             self.drop0 = nn.Dropout(p = args.dropout)
@@ -951,9 +900,9 @@ class Block(nn.Module):
             B, T, C = x.size()
             if self.layer_id == 0:
                 x = self.ln0(x)
-                if args.my_pos_emb > 0:
-                    pos_emb = (self.pos_emb_x + self.pos_emb_y).reshape(T+1, -1)[:-1,:]
-                    x = x + pos_emb
+                #if args.my_pos_emb > 0:
+                #    pos_emb = (self.pos_emb_x + self.pos_emb_y).reshape(T+1, -1)[:-1,:]
+                #    x = x + pos_emb
 
             if self.args.dropout == 0:
                 if self.layer_id == 0 and args.pre_ffn > 0:
@@ -970,13 +919,7 @@ class Block(nn.Module):
                     x = self.drop0(x + self.att(self.ln1(x)))
                 x = self.drop1(x + self.ffn(self.ln2(x)))
 
-            if args.tiny_att_dim > 0 and self.layer_id == args.tiny_att_layer:
-                xx = self.tiny_ln(x)
-                q = self.tiny_q(xx)[:, :T, :]
-                k = self.tiny_k(xx)[:, :T, :]
-                c = (q @ k.transpose(-2, -1)) * (args.tiny_att_dim ** (-0.5))
-                c = c.masked_fill(self.tiny_mask[:T, :T] == 0, 0)
-                x = x + c @ self.tiny_v(x_emb)
+ 
             return x, BlockState(att_state, fnn_state)
     else:
         def forward(self, x, x_emb=None):
@@ -1001,62 +944,10 @@ class Block(nn.Module):
                     x = self.drop0(x + self.att(self.ln1(x)))
                 x = self.drop1(x + self.ffn(self.ln2(x)))
 
-            if args.tiny_att_dim > 0 and self.layer_id == args.tiny_att_layer:
-                xx = self.tiny_ln(x)
-                q = self.tiny_q(xx)[:, :T, :]
-                k = self.tiny_k(xx)[:, :T, :]
-                c = (q @ k.transpose(-2, -1)) * (args.tiny_att_dim ** (-0.5))
-                c = c.masked_fill(self.tiny_mask[:T, :T] == 0, 0)
-                x = x + c @ self.tiny_v(x_emb)
+ 
             return x
         
-    # def forward(self, x, x_emb=None):
-    #     args = self.args
-    #     B, T, C = x.size()
-    #     if self.layer_id == 0:
-    #         x = self.ln0(x)
-    #         if args.my_pos_emb > 0:
-    #             pos_emb = (self.pos_emb_x + self.pos_emb_y).reshape(T+1, -1)[:-1,:]
-    #             x = x + pos_emb
-
-    #     if self.args.dropout == 0:
-    #         if self.layer_id == 0 and args.pre_ffn > 0:
-    #             x = x + self.ffnPre(self.ln1(x))
-    #         else:
-    #             x = x + self.att(self.ln1(x))
-    #         x = x + self.ffn(self.ln2(x))
-    #     else:
-    #         if self.layer_id == 0 and args.pre_ffn > 0:
-    #             x = self.drop0(x + self.ffnPre(self.ln1(x)))
-    #         else:
-    #             x = self.drop0(x + self.att(self.ln1(x)))
-    #         x = self.drop1(x + self.ffn(self.ln2(x)))
-
-    #     # if args.tiny_att_dim > 0 and self.layer_id == args.tiny_att_layer:
-    #     #     xx = self.tiny_ln(x)
-    #     #     q = self.tiny_q(xx)[:, :T, :]
-    #     #     k = self.tiny_k(xx)[:, :T, :]
-    #     #     c = (q @ k.transpose(-2, -1)) * (args.tiny_att_dim ** (-0.5))
-    #     #     c = c.masked_fill(self.tiny_mask[:T, :T] == 0, 0)
-    #     #     x = x + c @ self.tiny_v(x_emb)
-    #     return x
-
-
-# class L2Wrap(torch.autograd.Function):
-#     @staticmethod
-#     def forward(ctx, loss, y):
-#         ctx.save_for_backward(y)
-#         return loss
-
-#     @staticmethod
-#     def backward(ctx, grad_output):
-#         y = ctx.saved_tensors[0]
-#         # to encourage the logits to be close to 0
-#         factor = 1e-4 / (y.shape[0] * y.shape[1])
-#         maxx, ids = torch.max(y, -1, keepdim=True)
-#         gy = torch.zeros_like(y)
-#         gy.scatter_(-1, ids, maxx * factor)
-#         return (grad_output, gy)
+ 
 
 if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
     class L2Wrap(torch.autograd.Function):
@@ -1116,18 +1007,13 @@ class RWKV(pl.LightningModule):
             data = f.read()
 
         print(f'filedata : {data}')
-
         GPUNo = int(data)
-
         time.sleep(0.1)
 
         with open('internaltemp.dat', 'w') as f:
             f.write(str((GPUNo+1)))
             time.sleep(0.5)
 
-
-        #global_rank = self.global_rank
-        #print(f"Local Rank: {global_rank}")
         print(f'Target GPUNo: {GPUNo}')
 
         target_gpu = f'cuda:{GPUNo}'
@@ -1146,28 +1032,16 @@ class RWKV(pl.LightningModule):
         assert args.dim_att % 32 == 0
         assert args.dim_ffn % 32 == 0
 
-        #make_emb
-
         self.emb = make_emb(args.vocab_size, args.n_embd)
 
         
 
         self.ln_out = nn.LayerNorm(args.n_embd)
-        #make_linear_head
-        #self.head = nn.Linear(args.n_embd, args.vocab_size, bias=False)
         self.head = make_linear_head(args.n_embd, args.vocab_size, bias=False)
-
-        #if args.head_qk > 0:
-        #    self.head_q = nn.Linear(args.n_embd, args.head_qk, bias=False)
-        #    self.head_k = nn.Linear(args.n_embd, args.head_qk, bias=False)
-        #    self.register_buffer("copy_mask", torch.tril(torch.ones(args.ctx_len, args.ctx_len)))
         if args.dropout > 0:
             self.drop0 = nn.Dropout(p = args.dropout)
-
-
         print('Make Blocks')
 
-        #self.blocks = nn.ModuleList([Block(args, i) for i in range(args.n_layer)])
         self.blocks = nn.ModuleList()  # 空のModuleListを初期化
 
         if load_dict is not None:
@@ -1193,11 +1067,10 @@ class RWKV(pl.LightningModule):
             self.blocks = nn.ModuleList([Block(args, i) for i in range(args.n_layer)])
         global NowCurrentlyGPUNo
         self.CurrentCudaNo = NowCurrentlyGPUNo
-        #NowCurrentlyGPUNo = NowCurrentlyGPUNo + 1
 
         print('finish blocks')
     def setup(self, stage):
-        # この方法でGPU番号を取得できます
+
         if self.device.type == 'cuda':
             print(f"Model initialized on GPU: {self.device.index}")
         else:
@@ -1213,14 +1086,9 @@ class RWKV(pl.LightningModule):
             if key.startswith(block_prefix):
                 new_key = key[len(block_prefix):]  # block_prefixを除去
                 block_state_dict[new_key] = value
-                #keys_to_delete.append(key)
-                #print(f'{key} loaded')
+
 
         block.load_state_dict(block_state_dict, strict=False)
-
-        # 使用済みの重みをload_dictから削除
-        #for key in keys_to_delete:
-        #    del load_dict[key]
 
     def load_element_weights(self,element,element_name, load_dict):
         block_prefix = element_name
@@ -1228,20 +1096,11 @@ class RWKV(pl.LightningModule):
         keys_to_delete = []
 
         for key, value in load_dict.items():
-            #print(f'{key} {block_prefix}')
             if key.startswith(block_prefix):
                 new_key = key#key[len(block_prefix):]  # block_prefixを除去
                 block_state_dict[new_key] = value
-                #keys_to_delete.append(key)
-                #print(f'{key} loaded')
 
         element.load_state_dict(block_state_dict, strict=False)
-
-        # 使用済みの重みをload_dictから削除
-        #3for key in keys_to_delete:
-        #    del load_dict[key]
-
-        
 
     def configure_optimizers(self):
         args = self.args
@@ -1255,21 +1114,21 @@ class RWKV(pl.LightningModule):
                 if args.limited_lora == False:
                     lr_1x.add(n)
             elif (("time_mix" in n) or ("time_maa" in n)) and (args.layerwise_lr > 0):
-                if args.my_pile_stage == 2:
-                    lr_2x.add(n)
-                else:
+                #if args.my_pile_stage == 2:
+                #    lr_2x.add(n)
+                #else:
                     if args.limited_lora == False:
                         lr_1x.add(n)
             elif (("time_decay" in n) or ("time_daaaa" in n)) and (args.layerwise_lr > 0):
-                if args.my_pile_stage == 2:
-                    lr_3x.add(n)
-                else:
+                #if args.my_pile_stage == 2:
+                #    lr_3x.add(n)
+                #else:
                     if args.limited_lora == False:
                         lr_2x.add(n)
             elif ("time_faaaa" in n) and (args.layerwise_lr > 0):
-                if args.my_pile_stage == 2:
-                    lr_2x.add(n)
-                else:
+                #if args.my_pile_stage == 2:
+                #    lr_2x.add(n)
+                #else:
                     if args.limited_lora == False:
                         lr_1x.add(n)
             elif ("time_first" in n) and (args.layerwise_lr > 0):
@@ -1284,20 +1143,17 @@ class RWKV(pl.LightningModule):
         lr_1x = sorted(list(lr_1x))
         lr_2x = sorted(list(lr_2x))
         lr_3x = sorted(list(lr_3x))
-        # print('decay', lr_decay)
-        # print('1x', lr_1x)
-        # print('2x', lr_2x)
-        # print('3x', lr_3x)
+
         param_dict = {n: p for n, p in self.named_parameters()}
         
         if args.layerwise_lr > 0:
-            if args.my_pile_stage == 2:
-                optim_groups = [
-                    {"params": [param_dict[n] for n in lr_1x], "weight_decay": 0.0, "my_lr_scale": 1.0},
-                    {"params": [param_dict[n] for n in lr_2x], "weight_decay": 0.0, "my_lr_scale": 5.0},# test: 2e-3 / args.lr_init},
-                    {"params": [param_dict[n] for n in lr_3x], "weight_decay": 0.0, "my_lr_scale": 5.0},# test: 3e-3 / args.lr_init},
-                ]
-            else:
+            #if args.my_pile_stage == 2:
+            #    optim_groups = [
+            #        {"params": [param_dict[n] for n in lr_1x], "weight_decay": 0.0, "my_lr_scale": 1.0},
+            #        {"params": [param_dict[n] for n in lr_2x], "weight_decay": 0.0, "my_lr_scale": 5.0},# test: 2e-3 / args.lr_init},
+            #        {"params": [param_dict[n] for n in lr_3x], "weight_decay": 0.0, "my_lr_scale": 5.0},# test: 3e-3 / args.lr_init},
+            #    ]
+            #else:
                 optim_groups = [
                     {"params": [param_dict[n] for n in lr_1x], "weight_decay": 0.0, "my_lr_scale": 1.0},
                     {"params": [param_dict[n] for n in lr_2x], "weight_decay": 0.0, "my_lr_scale": 2.0},
@@ -1378,11 +1234,6 @@ class RWKV(pl.LightningModule):
             teacher_probs = F.softmax(teacher_probs / temperature, dim=-1)
             return F.kl_div(student_log_probs, teacher_probs, reduction='batchmean') * (temperature ** 2)
         
-        # def kl_divergence_loss(self, student_logits, teacher_probs, temperature):
-        #     student_probs = F.softmax(student_logits / temperature, dim=-1)
-        #     teacher_probs = F.softmax(teacher_probs / temperature, dim=-1)
-        #     return F.kl_div(student_probs.log(), teacher_probs, reduction='none').sum(-1) * (temperature ** 2)
-
         def kl_divergence_loss(self, student_logits, teacher_probs, temperature):
             student_probs = F.softmax(student_logits / temperature, dim=-1)
             teacher_probs = F.softmax(teacher_probs / temperature, dim=-1)
@@ -1402,22 +1253,8 @@ class RWKV(pl.LightningModule):
                 top_k_indices = batch['top_k_indices']
                 attention_mask = batch['attention_mask']
 
-                # max_len = int(attention_mask.sum(dim=1).max().item())
 
-                # if args.chunk_ctx > max_len:
-                #     max_len = args.chunk_ctx
-                # #print(f'max attention len = {max_len}')
-
-                # input_ids = input_ids[:, :max_len]
-                # top_k_values = top_k_values[:, :max_len]
-                # top_k_indices = top_k_indices[:, :max_len, :]
-                # attention_mask = attention_mask[:, :max_len]
                 target = input_ids[:,1:]
-                #input_ids = input_ids[:, :-1]
-                #top_k_values = top_k_values[:,:-1]
-                #top_k_indices = top_k_indices[:, :-1, :]
-                #a#ttention_mask = attention_mask#[:,1:]
-
 
                 B, T = input_ids.shape
                 total_loss = torch.tensor(0., dtype=self.emb.weight.dtype).requires_grad_()
@@ -1433,22 +1270,12 @@ class RWKV(pl.LightningModule):
                 def checkpointed_step2(chunk_input_ids,chunk_target_ids, chunk_top_k_values, chunk_top_k_indices, 
                                     chunk_attention_mask, prev_loss, prev_smooth_loss, prev_kl_loss, last_shift_states,last_wkv_states, prev_token_amount):
                     # Forward pass
-                    #student_logits,new_shift_states, new_wkv_states = self(chunk_input_ids[:, :-1],last_shift_states, last_wkv_states)
-                    
-
-                    # Prepare targets and mask
-                    #targets = chunk_input_ids[:, 1:].contiguous().view(-1)
-                    #mask = chunk_attention_mask[:, 1:].contiguous().view(-1)
                     targets = chunk_target_ids.contiguous().view(-1)
                     mask = chunk_attention_mask.contiguous().view(-1)
                     sum_mask = torch.sum(mask).item()
-
-                    #print(f'sum_mask = {sum_mask}')
-
                     if sum_mask == 0:
-                        #print('summask return')
-                        return prev_loss,prev_smooth_loss,prev_kl_loss, last_shift_states, last_wkv_states, prev_token_amount
-                        #return prev_loss, new_shift_states, new_wkv_states, prev_token_amount
+                        status = 'skip'
+                        return prev_loss,prev_smooth_loss,prev_kl_loss, last_shift_states, last_wkv_states, prev_token_amount, status
                     
                     student_logits,new_shift_states, new_wkv_states = self(chunk_input_ids,last_shift_states, last_wkv_states)
 
@@ -1463,9 +1290,7 @@ class RWKV(pl.LightningModule):
                     teacher_indices = chunk_top_k_indices#[:, :-1]
                     student_top_k_logits = torch.gather(student_logits, -1, teacher_indices)
                     kl_loss = self.kl_divergence_loss(student_top_k_logits, teacher_probs, args.temperature)
-
-                    
-
+     
                     current_token_amount = chunk_input_ids.shape[1]#sum_mask
 
                     # Combine losses
@@ -1473,18 +1298,13 @@ class RWKV(pl.LightningModule):
                         loss = args.alpha * smooth_loss.mean() + (1 - args.alpha) * kl_loss.mean()
                         smooth_loss = smooth_loss.mean()
                         kl_loss = kl_loss.mean()
-                        #loss = smooth_loss.mean()
                         loss = L2Wrap.apply(loss, student_logits, current_token_amount)
-                        #print(f'smooth_loss={float(smooth_loss.mean())} kl_loss={float(kl_loss.mean())} nomask')
                     else:
                         smooth_loss = torch.sum(smooth_loss * mask) / sum_mask
                         loss = smooth_loss
-                        #print(f'before mask = {(kl_loss)}')
                         kl_loss = torch.sum(kl_loss.view(-1) * mask) / sum_mask
-                        #print(f'klloss = {float(kl_loss)}')
                         loss = args.alpha * smooth_loss + (1 - args.alpha) * kl_loss
                         loss = L2Wrap.apply(loss, student_logits, current_token_amount)
-                        #print(f'smooth_loss={float(smooth_loss)} kl_loss={float(kl_loss)}')
 
                     
                     new_token_amount = prev_token_amount + current_token_amount
@@ -1497,44 +1317,17 @@ class RWKV(pl.LightningModule):
                         new_smooth_loss = smooth_loss
                         new_kl_loss = kl_loss
 
-                    return new_loss, new_smooth_loss, new_kl_loss, new_shift_states, new_wkv_states, new_token_amount
+                    status = 'proceed'
+                    return new_loss, new_smooth_loss, new_kl_loss, new_shift_states, new_wkv_states, new_token_amount, status
                 
-                # def checkpointed_step(idx, targets, attention_mask,prev_loss, last_shift_states,
-                #                 last_wkv_states, prev_token_amount):
-                #     logits, new_shift_states, new_wkv_states = self(idx, last_shift_states, last_wkv_states)
-                #     current_token_amount = (targets!=-100).sum() #这样是不是更合适？
-                #     current_token_amount = idx.shape[1]
-                #     mask = attention_mask.contiguous().view(-1)
-                #     sum_mask = torch.sum(mask).item()
-                #     print(f'sum_mask = {sum_mask}')
-                #     print(f'mask = {mask}')
-                #     if sum_mask == 0:
-                #         return prev_loss, new_shift_states, new_wkv_states, prev_token_amount
-                #     if current_token_amount == 0:
-                #         loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.reshape(-1),reduction='sum')
-                #     else:
-                #         loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.reshape(-1),reduction='none')
-                #         print(f'loss before mask = {loss}')
-                #         loss = torch.sum(loss * mask) / sum_mask
-                #         print(f'loss after mask = {loss}')
-                #         loss = L2Wrap.apply(loss, logits, current_token_amount)
-                #     new_token_amount = prev_token_amount+current_token_amount
-                #     if new_token_amount>0:
-                #         new_loss = prev_loss * (prev_token_amount / new_token_amount) + loss * (
-                #             current_token_amount / new_token_amount)
-                #     else:
-                #         new_loss = prev_loss
-
-                #     return new_loss, new_shift_states, new_wkv_states, new_token_amount
-                
-                #print(f'FLA Infctx Mode T={T}')
+                proceedtokens = 0
                 
                 for i in range(math.ceil(T / T_train)):
                     chunk_start = i * T_train
                     chunk_end = min((i + 1) * T_train, T)
                     #print(f'chunk start = {chunk_start} chunk end = {chunk_end} diff = {chunk_end-chunk_start}')
                     
-                    total_loss, smooth_loss,kl_loss, new_shift_states, new_wkv_states, token_amount = torch_checkpoint(
+                    total_loss, smooth_loss,kl_loss, new_shift_states, new_wkv_states, token_amount , status = torch_checkpoint(
                         checkpointed_step2,
                         input_ids[:, chunk_start:chunk_end],
                         target[:, chunk_start:chunk_end],
@@ -1551,30 +1344,127 @@ class RWKV(pl.LightningModule):
                     )
                     states = BlockStateList(new_shift_states, new_wkv_states)
 
-                #print('End')
-                # num_chunks = max(1, math.ceil(T / T_train))
-                # for i in range(num_chunks):
-                #     print(f'loop i={i}')
-                #     chunk_start = i * T_train
-                #     chunk_end = min((i + 1) * T_train, T)
-                    
-                #     total_loss, new_shift_states, new_wkv_states, token_amount = torch_checkpoint(
-                #         checkpointed_step,
-                #         input_ids[:, chunk_start:chunk_end],
-                #         top_k_values[:, chunk_start:chunk_end],
-                #         top_k_indices[:, chunk_start:chunk_end],
-                #         attention_mask[:, chunk_start:chunk_end],
-                #         total_loss,
-                #         states.shift_states,
-                #         states.wkv_states,
-                #         token_amount,
-                #         use_reentrant=False
-                #     )
-                #     states = BlockStateList(new_shift_states, new_wkv_states)
+                    if status == 'proceed':
+                        proceedtokens = proceedtokens + (chunk_end-chunk_start)
+
                 
                 self.trainer.smooth_loss = float(smooth_loss)
                 self.trainer.kl_loss = float(kl_loss)
-                self.trainer.realproceedtokens =float(input_ids.shape[1])
+                self.trainer.realproceedtokens =float(proceedtokens)
+
+                return total_loss#, states
+            
+
+
+            if args.sft:
+                #temperature = args.temperature
+                #alpha = args.alpha
+                smoothing = args.smoothing
+
+                input_ids = batch['input_ids']
+                attention_mask = batch['attention_mask']
+
+
+                target = input_ids[:,1:]
+
+                B, T = input_ids.shape
+                total_loss = torch.tensor(0., dtype=self.emb.weight.dtype).requires_grad_()
+                #kl_loss = torch.tensor(0., dtype=self.emb.weight.dtype).requires_grad_()
+                smooth_loss = torch.tensor(0., dtype=self.emb.weight.dtype).requires_grad_()
+                token_amount = 0
+                C = args.n_embd
+                H =  args.dim_att // args.head_size_a
+                assert C==H*args.head_size_a
+                states = BlockStateList.create(args.n_layer, B, C, H, self.emb.weight.device,
+                    self.emb.weight.dtype)
+
+                def checkpointed_step2(chunk_input_ids,chunk_target_ids,#, chunk_top_k_values, chunk_top_k_indices, 
+                                    chunk_attention_mask,
+                                      prev_loss,
+                                        prev_smooth_loss,
+                                          #prev_kl_loss,
+                                            last_shift_states,last_wkv_states, prev_token_amount):
+                    # Forward pass
+                    targets = chunk_target_ids.contiguous().view(-1)
+                    mask = chunk_attention_mask.contiguous().view(-1)
+                    sum_mask = torch.sum(mask).item()
+                    if sum_mask == 0:
+                        status = 'skip'
+                        return prev_loss,prev_smooth_loss,last_shift_states, last_wkv_states, prev_token_amount, status
+                    
+                    student_logits,new_shift_states, new_wkv_states = self(chunk_input_ids,last_shift_states, last_wkv_states)
+
+                    # Label Smoothing Loss
+                    label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+                    student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
+                    #smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
+                    smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
+                    del student_logits_shifted
+                    del targets
+
+                    # Top-k teacher logits KL-divergence loss
+                    #teacher_probs = chunk_top_k_values#[:, :-1]
+                    #teacher_indices = chunk_top_k_indices#[:, :-1]
+                    #student_top_k_logits = torch.gather(student_logits, -1, teacher_indices)
+                    #kl_loss = self.kl_divergence_loss(student_top_k_logits, teacher_probs, args.temperature)
+     
+                    current_token_amount = chunk_input_ids.shape[1]#sum_mask
+
+                    # Combine losses
+                    if sum_mask == mask.shape[0]:
+                        loss = smooth_loss.mean()#args.alpha * smooth_loss.mean() + (1 - args.alpha) * kl_loss.mean()
+                        smooth_loss = smooth_loss.mean()
+                        #kl_loss = kl_loss.mean()
+                        loss = L2Wrap.apply(loss, student_logits, current_token_amount)
+                    else:
+                        smooth_loss = torch.sum(smooth_loss * mask) / sum_mask
+                        loss = smooth_loss
+                        #kl_loss = torch.sum(kl_loss.view(-1) * mask) / sum_mask
+                        #loss = smooth_loss#args.alpha * smooth_loss + (1 - args.alpha) * kl_loss
+                        loss = L2Wrap.apply(loss, student_logits, current_token_amount)
+
+                    
+                    new_token_amount = prev_token_amount + current_token_amount
+                    if new_token_amount > 0:
+                        new_loss = prev_loss * (prev_token_amount / new_token_amount) + loss * (current_token_amount / new_token_amount)
+                        new_smooth_loss = prev_smooth_loss * (prev_token_amount / new_token_amount) + smooth_loss * (current_token_amount / new_token_amount)
+                        #new_kl_loss = prev_kl_loss * (prev_token_amount / new_token_amount) + kl_loss * (current_token_amount / new_token_amount)
+                    else:
+                        new_loss = prev_loss
+                        new_smooth_loss = smooth_loss
+                        #new_kl_loss = kl_loss
+
+                    status = 'proceed'
+                    return new_loss, new_smooth_loss,new_shift_states, new_wkv_states, new_token_amount, status
+                
+                proceedtokens = 0
+                
+                for i in range(math.ceil(T / T_train)):
+                    chunk_start = i * T_train
+                    chunk_end = min((i + 1) * T_train, T)
+                    #print(f'chunk start = {chunk_start} chunk end = {chunk_end} diff = {chunk_end-chunk_start}')
+                    
+                    total_loss, smooth_loss, new_shift_states, new_wkv_states, token_amount , status = torch_checkpoint(
+                        checkpointed_step2,
+                        input_ids[:, chunk_start:chunk_end],
+                        target[:, chunk_start:chunk_end],
+                        attention_mask[:, chunk_start:chunk_end],
+                        total_loss,
+                        smooth_loss,
+                        states.shift_states,
+                        states.wkv_states,
+                        token_amount,
+                        use_reentrant=False
+                    )
+                    states = BlockStateList(new_shift_states, new_wkv_states)
+
+                    if status == 'proceed':
+                        proceedtokens = proceedtokens + (chunk_end-chunk_start)
+
+                
+                self.trainer.smooth_loss = float(smooth_loss)
+                #self.trainer.kl_loss = float(kl_loss)
+                self.trainer.realproceedtokens =float(proceedtokens)
 
                 return total_loss#, states
 

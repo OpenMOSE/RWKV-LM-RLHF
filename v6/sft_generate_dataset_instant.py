@@ -23,10 +23,10 @@ import json
 
 parser = ArgumentParser()
 
-parser.add_argument("--load_model", default="models/RWKV-x060-Jpn-7B-20240816-ctx4096.pth", type=str)
-parser.add_argument("--load_initial_state", default="", type=str)
-parser.add_argument("--input_folder", default="datasets_box/ClaudeOutput", type=str)
-parser.add_argument("--output_parquet", default="datasets/Claude.h5", type=str)
+parser.add_argument("--load_model", default="models/RWKV-6-World-0.4B-v2-20231113-ctx4096.pth", type=str)
+#parser.add_argument("--load_initial_state", default="", type=str)
+parser.add_argument("--input_folder", default="dataset_box/claudeoai", type=str)
+parser.add_argument("--output_parquet", default="datasets/claudeoai.h5", type=str)
 #\x17
 args2 = parser.parse_args()
 torch.backends.cudnn.benchmark = True
@@ -129,7 +129,7 @@ def load_state(state_filename):
             gc.collect()
             torch.cuda.empty_cache()
 
-load_state(args2.load_initial_state)
+#load_state(args2.load_initial_state)
 
 # CSVファイルを読み込み、各項目を抽出する
 # RawData = []
@@ -317,10 +317,10 @@ i = 0
 with h5py.File(args2.output_parquet, 'w') as f:
         tokens_dataset = f.create_dataset('tokens', (0,), maxshape=(None,), dtype=h5py.vlen_dtype(np.int64),
                                           compression="gzip", compression_opts=9)
-        top_k_values_dataset = f.create_dataset('top_k_values', (0,), maxshape=(None,), dtype=h5py.vlen_dtype(np.float32),
-                                                compression="gzip", compression_opts=9)
-        top_k_indices_dataset = f.create_dataset('top_k_indices', (0,), maxshape=(None,), dtype=h5py.vlen_dtype(np.int64),
-                                                 compression="gzip", compression_opts=9)
+        #top_k_values_dataset = f.create_dataset('top_k_values', (0,), maxshape=(None,), dtype=h5py.vlen_dtype(np.float32),
+        #                                        compression="gzip", compression_opts=9)
+        #top_k_indices_dataset = f.create_dataset('top_k_indices', (0,), maxshape=(None,), dtype=h5py.vlen_dtype(np.int64),
+        #                                         compression="gzip", compression_opts=9)
         NowProcessing = 0
         # 各JSONLファイルを処理
         for jsonl_file in jsonl_files:
@@ -341,21 +341,21 @@ with h5py.File(args2.output_parquet, 'w') as f:
 
                             tokens = torch.tensor(tokenizer.encode(text_value))
                             model_state = None
-                            if model_current_statetuned is not None:
-                                model_state = copy.deepcopy(model_current_statetuned)
-                                print('initial state deepcopy')
+                           # if model_current_statetuned is not None:
+                           #     model_state = copy.deepcopy(model_current_statetuned)
+                           #     print('initial state deepcopy')
 
-                            logits = run_rnn_logits(tokens)
+                            #logits = run_rnn_logits(tokens)
 
-                            print('finished RNN Processing')
+                            #print('finished RNN Processing')
                             
                             # Top-K Logitsの計算
-                            top_k_values, top_k_indices = get_top_k_logits(logits, k=top_k)
+                            #top_k_values, top_k_indices = get_top_k_logits(logits, k=top_k)
 
                             # データセットのサイズを拡張
                             tokens_dataset.resize((i+1,))
-                            top_k_values_dataset.resize((i+1,))
-                            top_k_indices_dataset.resize((i+1,))
+                            #top_k_values_dataset.resize((i+1,))
+                            #top_k_indices_dataset.resize((i+1,))
 
                             print('logits compute finished')
 
@@ -363,8 +363,8 @@ with h5py.File(args2.output_parquet, 'w') as f:
                             tokens_dataset[i] = tokens.numpy().astype(np.int64)
                             
                             # Top-K値とインデックスを1次元に変換して保存
-                            top_k_values_dataset[i] = top_k_values.to(dtype=torch.float32).flatten().numpy().astype(np.float32)
-                            top_k_indices_dataset[i] = top_k_indices.flatten().numpy().astype(np.int64)
+                            #top_k_values_dataset[i] = top_k_values.to(dtype=torch.float32).flatten().numpy().astype(np.float32)
+                            #top_k_indices_dataset[i] = top_k_indices.flatten().numpy().astype(np.int64)
                             
 
 

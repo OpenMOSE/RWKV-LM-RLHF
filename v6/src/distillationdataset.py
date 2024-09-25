@@ -21,15 +21,39 @@ class HDF5TopKTensorDataset(Dataset):
     
     def __getitem__(self, idx):
 
-        if self.args.random_mode:
-            idx = random.randint(0, self.dataset_length - 1)
+        N = 1
+
+        random_indices = [random.randint(0, self.dataset_length - 1) for _ in range(N)]
+
+        #if self.args.random_mode:
+        #    idx = random.randint(0, self.dataset_length - 1)
+        #    idx2 = random.randint(0, self.dataset_length - 1)
 
 
 
+        #with h5py.File(self.file_path, 'r') as f:
+        #    tokens = f['tokens'][idx][:]
+        #    top_k_values = f['top_k_values'][idx][:]
+        #    top_k_indices = f['top_k_indices'][idx][:]
         with h5py.File(self.file_path, 'r') as f:
-            tokens = f['tokens'][idx][:]
-            top_k_values = f['top_k_values'][idx][:]
-            top_k_indices = f['top_k_indices'][idx][:]
+
+            tokens_list = []
+            top_k_values_list = []
+            top_k_indices_list = []
+            #tokens = np.concatenate((f['tokens'][idx][:], f['tokens'][idx2][:]))
+            #top_k_values = np.concatenate((f['top_k_values'][idx][:], f['top_k_values'][idx2][:]))
+            #top_k_indices = np.concatenate((f['top_k_indices'][idx][:], f['top_k_indices'][idx2][:]))  
+            # 
+            # # Read data for each random index
+            for idx in random_indices:
+                tokens_list.append(f['tokens'][idx][:])
+                top_k_values_list.append(f['top_k_values'][idx][:])
+                top_k_indices_list.append(f['top_k_indices'][idx][:])
+            
+            # Concatenate all data
+            tokens = np.concatenate(tokens_list)
+            top_k_values = np.concatenate(top_k_values_list)
+            top_k_indices = np.concatenate(top_k_indices_list) 
 
         #print(f'idx = {idx}')
         
