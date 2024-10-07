@@ -24,6 +24,9 @@ class HDF5TopKTensorDataset(Dataset):
 
         random_indices = [random.randint(0, self.dataset_length - 1) for _ in range(N)]
 
+        if self.args.random_mode == 0:
+            random_indices = [idx]
+
         with h5py.File(self.file_path, 'r') as f:
 
             tokens_list = []

@@ -1,17 +1,18 @@
-python train.py --load_model "models/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth" \
- --wandb "RWKV-LM-RLHF 1.6B Novel" --proj_dir "1b6-Novel" \
- --chunk_ctx 512 \
- --vocab_size 65536 --ctx_len 65536 \
+python train.py --load_model "models/x060-6B-prune.pth" \
+ --wandb "RWKV-LM-RLHF 6B JPEN distillation" --proj_dir "Outputs/6b-jpen" \
+ --infctx 0 \
+ --chunk_ctx 1024 \
+ --vocab_size 65536 --ctx_len 2048 \
  --epoch_steps 200 --epoch_count 200 --epoch_begin 0 --epoch_save 1 \
- --micro_bsz 8 --n_layer 24 --n_embd 2048 \
+ --micro_bsz 4 --n_layer 25 --n_embd 4096 \
  --lr_init 1e-4 --lr_final 1e-6 \
  --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
  --accelerator gpu --devices 1 --precision bf16 \
  --grad_cp 1 --my_testing "x060" \
  --strategy deepspeed_stage_2_offload \
- --layer_profile 'layerprofile/24_TEST.csv' \
- --quant 0 \
- --quant_mode 'nf4'\
+ --layer_profile 'layerprofile/25_TEST_pissa.csv' \
+ --quant 1 \
+ --quant_mode 'fp8'\
  --gpu_arch 'cuda' \
  --limited_lora 0 \
  --distillation 1 \
@@ -19,4 +20,4 @@ python train.py --load_model "models/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.p
  --top_k 100 \
  --alpha 0.4 \
  --smoothing 0.005 \
- --train_data_file 'datasets/testchat.h5'
+ --train_data_file 'datasets/test_jp_en.h5'

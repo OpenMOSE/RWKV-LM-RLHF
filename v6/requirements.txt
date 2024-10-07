@@ -1,7 +1,13 @@
-pytorch-lightning==1.9.5
-deepspeed
+pytorch-lightning==2.4.0
+deepspeed=0.15.1
 bitsandbytes
 wandb
 prompt_toolkit
 pandas
 rwkv
+triton
+transformers
+einops
+h5py
+lion-pytorch
+

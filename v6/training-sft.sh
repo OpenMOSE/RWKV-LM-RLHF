@@ -1,18 +1,20 @@
-python train.py --load_model "models/RWKV-x060-Jpn-7B-20240816-ctx4096.pth" \
- --wandb "RWKV-LM-RLHF 7B Code" --proj_dir "Outputs/7b-Code-bone" \
- --chunk_ctx 512 \
- --vocab_size 65536 --ctx_len 65536 \
+python train.py --load_model "/home/client/Projects/RWKV-Infer-FLA/RWKV-Infer/models/RWKV-x060-Jpn-14B-20240819-ctx4096.pth" \
+ --wandb "RWKV-LM-RLHF Code 14B FP8 pissa" --proj_dir "Outputs/14B-Code-pissa" \
+ --chunk_ctx 448 \
+ --vocab_size 65536 --ctx_len 28672 \
  --epoch_steps 200 --epoch_count 200 --epoch_begin 0 --epoch_save 1 \
- --micro_bsz 4 --n_layer 32 --n_embd 4096 \
- --lr_init 1e-4 --lr_final 1e-6 \
+ --micro_bsz 2 --n_layer 61 --n_embd 4096 \
+ --lr_init 2e-5 --lr_final 1e-6 \
  --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
- --accelerator gpu --devices 1 --precision bf16 \
+ --accelerator gpu --devices 1 --precision 'bf16' \
  --grad_cp 1 --my_testing "x060" \
  --strategy deepspeed_stage_2_offload \
- --layer_profile 'layerprofile/32_TEST_bone.csv' \
+ --layer_profile 'layerprofile/61_TEST_pissa.csv' \
  --quant 1 \
- --quant_mode 'int8'\
+ --quant_mode 'fp8'\
  --gpu_arch 'cuda' \
- --limited_lora 0 \
+ --limited_lora 1 \
  --sft 1 \
+ --smoothing 0.001 \
+ --random_mode 1 \
  --train_data_file 'datasets/claudeoai.h5'
