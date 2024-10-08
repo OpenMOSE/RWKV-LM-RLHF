@@ -143,6 +143,7 @@ class FP8HybridMatmul(torch.autograd.Function):
     def backward(ctx, grad_output): #これやらないとBackwardでLossが右肩上がりになる
         weight, = ctx.saved_tensors
         grad_input = torch.matmul(grad_output, weight.to(dtype=torch.bfloat16).t())
+        del weight
         # 重みは完全に凍結されているので、grad_weightは不要
         return grad_input, None
     
@@ -511,23 +512,30 @@ class LabelSmoothingLoss(torch.nn.Module):
         super(LabelSmoothingLoss, self).__init__()
         self.smoothing = smoothing
 
-    def forward2(self, pred, target,paththrough=False):
+    # def forward2(self, pred, target,paththrough=False):
+    #     n_classes = pred.size(-1)
+    #     one_hot = torch.zeros_like(pred).scatter(1, target.unsqueeze(1), 1)
+    #     smooth_one_hot = one_hot * (1 - self.smoothing) + self.smoothing / n_classes
+    #     log_prob = F.log_softmax(pred, dim=-1)
+    #     return torch.sum(-smooth_one_hot * log_prob, dim=-1)
+    # def forward(self, pred, target):
+    #     n_classes = pred.size(-1)
+    #     # Log-Softmaxを計算
+    #     log_prob = F.log_softmax(pred, dim=-1)
+    #     # 正解ラベルの負の対数尤度を取得
+    #     nll_loss = -log_prob.gather(dim=-1, index=target.unsqueeze(1)).squeeze(1)
+    #     # 平均の負の対数尤度を計算
+    #     smooth_loss = -log_prob.sum(dim=-1) / n_classes
+    #     # ラベルスムージングを適用
+    #     loss = (1 - self.smoothing) * nll_loss + self.smoothing * smooth_loss
+    #     return loss#.mean()
+
+    def forward(self, pred, target):
         n_classes = pred.size(-1)
         one_hot = torch.zeros_like(pred).scatter(1, target.unsqueeze(1), 1)
         smooth_one_hot = one_hot * (1 - self.smoothing) + self.smoothing / n_classes
         log_prob = F.log_softmax(pred, dim=-1)
         return torch.sum(-smooth_one_hot * log_prob, dim=-1)
-    def forward(self, pred, target):
-        n_classes = pred.size(-1)
-        # Log-Softmaxを計算
-        log_prob = F.log_softmax(pred, dim=-1)
-        # 正解ラベルの負の対数尤度を取得
-        nll_loss = -log_prob.gather(dim=-1, index=target.unsqueeze(1)).squeeze(1)
-        # 平均の負の対数尤度を計算
-        smooth_loss = -log_prob.sum(dim=-1) / n_classes
-        # ラベルスムージングを適用
-        loss = (1 - self.smoothing) * nll_loss + self.smoothing * smooth_loss
-        return loss#.mean()
 
 
 ########################################################################################################
@@ -1451,13 +1459,14 @@ class RWKV(pl.LightningModule):
                 smoothing = args.smoothing
 
                 input_ids = batch['input_ids']
+                target = batch['target_ids']
                 top_k_values = batch['top_k_values']
                 top_k_indices = batch['top_k_indices']
                 attention_mask = batch['attention_mask']
 
 
-                target = input_ids[:,1:]
-                input_ids = input_ids[:,:-1]
+                #target = input_ids[:,1:]
+                #input_ids = input_ids[:,:-1]
                 
 
                 B, T = input_ids.shape
@@ -1566,11 +1575,13 @@ class RWKV(pl.LightningModule):
                 smoothing = args.smoothing
 
                 input_ids = batch['input_ids']
+                target = batch['target_ids']
                 attention_mask = batch['attention_mask']
 
 
-                target = input_ids[:,1:]
-                input_ids = input_ids[:,:-1]
+                #target = input_ids[:,1:]
+                #attention_mask = attention_mask[:,:-1]
+                #input_ids = input_ids[:,:-1]
 
                 B, T = input_ids.shape
                 total_loss = torch.tensor(0., dtype=self.emb.weight.dtype).requires_grad_()
@@ -1593,6 +1604,7 @@ class RWKV(pl.LightningModule):
                     targets = chunk_target_ids.contiguous().view(-1)
                     mask = chunk_attention_mask.contiguous().view(-1)
                     sum_mask = torch.sum(mask).item()
+                    
                     if sum_mask == 0:
                         status = 'skip'
                         return prev_loss,prev_smooth_loss,last_shift_states, last_wkv_states, prev_token_amount, status
@@ -1636,6 +1648,8 @@ class RWKV(pl.LightningModule):
                         #loss = smooth_loss#args.alpha * smooth_loss + (1 - args.alpha) * kl_loss
                         loss = L2Wrap.apply(loss, student_logits, current_token_amount)
 
+                    #del student_logits
+                    #del mask
                     
                     new_token_amount = prev_token_amount + current_token_amount
                     if new_token_amount > 0:
@@ -1656,10 +1670,10 @@ class RWKV(pl.LightningModule):
                 
                 for i in range(math.ceil(T / T_train)):
                     chunk_start = i * T_train
-                    chunk_end = min((i + 1) * T_train, T)
+                    chunk_end = (i + 1) * T_train#min((i + 1) * T_train, T)
                     #print(f'chunk start = {chunk_start} chunk end = {chunk_end} diff = {chunk_end-chunk_start}')
-                    
                     total_loss, smooth_loss, new_shift_states, new_wkv_states, token_amount , status = torch_checkpoint(
+                    #total_loss, smooth_loss, new_shift_states, new_wkv_states, token_amount , status = deepspeed.checkpointing.checkpoint(
                         checkpointed_step2,
                         input_ids[:, chunk_start:chunk_end],
                         target[:, chunk_start:chunk_end],
@@ -1671,11 +1685,11 @@ class RWKV(pl.LightningModule):
                         token_amount,
                         use_reentrant=False
                     )
-                    if status == 'skip':
-                        break
-                    #states = BlockStateList(new_shift_states, new_wkv_states)
-                    states.shift_states = new_shift_states
-                    states.wkv_states = new_wkv_states
+                    #if status == 'skip':
+                    #    break
+                    states = BlockStateList(new_shift_states, new_wkv_states)
+                    #states.shift_states = new_shift_states
+                    #states.wkv_states = new_wkv_states
 
                     if status == 'proceed':
                         proceedtokens = proceedtokens + (chunk_end-chunk_start)

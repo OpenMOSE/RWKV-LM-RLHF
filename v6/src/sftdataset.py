@@ -44,20 +44,25 @@ class HDF5TopKTensorDataset(Dataset):
         tokens = tokens[:seq_len]
         
         # padding and mask
-        padded_tokens = np.zeros(self.max_seq_length, dtype=np.int64)
-        padded_tokens[:seq_len] = tokens
+        padded_tokens_input = np.zeros(self.max_seq_length, dtype=np.int64)
+        padded_tokens_input[:seq_len-1] = tokens[:-1]
+
+        padded_tokens_target = np.zeros(self.max_seq_length, dtype=np.int64)
+        padded_tokens_target[:seq_len-1] = tokens[1:]
         
         attention_mask = np.zeros(self.max_seq_length, dtype=np.float32)
-        attention_mask[:seq_len] = 1.0
+        attention_mask[:seq_len-1] = 1.0
         
         return {
-            'input_ids': torch.from_numpy(padded_tokens),
+            'input_ids': torch.from_numpy(padded_tokens_input),
+            'target_ids': torch.from_numpy(padded_tokens_target),
             'attention_mask': torch.from_numpy(attention_mask).to(dtype=torch.bfloat16)
         }
 
 def collate_fn(batch):
     return {
         'input_ids': torch.stack([item['input_ids'] for item in batch]),
+        'target_ids': torch.stack([item['target_ids'] for item in batch]),
         'attention_mask': torch.stack([item['attention_mask'] for item in batch])
     }
         
