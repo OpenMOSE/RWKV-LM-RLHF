@@ -70,10 +70,10 @@ class HDF5TopKTensorDataset(Dataset):
         # padded_tokens[:seq_len] = tokens
         
         padded_top_k_values = np.zeros((self.max_seq_length, self.top_k), dtype=np.float32)
-        padded_top_k_values[:seq_len-1] = top_k_values[1:]
+        padded_top_k_values[:seq_len-1] = top_k_values[:-1]
         
         padded_top_k_indices = np.zeros((self.max_seq_length, self.top_k), dtype=np.int64)
-        padded_top_k_indices[:seq_len-1] = top_k_indices[1:]
+        padded_top_k_indices[:seq_len-1] = top_k_indices[:-1]
 
 
 

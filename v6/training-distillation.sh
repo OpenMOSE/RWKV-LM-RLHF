@@ -1,10 +1,10 @@
 python train.py --load_model "models/x060-6B-prune.pth" \
- --wandb "RWKV-LM-RLHF 6B JPEN distillation" --proj_dir "Outputs/6b-jpen" \
+ --wandb "RWKV-LM-RLHF 6B JPEN distillation" --proj_dir "Outputs/6b-jpen-int8" \
  --infctx 1 \
  --chunk_ctx 1024 \
  --vocab_size 65536 --ctx_len 65536 \
  --epoch_steps 200 --epoch_count 200 --epoch_begin 0 --epoch_save 1 \
- --micro_bsz 4 --n_layer 25 --n_embd 4096 \
+ --micro_bsz 8 --n_layer 25 --n_embd 4096 \
  --lr_init 1e-4 --lr_final 1e-6 \
  --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
  --accelerator gpu --devices 1 --precision bf16 \

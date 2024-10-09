@@ -508,16 +508,16 @@ def make_emb(*args, **kwargs):
 
     
 class LabelSmoothingLoss(torch.nn.Module):
-    def __init__(self, smoothing=0.001):
+    def __init__(self, smoothing=0.001 , epsilon=1e-8):
         super(LabelSmoothingLoss, self).__init__()
         self.smoothing = smoothing
-
-    # def forward2(self, pred, target,paththrough=False):
-    #     n_classes = pred.size(-1)
-    #     one_hot = torch.zeros_like(pred).scatter(1, target.unsqueeze(1), 1)
-    #     smooth_one_hot = one_hot * (1 - self.smoothing) + self.smoothing / n_classes
-    #     log_prob = F.log_softmax(pred, dim=-1)
-    #     return torch.sum(-smooth_one_hot * log_prob, dim=-1)
+        self.epsilon = epsilon
+    def forward(self, pred, target,paththrough=False):
+        n_classes = pred.size(-1)
+        one_hot = torch.zeros_like(pred).scatter(1, target.unsqueeze(1), 1)
+        smooth_one_hot = one_hot * (1 - self.smoothing) + self.smoothing / n_classes
+        log_prob = F.log_softmax(pred, dim=-1)
+        return torch.sum(-smooth_one_hot * log_prob, dim=-1)
     # def forward(self, pred, target):
     #     n_classes = pred.size(-1)
     #     # Log-Softmaxを計算
@@ -530,12 +530,40 @@ class LabelSmoothingLoss(torch.nn.Module):
     #     loss = (1 - self.smoothing) * nll_loss + self.smoothing * smooth_loss
     #     return loss#.mean()
 
-    def forward(self, pred, target):
-        n_classes = pred.size(-1)
-        one_hot = torch.zeros_like(pred).scatter(1, target.unsqueeze(1), 1)
-        smooth_one_hot = one_hot * (1 - self.smoothing) + self.smoothing / n_classes
-        log_prob = F.log_softmax(pred, dim=-1)
-        return torch.sum(-smooth_one_hot * log_prob, dim=-1)
+    # def forward(self, pred, target):
+    #     n_classes = pred.size(-1)
+    #     one_hot = torch.zeros_like(pred).scatter(1, target.unsqueeze(1), 1)
+    #     smooth_one_hot = one_hot * (1 - self.smoothing) + self.smoothing / n_classes
+    #     log_prob = F.log_softmax(pred, dim=-1)
+    #     return torch.sum(-smooth_one_hot * log_prob, dim=-1)
+
+    # def forward(self, pred, target):
+    #     n_classes = pred.size(-1)
+        
+    #     # 入力値のクリッピング
+    #     pred = torch.clamp(pred, min=-100, max=100)
+        
+    #     # より安定したsoftmax計算
+    #     max_val = pred.max(dim=-1, keepdim=True).values
+    #     stable_pred = pred - max_val
+    #     exp_pred = torch.exp(stable_pred)
+    #     softmax_pred = exp_pred / (torch.sum(exp_pred, dim=-1, keepdim=True) + self.epsilon)
+        
+    #     # log_softmaxの計算
+    #     log_prob = torch.log(softmax_pred + self.epsilon)
+        
+    #     # one-hot encodingとスムージング
+    #     one_hot = torch.zeros_like(pred).scatter(1, target.unsqueeze(1), 1)
+    #     smooth_one_hot = one_hot * (1 - self.smoothing) + self.smoothing / n_classes
+        
+    #     # 損失の計算
+    #     loss = torch.sum(-smooth_one_hot * log_prob, dim=-1)
+        
+    #     # NaNチェック
+    #     if torch.isnan(loss).any():
+    #         print("NaN detected in loss calculation")
+        
+    #     return loss
 
 
 ########################################################################################################
@@ -1377,10 +1405,10 @@ class RWKV(pl.LightningModule):
                 #return Lion(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
              
             if self.deepspeed_offload:
-                return DeepSpeedCPUAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=False, weight_decay=0, amsgrad=False)
+                return DeepSpeedCPUAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=True, weight_decay=0, amsgrad=False)
             if args.optim=='lion':
                 return Lion(optim_groups, lr=self.args.lr_init, betas=self.args.betas, weight_decay=0, use_triton=True)
-            return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=False, weight_decay=0, amsgrad=False)
+            return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, weight_decay=0, amsgrad=False)
         # return ZeroOneAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, weight_decay=0, amsgrad=False, cuda_aware=False)
 
     @property
@@ -1537,7 +1565,7 @@ class RWKV(pl.LightningModule):
                 
                 for i in range(math.ceil(T / T_train)):
                     chunk_start = i * T_train
-                    chunk_end = min((i + 1) * T_train, T)
+                    chunk_end = (i + 1) * T_train#min((i + 1) * T_train, T)
                     #print(f'chunk start = {chunk_start} chunk end = {chunk_end} diff = {chunk_end-chunk_start}')
                     
                     total_loss, smooth_loss,kl_loss, new_shift_states, new_wkv_states, token_amount , status = torch_checkpoint(
@@ -1593,6 +1621,37 @@ class RWKV(pl.LightningModule):
                 assert C==H*args.head_size_a
                 states = BlockStateList.create(args.n_layer, B, C, H, self.emb.weight.device,
                     self.emb.weight.dtype)
+                def smooth_cross_entropy(student_logits, targets, smoothing=0.1, epsilon=1e-8):
+                    # Ensure inputs have correct dimensions
+                    if student_logits.dim() == 2:
+                        num_classes = student_logits.size(1)
+                    elif student_logits.dim() == 3:
+                        num_classes = student_logits.size(2)
+                        student_logits = student_logits.view(-1, num_classes)
+                        targets = targets.view(-1)
+                    else:
+                        raise ValueError(f"Unexpected student_logits shape: {student_logits.shape}")
+                    
+                    # Create smoothed labels
+                    with torch.no_grad():
+                        true_dist = torch.zeros_like(student_logits)
+                        true_dist.fill_(smoothing / (num_classes - 1))
+                        true_dist.scatter_(1, targets.unsqueeze(1).long(), 1.0 - smoothing)
+                    
+                    # Calculate log probabilities with numerical stability
+                    log_probs = F.log_softmax(student_logits, dim=-1)
+                    
+                    # Clip log probabilities to prevent -inf
+                    log_probs = torch.clamp(log_probs, min=-100)
+                    
+                    # Calculate KL divergence
+                    loss = torch.sum(-true_dist * log_probs, dim=-1)
+                    
+                    # Check for NaN and replace with a large value if found
+                    loss = torch.where(torch.isnan(loss), torch.full_like(loss, 1e6), loss)
+                    
+                    # Return per-sample loss without averaging
+                    return loss
 
                 def checkpointed_step2(chunk_input_ids,chunk_target_ids,#, chunk_top_k_values, chunk_top_k_indices, 
                                     chunk_attention_mask,
@@ -1603,6 +1662,7 @@ class RWKV(pl.LightningModule):
                     # Forward pass
                     targets = chunk_target_ids.contiguous().view(-1)
                     mask = chunk_attention_mask.contiguous().view(-1)
+                    #print(f'mask = {mask}')
                     sum_mask = torch.sum(mask).item()
                     
                     if sum_mask == 0:
@@ -1614,47 +1674,47 @@ class RWKV(pl.LightningModule):
                     # Label Smoothing Loss
                     label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
                     student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
-                    #smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
+                    smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
                     #student_logits_shifted = student_logits_shifted[:, :targets.size(1)]
                     #print(f'student_logits_shifted = {student_logits_shifted.shape} targets = {targets.shape}')
                     # if smoothing == 0:
                     #     #smooth_loss = label_smoothing_loss(student_logits_shifted, targets, True) #Through
                     #     smooth_loss = F.cross_entropy(student_logits_shifted.view(-1, student_logits_shifted.size(-1)), targets.reshape(-1))
                     # else:
-                    smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
+                    #smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
+                    #smooth_loss = F.cross_entropy(student_logits.view(-1, student_logits.size(-1)), targets.reshape(-1), reduction='none')
                     #del student_logits_shifted
                     #del targets
-                    #print(len(smooth_loss))
+                  
 
-                    # Top-k teacher logits KL-divergence loss
-                    #teacher_probs = chunk_top_k_values#[:, :-1]
-                    #teacher_indices = chunk_top_k_indices#[:, :-1]
-                    #student_top_k_logits = torch.gather(student_logits, -1, teacher_indices)
-                    #kl_loss = self.kl_divergence_loss(student_top_k_logits, teacher_probs, args.temperature)
+                    #student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
+                    #smooth_loss = smooth_cross_entropy(student_logits_shifted,targets,smoothing)
      
                     current_token_amount = chunk_input_ids.shape[1]#sum_mask
 
+                    print(f'current token amount = {current_token_amount}')
+
                     # Combine losses
                     if sum_mask == mask.shape[0]:
+                        print('nomask')
                         loss = smooth_loss.mean()#args.alpha * smooth_loss.mean() + (1 - args.alpha) * kl_loss.mean()
                         smooth_loss = smooth_loss.mean()
                         #kl_loss = kl_loss.mean()
                         loss = L2Wrap.apply(loss, student_logits, current_token_amount)
                     else:
+                        print('masked')
                         #print(f'smooth_loss = {smooth_loss.shape} mask = {mask.shape}')
                         smooth_loss = torch.sum(smooth_loss * mask) / sum_mask
                         loss = smooth_loss
                         #kl_loss = torch.sum(kl_loss.view(-1) * mask) / sum_mask
                         #loss = smooth_loss#args.alpha * smooth_loss + (1 - args.alpha) * kl_loss
                         loss = L2Wrap.apply(loss, student_logits, current_token_amount)
-
-                    #del student_logits
-                    #del mask
                     
                     new_token_amount = prev_token_amount + current_token_amount
                     if new_token_amount > 0:
                         #print(f'loss ={float(loss)}')
                         new_loss = prev_loss * (prev_token_amount / new_token_amount) + loss * (current_token_amount / new_token_amount)
+                        
                         #print(f'new_loss ={float(new_loss)}')
                         new_smooth_loss = prev_smooth_loss * (prev_token_amount / new_token_amount) + smooth_loss * (current_token_amount / new_token_amount)
                         #new_kl_loss = prev_kl_loss * (prev_token_amount / new_token_amount) + kl_loss * (current_token_amount / new_token_amount)

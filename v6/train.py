@@ -540,7 +540,7 @@ if __name__ == "__main__":
     if "deepspeed" in args.strategy:
         trainer.strategy.config["zero_optimization"]["allgather_bucket_size"] = args.ds_bucket_mb * 1000 * 1000
         trainer.strategy.config["zero_optimization"]["reduce_bucket_size"] = args.ds_bucket_mb * 1000 * 1000
-        trainer.strategy.config["zero_optimization"]["overlap_comm"] = False
+        #trainer.strategy.config["zero_optimization"]["overlap_comm"] = False
 
     # must set shuffle=False, persistent_workers=False (because worker is in another thread)
     if args.orpo or args.dpo:

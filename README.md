@@ -3,7 +3,7 @@
 # WARNING: This repository is under development
 This repo is forked from RWKV-LM
 
-Reinforcement Learning Toolkit for RWKV
+Advanced Training Toolkit for RWKV
 
 Enables ORPO and DPO training for RWKV x060 "finch" architecture LLMs
 
