@@ -73,6 +73,7 @@ with torch.no_grad():
                     else:
                         w[k] = (w[k]- w_init_lora[init_lora_B] @ w_init_lora[init_lora_A]).to(dtype=torch.bfloat16)
                     w[k] +=  w[lora_B] @ w[lora_A]
+                    print('pizza')
                 else:
                     if quant=='4bit':
                         qw,qs = bnb.functional.quantize_4bit(w[k])
@@ -87,6 +88,7 @@ with torch.no_grad():
                         qw,qs = bnb.functional.quantize(w[k])
                         w[k] = (bnb.functional.dequantize(qw,state=qs)).to(dtype=torch.bfloat16)
                     w[k] += w[lora_B] @ w[lora_A] * lora_scaling#(lora_alpha / lora_r)
+                    print('lora')
                 output_w[k] = w[k].to(device='cpu', copy=True)
                 del w[k]
                 del w[lora_A]

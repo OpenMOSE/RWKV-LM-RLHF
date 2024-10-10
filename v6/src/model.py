@@ -1645,18 +1645,18 @@ class RWKV(pl.LightningModule):
                     # Label Smoothing Loss
                     label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
                     student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
-                    print(f'logit sum1={torch.sum(student_logits_shifted)}')
-                    smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
+                    #print(f'logit sum1={torch.sum(student_logits_shifted)}')
+                    #smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
                     #student_logits_shifted = student_logits_shifted[:, :targets.size(1)]
                     #print(f'student_logits_shifted = {student_logits_shifted.shape} targets = {targets.shape}')
                     # if smoothing == 0:
                     #     #smooth_loss = label_smoothing_loss(student_logits_shifted, targets, True) #Through
                     #     smooth_loss = F.cross_entropy(student_logits_shifted.view(-1, student_logits_shifted.size(-1)), targets.reshape(-1))
                     # else:
-                    #smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
+                    smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
                     #smooth_loss = F.cross_entropy(student_logits.view(-1, student_logits.size(-1)), targets.reshape(-1), reduction='none')
                     #del student_logits_shifted
-                    #del targets
+                    del targets
                   
 
                     #student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))

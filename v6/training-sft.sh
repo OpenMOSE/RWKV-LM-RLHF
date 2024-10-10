@@ -4,7 +4,7 @@ python train.py --load_model "/home/client/Projects/RWKV-Infer-FLA/RWKV-Infer/mo
  --vocab_size 65536 --ctx_len 65536 \
  --epoch_steps 200 --epoch_count 200 --epoch_begin 0 --epoch_save 1 \
  --micro_bsz 1 --n_layer 61 --n_embd 4096 \
- --lr_init 1e-4 --lr_final 1e-6 \
+ --lr_init 2e-5 --lr_final 1e-6 \
  --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
  --accelerator gpu --devices 1 --precision 'bf16' \
  --grad_cp 1 --my_testing "x060" \
@@ -16,7 +16,7 @@ python train.py --load_model "/home/client/Projects/RWKV-Infer-FLA/RWKV-Infer/mo
  --limited_lora 0 \
  --sft 1 \
  --smoothing 0.01 \
- --random_mode 0 \
+ --random_mode 1 \
  --optim '' \
  --train_data_file 'datasets/claudeoai.h5' \
  --accumulate_grad_batches 1
