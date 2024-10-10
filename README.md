@@ -1,31 +1,58 @@
 # RWKV-LM-RLHF
+<p align='center'>
+<image src="kotori.webp" width=15%/>
+</p>
 
-# WARNING: This repository is under development
-This repo is forked from RWKV-LM
+<div align="center"> 
+A repository exploring the possibilities for deeper fine-tuning of RWKV.
+</div>
 
-Reinforcement Learning Toolkit for RWKV
 
-Enables ORPO and DPO training for RWKV x060 "finch" architecture LLMs
+## Key Features
 
-CUDA and Rocm Supported.(Tested on MI100 Rocm6.1.2 + Bitsandbytes(multi backend branch))
+- **RLHF Training with ORPO(Odds Ratio Preference Optimization)**: 
 
-MultiGPU with quantization Supported.(Monkey implement) 
+  ORPO is that it allows for simultaneous SFT and aligning. By adjusting the orpo_alpha value, you can control the ratio between SFT and aligning.
+   - Uses odds ratios instead of probability ratios to measure policy changes
 
-## 2024.08.09 Distillation Test
-Test support for RWKV's distillation training.
-Using the teacher model, I obtain logits for the dataset and save them according to the set top-k. These are then used for training the student model.
+   - Can often achieve better performance with fewer training steps
 
-In my environment, using a single RTX4090, I pruned layers from L32D4096 to L25D4096, and performed recovery training using LoRA (Alpha 128).
+   - Designed to mitigate common issues in RLHF like reward hacking and overoptimization
 
-## Refactoring of the ORPO algorithm
-A key feature of ORPO is that it allows for simultaneous SFT and aligning. By adjusting the orpo_alpha value, you can control the ratio between SFT and aligning.When the alignment training ratio is high, it seems beneficial to lower the learning rate to around 1e-6.
+- **Infinite Context Compression Distillation Training**:
+  - This approach involves simultaneously training a student model using compressed logits data pre-acquired from a larger parameter model (for example, 14B) as soft labels, and the dataset as hard labels.
 
-## Training backend
-With layer_profile, you can configure full parameter layers, frozen layers, and adapter layers (LoRA, PISSA) on a per-layer basis.
-Frozen layers or adapter layers are compatible with Bitsandbytes NF4 quantization.
-This aims to maximize training performance within limited VRAM capacity.
+  - Soft label learning can significantly reduce the risk of overfitting.
 
-14B L61D4096,NF4,LoRA(A=8,R=16,Blocks only, no head,emb) on Single RTX4090 
+  - It allows for efficient transfer of specific tasks to smaller models.
+- **Infinite Context Masked SFT with Smoothing Loss**:
+  - By incorporating smoothing into the loss calculation, the transfer probability can be increased.
+
+  - Dynamic masking allows for efficient loss reduction during multi-batch processing.
+
+  - With an RTX4090, a 14B parameter model can be trained with 65k contexts.
+
+## Peft Training Backend
+
+- **Bone (Block Affine Transformation)**: 
+   - New training method proposed by @Jl-er
+   - Achieve faster convergence and better fit to data.
+   - No complex initialization is required, and fast convergence and better fit to data can be achieved.
+- **PiSSA（Principal Singular values and Singular vectors Adaptation）**: 
+   - Optimize essential singular values ​​and vectors, and freeze the "noise" parts.
+   - Compared to LoRA, it converges much faster and has better final performance.
+- **LoRA**: 
+   - Updates to large weight matrices are approximated by products of low-rank matrices.
+- **Quantization**:
+   - FP8: Fastest. Native matmul. Only works with NVIDIA H100, RTX4090.
+   - Int8: 8-bit quantization with Bitsandbytes. 16-bit Matmul
+   - NF4: 4-bit quantization with Bitsandbytes. 16-bit Matmul
+
+> Rank can be set variably for each layer. see layer_profile
+
+## System Requirements
+   - CPU RAM >= 32GB
+   - Cuda or Rocm GPU.(NVIDIA RTX3090,4090, AMD MI100)
 
 
 ## Orpo Usages
@@ -42,10 +69,6 @@ This aims to maximize training performance within limited VRAM capacity.
    - set --orpo_alpha 0.0004 (coefficient while observing the balance between OddsRatio Loss and SFT Loss (e.g., 1:1))
    - set --rlhf_max_corpus_len 1024 Maximum Token limit each prompt,chosen,reject for avoid OoM
    - set --rlhf_train_file 'YOUR TOKENIZED DATA FILENAME'
-## DPO Usages
-1. This is under development.
-
-I wish performance close to full parameter learning
 
 
 ## Orpo Mode
@@ -84,16 +107,18 @@ Lora_scaling=2.0
 python merge.py --base_model $base_model \
 --lora_checkpoint $lora_checkpoint \
 --output $output \
---type '$TYPE' \
+--type $TYPE \
 --lora_scaling $Lora_scaling
 ```
 
 ## Todo
-   - 1. Re-engineering DPO Algorithm with Gradient Checkpointing
-   - 2. SimPO research
-   - 3. Self-Play ORPO research
-   - 4. Re-engineering LISA+
-   - 5. support FLA backend(help me...)
+   - 1. Re-engineering DPO Algorithm with Gradient Checkpointing - Cancelled.
+   - 2. SimPO research - Cancelled
+   - 3. Self-Play ORPO research - Cancelled
+   - 4. Re-engineering LISA+ - Cancelled
+   - 5. support FLA backend(help me...) - Test implemented.
+   - 6. Compression Distillation - Test implemented.
+   - 7. infctx Orpo
 
 
 # And Thanks to:

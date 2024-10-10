@@ -1,7 +1,7 @@
 import torch
 from torch.utils.data import Dataset, DataLoader
 from pytorch_lightning import LightningModule
-from pytorch_lightning.trainer.supporters import CombinedLoader
+#from pytorch_lightning.trainer.supporters import CombinedLoader
 import os, sys, random
 
 class DPODataset(Dataset):

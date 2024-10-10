@@ -14,6 +14,7 @@ wandb/
 6B-SRD-buront4/
 6B-SRD-nsfw/
 6B-SRD-nsfw2/
+7B-Novel/
 Outputs/
 Claude/
 OpenAI/
@@ -21,3 +22,5 @@ OpenAI/
 Claude/
 OpenAI/
 states/
+loras/
+dataset_box/

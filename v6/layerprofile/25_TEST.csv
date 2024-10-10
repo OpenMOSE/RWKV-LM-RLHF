@@ -1,6 +1,6 @@
 Layer,Mode,Rank,Alpha,Dropout,LISAProb,LoRAProb,LRScale
 emb,freeze,0,0,,1,,1
-0,full,128,256,0.01,1,,1
+0,lora,128,256,0.01,1,,1
 1,lora,128,256,0.01,,1,1
 2,lora,128,256,0.01,,1,1
 3,lora,128,256,0.01,,1,1
@@ -25,4 +25,4 @@ emb,freeze,0,0,,1,,1
 22,lora,128,256,0.01,1,,1
 23,lora,128,256,0.01,1,,1
 24,lora,128,256,0.01,1,,1
-head,freeze,128,256,0.01,1,,1
+head,lora,128,256,0.01,1,,1

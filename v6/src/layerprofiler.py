@@ -42,6 +42,8 @@ class LayerProfiler:
                         CONFIG[f'{str(i)}']={'mode':'freeze', 'quant':quant }
                     elif row['Mode'] == 'lora':
                         CONFIG[f'{str(i)}']={'mode':'lora','quant':quant,'rank':row['Rank'],'alpha':row['Alpha'],'dropout':row['Dropout'],'parts':{"att", "ln", "time", "ffn"} }
+                    elif row['Mode'] == 'bone': # test implement
+                        CONFIG[f'{str(i)}']={'mode':'bone','quant':quant,'rank':row['Rank'],'parts':{"att", "ln", "time", "ffn"} }
                     elif row['Mode'] == 'pissa':
                         CONFIG[f'{str(i)}']={'mode':'pissa','quant':quant,'rank':row['Rank'],'alpha':row['Alpha'],'dropout':row['Dropout'],'parts':{"att", "ln", "time", "ffn"} }
             if Found == False:
@@ -55,10 +57,17 @@ class LayerProfiler:
                         CONFIG[f'emb']={'mode':'lora','rank':row['Rank'],'alpha':row['Alpha'],'dropout':row['Dropout'],'parts':{"att", "ln", "time", "ffn"} }
                 
             if row['Layer'] == 'head':
-                if row['Mode'] == 'full' or row['Mode'] == 'freeze':
+                if row['Mode'] == 'full':
                     CONFIG[f'head']={'mode':row['Mode']}
+                elif row['Mode'] == 'freeze':
+                    CONFIG[f'head']={'mode':row['Mode'] , 'quant':quant } 
                 elif row['Mode'] == 'lora':
-                        CONFIG[f'head']={'mode':'lora','rank':row['Rank'],'alpha':row['Alpha'],'dropout':row['Dropout'],'parts':{"att", "ln", "time", "ffn"} }
+                        CONFIG[f'head']={'mode':'lora','rank':row['Rank'],'alpha':row['Alpha'], 'quant':quant ,'dropout':row['Dropout'],'parts':{"att", "ln", "time", "ffn"} }
+                elif row['Mode'] == 'pissa':
+                        CONFIG[f'head']={'mode':'pissa','rank':row['Rank'],'alpha':row['Alpha'], 'quant':quant ,'dropout':row['Dropout'],'parts':{"att", "ln", "time", "ffn"} }
+                elif row['Mode'] == 'bone':
+                        CONFIG[f'head']={'mode':'bone','rank':row['Rank'], 'quant':quant ,'parts':{"att", "ln", "time", "ffn"} }
+
 
         return CONFIG
                 

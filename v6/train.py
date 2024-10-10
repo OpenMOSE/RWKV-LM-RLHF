@@ -28,11 +28,16 @@ if __name__ == "__main__":
     parser.add_argument("--proj_dir", default="out", type=str)
     parser.add_argument("--random_seed", default="-1", type=int)
 
-    parser.add_argument("--data_file", default="default_text_document", type=str)
-    parser.add_argument("--data_type", default="binidx", type=str)
+    #parser.add_argument("--data_file", default="default_text_document", type=str)
+    #parser.add_argument("--data_type", default="binidx", type=str)
     parser.add_argument("--vocab_size", default=0, type=int)  # vocab_size = 0 means auto (for char-level LM and .txt data)
 
-    parser.add_argument("--ctx_len", default=2048, type=int)
+    parser.add_argument("--ctx_len", default=2048, type=int) #maximum context size
+    parser.add_argument("--infctx", default=1, type=int) #from RWKV-PEFT :)
+    parser.add_argument("--chunk_ctx", default=512, type=int)
+
+
+
     parser.add_argument("--epoch_steps", default=1000, type=int)  # a mini "epoch" has [epoch_steps] steps
     parser.add_argument("--epoch_count", default=500, type=int)  # train for this many "epochs". will continue afterwards with lr = lr_final
     parser.add_argument("--epoch_begin", default=0, type=int)  # if you load a model trained for x "epochs", set epoch_begin = x
@@ -59,53 +64,64 @@ if __name__ == "__main__":
     parser.add_argument("--weight_decay", default=0, type=float) # try 0.1 / 0.01 / 0.001
     parser.add_argument("--weight_decay_final", default=-1, type=float)
 
-    parser.add_argument("--my_pile_version", default=1, type=int)  # my special pile version
-    parser.add_argument("--my_pile_stage", default=0, type=int)  # my special pile mode
-    parser.add_argument("--my_pile_shift", default=-1, type=int)  # my special pile mode - text shift
+    #parser.add_argument("--my_pile_version", default=1, type=int)  # my special pile version
+    #parser.add_argument("--my_pile_stage", default=0, type=int)  # my special pile mode
+    #parser.add_argument("--my_pile_shift", default=-1, type=int)  # my special pile mode - text shift
     parser.add_argument("--my_pile_edecay", default=0, type=int)
     parser.add_argument("--layerwise_lr", default=1, type=int)  # layerwise lr for faster convergence (but slower it/s)
-    parser.add_argument("--ds_bucket_mb", default=200, type=int)  # deepspeed bucket size in MB. 200 seems enough
+    parser.add_argument("--ds_bucket_mb", default=64, type=int)  # deepspeed bucket size in MB. 200 seems enough
     # parser.add_argument("--cuda_cleanup", default=0, type=int)  # extra cuda cleanup (sometimes helpful)
 
-    parser.add_argument("--my_sample_len", default=0, type=int)
-    parser.add_argument("--my_ffn_shift", default=1, type=int)
-    parser.add_argument("--my_att_shift", default=1, type=int)
+    #parser.add_argument("--my_sample_len", default=0, type=int)
+    #parser.add_argument("--my_ffn_shift", default=1, type=int)
+    #parser.add_argument("--my_att_shift", default=1, type=int)
     parser.add_argument("--head_size_a", default=64, type=int) # can try larger values for larger models
     parser.add_argument("--head_size_divisor", default=8, type=int)
-    parser.add_argument("--my_pos_emb", default=0, type=int)
-    parser.add_argument("--load_partial", default=0, type=int)
+    #parser.add_argument("--my_pos_emb", default=0, type=int)
+    #parser.add_argument("--load_partial", default=0, type=int)
     parser.add_argument("--magic_prime", default=0, type=int)
-    parser.add_argument("--my_qa_mask", default=0, type=int)
+    #parser.add_argument("--my_qa_mask", default=0, type=int)
     parser.add_argument("--my_random_steps", default=0, type=int)
     parser.add_argument("--my_testing", default='x060', type=str)
     parser.add_argument("--my_exit", default=99999999, type=int)
     parser.add_argument("--my_exit_tokens", default=0, type=int)
 
     parser.add_argument("--gpu_arch",default="cuda",type=str)# if CUDA set cuda, but if rocm and 4bit need custom bitsandbytes for rocm
-    parser.add_argument("--layer_profile",default='layerprofile/24_test.csv',type=str)
+    parser.add_argument("--layer_profile",default='layerprofile/24_test_bone.csv',type=str)
     parser.add_argument("--quant", default=1, type=int) #Quantize NF4 on LoRA Layers
     parser.add_argument("--quant_mode", default='nf4', type=str) #Quantize NF4 on LoRA Layers or freezing
 
-    parser.add_argument("--limited_lora", default=1, type=int)
+    parser.add_argument("--limited_lora", default=0, type=int)
+
+    parser.add_argument("--svd_niter", default=4, type=int) # for PIZZA
     
 
 
     parser.add_argument("--dpo", default=0, type=int) 
     parser.add_argument("--dpo_beta", default=0.01, type=float)
-
     parser.add_argument("--orpo", default=0, type=int) #orpo
     parser.add_argument("--orpo_alpha", default=0.01, type=float) #orpo
+
+
     parser.add_argument("--rlhf_max_corpus_len", default=1024, type=int) #limit maximum dpo dataset token per dpo item. if avoid OoM decrease this value
     parser.add_argument("--rlhf_train_file", default="trainset.save", type=str)#need pytorch tensor type input 
 
-    
+    #Hyper Parameters Distillation
     parser.add_argument("--distillation", default=0, type=int)
-    parser.add_argument("--random_mode", default=1, type=int)
     parser.add_argument("--temperature", default=2.0, type=float)
     parser.add_argument("--alpha", default=0.5, type=float)
-    parser.add_argument("--smoothing", default=0.1, type=float)
+    parser.add_argument("--smoothing", default=0.001, type=float)
     parser.add_argument("--top_k", default=100, type=int)
-    parser.add_argument("--distillation_train_file", default='datasets/test_jp_logits.h5', type=str)
+
+    #Hyper Parameters SFT(masked)
+    parser.add_argument("--sft", default=0, type=int)
+    parser.add_argument("--train_data_file", default='datasets/test_jp_logits.h5', type=str)
+    parser.add_argument("--random_mode", default=1, type=int)
+
+    #new optim
+    parser.add_argument("--optim", default="lion", type=str)
+
+
 
 
 
@@ -162,61 +178,66 @@ if __name__ == "__main__":
     os.environ["RWKV_MY_ARCHITECTURE"] = args.gpu_arch
     os.environ["RWKV_CTXLEN"] = str(args.ctx_len)
     os.environ["RWKV_HEAD_SIZE_A"] = str(args.head_size_a)
+
+    if args.infctx:
+        os.environ["RWKV_TRAIN_TYPE"]='infctx'
+    else:
+        os.environ["RWKV_TRAIN_TYPE"]='normal'
+
+
+
     if args.dim_att <= 0:
         args.dim_att = args.n_embd
     if args.dim_ffn <= 0:
         args.dim_ffn = int((args.n_embd * 3.5) // 32 * 32) # default = 3.5x emb size
 
-    if args.data_type == "wds_img":
-        args.run_name = f"v{args.my_img_version}-{args.my_img_size}-{args.my_img_bit}bit-{args.my_img_clip}x{args.my_img_clip_scale}"
-        args.proj_dir = f"{args.proj_dir}-{args.run_name}"
-    else:
-        args.run_name = f"{args.vocab_size} ctx{args.ctx_len} L{args.n_layer} D{args.n_embd}"
+     
+    args.run_name = f"{args.vocab_size} ctx{args.ctx_len} L{args.n_layer} D{args.n_embd}"
     if not os.path.exists(args.proj_dir):
         os.makedirs(args.proj_dir)
 
-    if args.my_pile_stage > 0:
-        magic_prime_bak = args.magic_prime
+    # if args.my_pile_stage > 0:
+    #     magic_prime_bak = args.magic_prime
 
-        if args.my_pile_shift < 0:
-            args.my_pile_shift = 0
+    #     if args.my_pile_shift < 0:
+    #         args.my_pile_shift = 0
 
-        if magic_prime_bak > 0:
-            args.magic_prime = magic_prime_bak
-        if args.my_qa_mask == 2:
-            args.epoch_count = 2 * args.magic_prime // 40320
-        else:
-            args.epoch_count = args.magic_prime // 40320
+    #     if magic_prime_bak > 0:
+    #         args.magic_prime = magic_prime_bak
+    #     if args.my_qa_mask == 2:
+    #         args.epoch_count = 2 * args.magic_prime // 40320
+    #     else:
+    #         args.epoch_count = args.magic_prime // 40320
 
-        args.epoch_steps = 40320 // args.real_bsz
-        assert args.epoch_steps * args.real_bsz == 40320
-        # if args.my_pile_stage == 2:
-        #     assert args.lr_final == args.lr_init
-        if args.my_pile_stage >= 2:  # find latest saved model
-            list_p = []
-            for p in os.listdir(args.proj_dir):
-                if p.startswith("rwkv") and p.endswith(".pth"):
-                    p = ((p.split("-"))[1].split("."))[0]
-                    if p != "final":
-                        if p == "init":
-                            p = -1
-                        else:
-                            p = int(p)
-                        list_p += [p]
-            list_p.sort()
-            max_p = list_p[-1]
-            if len(list_p) > 1:
-                args.my_pile_prev_p = list_p[-2]  # in case max_p is corrupted
-            if max_p == -1:
-                args.load_model = f"{args.proj_dir}/rwkv-init.pth"
-            else:
-                args.load_model = f"{args.proj_dir}/rwkv-{max_p}.pth"
-                if args.warmup_steps < 0:
-                    if args.my_pile_stage == 2:
-                        args.warmup_steps = 10
-                    else:
-                        args.warmup_steps = 30
-            args.epoch_begin = max_p + 1
+    #     args.epoch_steps = 40320 // args.real_bsz
+    #     assert args.epoch_steps * args.real_bsz == 40320
+    #     # if args.my_pile_stage == 2:
+    #     #     assert args.lr_final == args.lr_init
+    #     if args.my_pile_stage >= 2:  # find latest saved model
+    #         list_p = []
+    #         for p in os.listdir(args.proj_dir):
+    #             if p.startswith("rwkv") and p.endswith(".pth"):
+    #                 p = ((p.split("-"))[1].split("."))[0]
+    #                 if p != "final":
+    #                     if p == "init":
+    #                         p = -1
+    #                     else:
+    #                         p = int(p)
+    #                     list_p += [p]
+    #         list_p.sort()
+    #         max_p = list_p[-1]
+    #         if len(list_p) > 1:
+    #             args.my_pile_prev_p = list_p[-2]  # in case max_p is corrupted
+    #         if max_p == -1:
+    #             args.load_model = f"{args.proj_dir}/rwkv-init.pth"
+    #         else:
+    #             args.load_model = f"{args.proj_dir}/rwkv-{max_p}.pth"
+    #             if args.warmup_steps < 0:
+    #                 if args.my_pile_stage == 2:
+    #                     args.warmup_steps = 10
+    #                 else:
+    #                     args.warmup_steps = 30
+    #         args.epoch_begin = max_p + 1
 
     samples_per_epoch = args.epoch_steps * args.real_bsz
     tokens_per_epoch = samples_per_epoch * args.ctx_len
@@ -229,9 +250,9 @@ if __name__ == "__main__":
         f"""
 ############################################################################
 #
-# RWKV-5 {args.precision.upper()} on {args.num_nodes}x{args.devices} {args.accelerator.upper()}, bsz {args.num_nodes}x{args.devices}x{args.micro_bsz}={args.real_bsz}, {args.strategy} {'with grad_cp' if args.grad_cp > 0 else ''}
+# RWKV-6 {args.precision.upper()} on {args.num_nodes}x{args.devices} {args.accelerator.upper()}, bsz {args.num_nodes}x{args.devices}x{args.micro_bsz}={args.real_bsz}, {args.strategy} {'with grad_cp' if args.grad_cp > 0 else ''}
 #
-# Data = {args.data_file} ({args.data_type}), ProjDir = {args.proj_dir}
+# Data = {args.train_data_file}, ProjDir = {args.proj_dir}
 #
 # Epoch = {args.epoch_begin} to {args.epoch_begin + args.epoch_count - 1} (will continue afterwards), save every {args.epoch_save} epoch
 #
@@ -250,12 +271,12 @@ if __name__ == "__main__":
     )
     rank_zero_info(str(vars(args)) + "\n")
 
-    assert args.data_type in ["utf-8", "utf-16le", "numpy", "binidx", "dummy", "uint16"]
+    #assert args.data_type in ["utf-8", "utf-16le", "numpy", "binidx", "dummy", "uint16"]
 
     if args.lr_final == 0 or args.lr_init == 0:
         rank_zero_info("\n\nNote: lr_final = 0 or lr_init = 0. Using linear LR schedule instead.\n\n")
 
-    assert args.precision in ["fp32", "tf32", "fp16", "bf16"]
+    #assert args.precision in ["fp32", "tf32", "fp16", "bf16"]
     os.environ["RWKV_FLOAT_MODE"] = args.precision
     if args.precision == "fp32":
         for i in range(10):
@@ -281,27 +302,34 @@ if __name__ == "__main__":
     elif args.precision == "fp16":
         args.precision = 16
     else:
-        args.precision = "bf16"
+        args.precision = "bf16-true"
 
     ########################################################################################################
     from src.config import LAYER_CONFIG,update_layer_config
 
     from src.trainer import train_callback, generate_init_weight
     from src.dataset import MyDataset
-    from src.dpodataset import DPODataset
-    from src.distillationdataset import HDF5TopKTensorDataset,collate_fn
+    
+    
     if args.dpo or args.orpo:
+        from src.dpodataset import DPODataset
         dpo_train_data = DPODataset(args)
 
-    train_data = MyDataset(args)
+    
 
     if args.distillation:
-        distillation_data = HDF5TopKTensorDataset(args,args.distillation_train_file,args.top_k,args.ctx_len)
+        from src.distillationdataset import HDF5TopKTensorDataset,collate_fn
+        distillation_data = HDF5TopKTensorDataset(args,args.train_data_file,args.top_k,args.ctx_len)
+    elif args.sft:
+        from src.sftdataset import HDF5TopKTensorDataset,collate_fn
+        sft_data = HDF5TopKTensorDataset(args,args.train_data_file,args.ctx_len)
+    else:
+        train_data = MyDataset(args)
 
 
 
 
-    args.vocab_size = train_data.vocab_size
+    #args.vocab_size = train_data.vocab_size
     
     from src.model import RWKV , LoraLinear
     
@@ -320,29 +348,7 @@ if __name__ == "__main__":
 
     print(LAYER_CONFIG)
     
-    #exit()
-    
 
-    
-
-    #exit()
-
-
-
-    #if args.lisa:
-    #            print("LISA? Training Mode :)")
-    #            for name, param in model.named_parameters():
-    #                if 'blocks' in name and str(args.n_layer-1) not in name:
-    #                    param.requires_grad = False
-    #                    print(f"Freezed: {name}")  # 凍結したパラメータの名前を表示
-    #                elif 'blocks' in name and ('ffn' in name or(('att') in name and ('receptance'in name or 'key' in name or 'value' in name) )) and str(args.n_layer-1) in name:
-    #                    param.requires_grad = False
-    #                    print(f"Freezed: {name}")  # 凍結したパラメータの名前を表示
-
-    if len(args.load_model) == 0 or args.my_pile_stage == 1:  # shall we build the initial weights?
-        init_weight_name = f"{args.proj_dir}/rwkv-init.pth"
-        generate_init_weight(model, init_weight_name)  # save initial weights
-        args.load_model = init_weight_name
 
     rank_zero_info(f"########## Loading {args.load_model}... ##########")
     try:
@@ -361,9 +367,13 @@ if __name__ == "__main__":
         if LAYER_CONFIG[f'{str(i)}']['mode']=='pissa':
             AdapterMethod = 'pissa'
             break
+        if LAYER_CONFIG[f'{str(i)}']['mode']=='bone':
+            AdapterMethod = 'bone'
+            break
+
 
     Realtime_Quant = False
-    if AdapterMethod == 'lora' and args.quant:
+    if (AdapterMethod == 'lora' or AdapterMethod == 'bone') and args.quant:
         Realtime_Quant = True
 
     #os.environ["RWKV_GLOBAL_NO"] = "0"
@@ -419,17 +429,24 @@ if __name__ == "__main__":
             for pname, param in module.named_parameters():
                 param.requires_grad = 'lora_' in pname
                 print(f'LoRA Parts Enabled Training :{pname}')
+
+        elif any(n.startswith("bone") for n, _ in module.named_parameters()):
+            print(f'  bone additionally training module {name}')
+            for pname, param in module.named_parameters():
+                param.requires_grad = 'bone' in pname
+                print(f'bone Parts Enabled Training :{pname}')
+
         #elif enable_ln_finetune and '.ln' in name:
-        elif '.ln' in name:
-            print(f'  additionally training module {name}')
+        elif '.ln_x' in name:# and args.limited_lora == 0:
             for param in module.parameters():
+                print(f'  additionally training module {name}')
                 param.requires_grad = True
-        elif 'ln_in' in name or 'ln_out' in name:
-            print(f'  additionally training module {name}')
+        elif ('ln_in' in name or 'ln_out' in name) and args.limited_lora == 0:
             for param in module.parameters():
+                print(f'  additionally training module {name}')
                 param.requires_grad = True
         #elif enable_time_finetune and any(n.startswith("time") for n, _ in module.named_parameters()):
-        elif any(n.startswith("time") for n, _ in module.named_parameters()):
+        elif (any(n.startswith("time") for n, _ in module.named_parameters())) and args.limited_lora == 0:
             for pname, param in module.named_parameters():
                 if pname.startswith("time"):
                     print(f'  LoRA additionally training parameter {pname}')
@@ -494,7 +511,7 @@ if __name__ == "__main__":
         rank_zero_info(f"########## Quant... ##########")
         for name, m in model.named_modules():
             if hasattr(m, "quant") and callable(getattr(m, "quant")):
-                    m.quant(args.quant_mode)
+                    m.quant(args.quant_mode,'cuda')
                     #print(f'{name} Quant')
                     rank_zero_info(f'{name} Quant')
 
@@ -502,7 +519,7 @@ if __name__ == "__main__":
     
 
     if pl.__version__[0]=='2':
-        trainer = Trainer(accelerator=args.accelerator,strategy=args.strategy,devices=args.devices,num_nodes=args.num_nodes,precision=args.precision,
+        trainer = Trainer(sync_batchnorm=True,accelerator=args.accelerator,strategy=args.strategy,devices=args.devices,num_nodes=args.num_nodes,precision=args.precision,
         logger=args.logger,callbacks=[train_callback(args)],max_epochs=args.max_epochs,check_val_every_n_epoch=args.check_val_every_n_epoch,num_sanity_val_steps=args.num_sanity_val_steps,
         log_every_n_steps=args.log_every_n_steps,enable_checkpointing=args.enable_checkpointing,accumulate_grad_batches=args.accumulate_grad_batches,gradient_clip_val=args.gradient_clip_val)
     else:
@@ -511,34 +528,42 @@ if __name__ == "__main__":
             callbacks=[train_callback(args)],
         )
 
-    if trainer.global_rank == 0:
-        for n in model.state_dict():
-            shape = model.state_dict()[n].shape
-            shape = [i for i in shape if i != 1]
-            if len(shape) > 1:
-                print(f"{str(shape[0]).ljust(5)} {str(shape[1]).ljust(5)} {n}")
-            else:
-                print(f"{str(shape[0]).ljust(5)}       {n}")
+    # if trainer.global_rank == 0:
+    #     for n in model.state_dict():
+    #         shape = model.state_dict()[n].shape
+    #         shape = [i for i in shape if i != 1]
+    #         if len(shape) > 1:
+    #             print(f"{str(shape[0]).ljust(5)} {str(shape[1]).ljust(5)} {n}")
+    #         else:
+    #             print(f"{str(shape[0]).ljust(5)}       {n}")
 
     if "deepspeed" in args.strategy:
         trainer.strategy.config["zero_optimization"]["allgather_bucket_size"] = args.ds_bucket_mb * 1000 * 1000
         trainer.strategy.config["zero_optimization"]["reduce_bucket_size"] = args.ds_bucket_mb * 1000 * 1000
+        #trainer.strategy.config["zero_optimization"]["overlap_comm"] = False
 
     # must set shuffle=False, persistent_workers=False (because worker is in another thread)
     if args.orpo or args.dpo:
         if args.dpo == 1:
             args.dpo = 0
         print("RLHF Mode") 
-        from pytorch_lightning.trainer.supporters import CombinedLoader
-        data_loader = DataLoader(train_data, shuffle=False, pin_memory=True, batch_size=args.micro_bsz, num_workers=1, persistent_workers=False, drop_last=True)
+        #from pytorch_lightning.trainer.supporters import CombinedLoader
+        #data_loader = DataLoader(train_data, shuffle=False, pin_memory=True, batch_size=args.micro_bsz, num_workers=1, persistent_workers=False, drop_last=True)
         dpo_loader = DataLoader(dpo_train_data, shuffle=False, pin_memory=True, batch_size=args.micro_bsz, num_workers=1, persistent_workers=False, drop_last=True, collate_fn=lambda x:x)
-        combined_loader = CombinedLoader([data_loader, dpo_loader], "min_size")
-        trainer.fit(model, combined_loader)
+        #combined_loader = CombinedLoader([data_loader, dpo_loader], "min_size")
+        trainer.fit(model, dpo_loader)
     if args.distillation:
         print('Distillation Training Mode')
         print('This feature is still in experiment')
         print('')
         data_loader = DataLoader(distillation_data, shuffle=False, pin_memory=True, batch_size=args.micro_bsz, num_workers=1, persistent_workers=False, drop_last=True, collate_fn=collate_fn)
+        #print('')
+        trainer.fit(model, data_loader)
+    if args.sft:
+        print('SFT Training Mode')
+        print('This feature is still in experiment')
+        print('')
+        data_loader = DataLoader(sft_data, shuffle=False, pin_memory=True, batch_size=args.micro_bsz, num_workers=1, persistent_workers=False, drop_last=True, collate_fn=collate_fn)
         #print('')
         trainer.fit(model, data_loader)
     #if args.dpo:

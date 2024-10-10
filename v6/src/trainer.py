@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 from pytorch_lightning.utilities import rank_zero_info, rank_zero_only
 from .model import LAYER_CONFIG
+import gc
 
 def my_save(args, trainer, dd, ff):
     if '14b-run1' in ff:
@@ -140,7 +141,7 @@ class train_callback(pl.Callback):
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         args = self.args
 
-        if args.distillation:
+        if args.distillation or args.sft:
             token_per_step = trainer.realproceedtokens * args.real_bsz
         else:
             token_per_step = args.ctx_len * args.real_bsz
@@ -173,7 +174,11 @@ class train_callback(pl.Callback):
                     lll["kt/s"] = kt_s
                 if args.distillation:
                     try:
-                        lll |= {"smooth_loss": trainer.smooth_loss, "kl_loss": trainer.kl_loss}
+                        lll |= {"smooth_loss": trainer.smooth_loss, "kl_loss": trainer.kl_loss, "active_ctx":trainer.realproceedtokens}
+                    except: pass
+                if args.sft:
+                    try:
+                        lll |= {"smooth_loss": trainer.smooth_loss, "active_ctx":trainer.realproceedtokens}
                     except: pass
                 if args.dpo:
                     try:
@@ -219,14 +224,16 @@ class train_callback(pl.Callback):
     def on_train_epoch_end(self, trainer, pl_module):
         args = self.args
         to_save_dict = {}
+        gc.collect()
+        torch.cuda.empty_cache()
         if (trainer.is_global_zero) or ('deepspeed_stage_3' in args.strategy):  # save pth
             if (args.epoch_save > 0 and trainer.current_epoch % args.epoch_save == 0) or (trainer.current_epoch == args.epoch_count - 1):
-                if args.data_type == 'wds_img':
-                    raw_dict = pl_module.state_dict()
-                    for k in raw_dict:
-                        if k.startswith('encoder.') or k.startswith('decoder.'):
-                            to_save_dict[k] = raw_dict[k]
-                else:
+                # if args.data_type == 'wds_img':
+                #     raw_dict = pl_module.state_dict()
+                #     for k in raw_dict:
+                #         if k.startswith('encoder.') or k.startswith('decoder.'):
+                #             to_save_dict[k] = raw_dict[k]
+                # else:
                     to_save_dict = pl_module.state_dict()
 
                     lora_dict = {}
@@ -241,19 +248,19 @@ class train_callback(pl.Callback):
                             text = f'blocks.{str(i)}'
                             if LAYER_CONFIG[f'{str(i)}']['mode']=='full' and text in name:
                                 lora_dict[name] = state
-                        if '.lora_' in name or '.time' in name or '.ln' in name:
+                        if '.bone' in name or '.lora_' in name or '.time' in name or '.ln' in name:
                             lora_dict[name] = state
 
 
 
-                try:
-                    my_save(
-                        args, trainer,
-                        lora_dict,
-                        f"{args.proj_dir}/rwkv-{args.epoch_begin + trainer.current_epoch}.pth",
-                    )
-                except Exception as e:
-                    print('Error\n\n', e, '\n\n')
+                    try:
+                        my_save(
+                            args, trainer,
+                            lora_dict,
+                            f"{args.proj_dir}/rwkv-{args.epoch_begin + trainer.current_epoch}.pth",
+                        )
+                    except Exception as e:
+                        print('Error\n\n', e, '\n\n')
 
         if trainer.is_global_zero:  # logging
             trainer.my_log.write(f"{args.epoch_begin + trainer.current_epoch} {trainer.my_epoch_loss:.6f} {(trainer.my_epoch_loss):.6f} {trainer.my_lr:.8f} {datetime.datetime.now()} {trainer.current_epoch}\n")
