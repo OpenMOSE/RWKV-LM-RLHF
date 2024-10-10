@@ -512,23 +512,23 @@ class LabelSmoothingLoss(torch.nn.Module):
         super(LabelSmoothingLoss, self).__init__()
         self.smoothing = smoothing
         self.epsilon = epsilon
-    def forward(self, pred, target,paththrough=False):
-        n_classes = pred.size(-1)
-        one_hot = torch.zeros_like(pred).scatter(1, target.unsqueeze(1), 1)
-        smooth_one_hot = one_hot * (1 - self.smoothing) + self.smoothing / n_classes
-        log_prob = F.log_softmax(pred, dim=-1)
-        return torch.sum(-smooth_one_hot * log_prob, dim=-1)
-    # def forward(self, pred, target):
+    # def forward(self, pred, target,paththrough=False):
     #     n_classes = pred.size(-1)
-    #     # Log-Softmaxを計算
+    #     one_hot = torch.zeros_like(pred).scatter(1, target.unsqueeze(1), 1)
+    #     smooth_one_hot = one_hot * (1 - self.smoothing) + self.smoothing / n_classes
     #     log_prob = F.log_softmax(pred, dim=-1)
-    #     # 正解ラベルの負の対数尤度を取得
-    #     nll_loss = -log_prob.gather(dim=-1, index=target.unsqueeze(1)).squeeze(1)
-    #     # 平均の負の対数尤度を計算
-    #     smooth_loss = -log_prob.sum(dim=-1) / n_classes
-    #     # ラベルスムージングを適用
-    #     loss = (1 - self.smoothing) * nll_loss + self.smoothing * smooth_loss
-    #     return loss#.mean()
+    #     return torch.sum(-smooth_one_hot * log_prob, dim=-1)
+    def forward(self, pred, target):
+        n_classes = pred.size(-1)
+        # Log-Softmaxを計算
+        log_prob = F.log_softmax(pred, dim=-1)
+        # 正解ラベルの負の対数尤度を取得
+        nll_loss = -log_prob.gather(dim=-1, index=target.unsqueeze(1)).squeeze(1)
+        # 平均の負の対数尤度を計算
+        smooth_loss = -log_prob.sum(dim=-1) / n_classes
+        # ラベルスムージングを適用
+        loss = (1 - self.smoothing) * nll_loss + self.smoothing * smooth_loss
+        return loss#.mean()
 
     # def forward(self, pred, target):
     #     n_classes = pred.size(-1)
@@ -1405,10 +1405,10 @@ class RWKV(pl.LightningModule):
                 #return Lion(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
              
             if self.deepspeed_offload:
-                return DeepSpeedCPUAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=True, weight_decay=0, amsgrad=False)
+                return DeepSpeedCPUAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=False, weight_decay=0, amsgrad=False)
             if args.optim=='lion':
                 return Lion(optim_groups, lr=self.args.lr_init, betas=self.args.betas, weight_decay=0, use_triton=True)
-            return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, weight_decay=0, amsgrad=False)
+            return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=False, weight_decay=0, amsgrad=False)
         # return ZeroOneAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, weight_decay=0, amsgrad=False, cuda_aware=False)
 
     @property
@@ -1621,37 +1621,8 @@ class RWKV(pl.LightningModule):
                 assert C==H*args.head_size_a
                 states = BlockStateList.create(args.n_layer, B, C, H, self.emb.weight.device,
                     self.emb.weight.dtype)
-                def smooth_cross_entropy(student_logits, targets, smoothing=0.1, epsilon=1e-8):
-                    # Ensure inputs have correct dimensions
-                    if student_logits.dim() == 2:
-                        num_classes = student_logits.size(1)
-                    elif student_logits.dim() == 3:
-                        num_classes = student_logits.size(2)
-                        student_logits = student_logits.view(-1, num_classes)
-                        targets = targets.view(-1)
-                    else:
-                        raise ValueError(f"Unexpected student_logits shape: {student_logits.shape}")
-                    
-                    # Create smoothed labels
-                    with torch.no_grad():
-                        true_dist = torch.zeros_like(student_logits)
-                        true_dist.fill_(smoothing / (num_classes - 1))
-                        true_dist.scatter_(1, targets.unsqueeze(1).long(), 1.0 - smoothing)
-                    
-                    # Calculate log probabilities with numerical stability
-                    log_probs = F.log_softmax(student_logits, dim=-1)
-                    
-                    # Clip log probabilities to prevent -inf
-                    log_probs = torch.clamp(log_probs, min=-100)
-                    
-                    # Calculate KL divergence
-                    loss = torch.sum(-true_dist * log_probs, dim=-1)
-                    
-                    # Check for NaN and replace with a large value if found
-                    loss = torch.where(torch.isnan(loss), torch.full_like(loss, 1e6), loss)
-                    
-                    # Return per-sample loss without averaging
-                    return loss
+
+
 
                 def checkpointed_step2(chunk_input_ids,chunk_target_ids,#, chunk_top_k_values, chunk_top_k_indices, 
                                     chunk_attention_mask,
@@ -1670,10 +1641,11 @@ class RWKV(pl.LightningModule):
                         return prev_loss,prev_smooth_loss,last_shift_states, last_wkv_states, prev_token_amount, status
                     
                     student_logits,new_shift_states, new_wkv_states = self(chunk_input_ids,last_shift_states, last_wkv_states)
-
+                    print(f'logit sum0={torch.sum(student_logits)}')
                     # Label Smoothing Loss
                     label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
                     student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
+                    print(f'logit sum1={torch.sum(student_logits_shifted)}')
                     smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
                     #student_logits_shifted = student_logits_shifted[:, :targets.size(1)]
                     #print(f'student_logits_shifted = {student_logits_shifted.shape} targets = {targets.shape}')
@@ -1697,14 +1669,14 @@ class RWKV(pl.LightningModule):
                     # Combine losses
                     if sum_mask == mask.shape[0]:
                         print('nomask')
-                        loss = smooth_loss.mean()#args.alpha * smooth_loss.mean() + (1 - args.alpha) * kl_loss.mean()
+                        loss = smooth_loss.mean() + 1e-8 #args.alpha * smooth_loss.mean() + (1 - args.alpha) * kl_loss.mean()
                         smooth_loss = smooth_loss.mean()
                         #kl_loss = kl_loss.mean()
                         loss = L2Wrap.apply(loss, student_logits, current_token_amount)
                     else:
                         print('masked')
-                        #print(f'smooth_loss = {smooth_loss.shape} mask = {mask.shape}')
-                        smooth_loss = torch.sum(smooth_loss * mask) / sum_mask
+                        print(f'smooth_loss = {smooth_loss.shape} mask = {mask.shape}')
+                        smooth_loss = torch.sum(smooth_loss * mask + 1e-8) / sum_mask
                         loss = smooth_loss
                         #kl_loss = torch.sum(kl_loss.view(-1) * mask) / sum_mask
                         #loss = smooth_loss#args.alpha * smooth_loss + (1 - args.alpha) * kl_loss
@@ -1712,7 +1684,7 @@ class RWKV(pl.LightningModule):
                     
                     new_token_amount = prev_token_amount + current_token_amount
                     if new_token_amount > 0:
-                        #print(f'loss ={float(loss)}')
+                        print(f'loss ={float(loss)}')
                         new_loss = prev_loss * (prev_token_amount / new_token_amount) + loss * (current_token_amount / new_token_amount)
                         
                         #print(f'new_loss ={float(new_loss)}')
