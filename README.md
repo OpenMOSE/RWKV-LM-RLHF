@@ -55,9 +55,9 @@ A repository exploring the possibilities for deeper fine-tuning of RWKV.
    - Cuda or Rocm GPU.(NVIDIA RTX3090,4090, AMD MI100)
 
 ## How to Use
-   - [Odds Ratio Preference Optimization document](example/RLHF/readme.md)
-   - [Distillation document](example/Distillation/readme.md)
-   - [SFT document](example/SFT/readme.md)
+   - [Odds Ratio Preference Optimization document](v6/example/RLHF/readme.md)
+   - [Distillation document](v6/example/Distillation/readme.md)
+   - [SFT document](v6/example/SFT/readme.md)
 
 
 ## Orpo Usages
