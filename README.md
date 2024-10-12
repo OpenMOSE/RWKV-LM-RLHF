@@ -54,6 +54,11 @@ A repository exploring the possibilities for deeper fine-tuning of RWKV.
    - CPU RAM >= 32GB
    - Cuda or Rocm GPU.(NVIDIA RTX3090,4090, AMD MI100)
 
+## How to Use
+   - [Odds Ratio Preference Optimization document](example/RLHF/readme.md)
+   - [Distillation document](example/Distillation/readme.md)
+   - [SFT document](example/SFT/readme.md)
+
 
 ## Orpo Usages
 1. Prepare Orpo Dataset

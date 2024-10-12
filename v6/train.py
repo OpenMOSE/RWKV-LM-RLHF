@@ -323,8 +323,8 @@ if __name__ == "__main__":
     elif args.sft:
         from src.sftdataset import HDF5TopKTensorDataset,collate_fn
         sft_data = HDF5TopKTensorDataset(args,args.train_data_file,args.ctx_len)
-    else:
-        train_data = MyDataset(args)
+    #else:
+    #    train_data = MyDataset(args)
 
 
 
