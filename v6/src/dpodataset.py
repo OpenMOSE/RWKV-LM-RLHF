@@ -12,6 +12,7 @@ class DPODataset(Dataset):
         # TODO: to 
         self.precision = {
             "bf16": torch.bfloat16,
+            'bf16-true': torch.bfloat16,
             "fp32": torch.float32,
             "fp16": torch.float16,
         }[args.precision]

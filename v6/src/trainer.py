@@ -207,14 +207,11 @@ class train_callback(pl.Callback):
             dataset = trainer.train_dataloader.dataset
         else:
             dataset = trainer.train_dataloader.dataset.datasets
-        assert "MyDataset" in str(dataset) or 'HDF5TopKTensorDataset' in str(dataset)
+        assert "DPODataset" in str(dataset) or 'HDF5TopKTensorDataset' in str(dataset)
         if args.dpo or args.orpo:
-            dataset[0].global_rank = trainer.global_rank
-            dataset[0].real_epoch = int(args.epoch_begin + trainer.current_epoch)
-            dataset[0].world_size = trainer.world_size
-            dataset[1].global_rank = trainer.global_rank
-            dataset[1].real_epoch = int(args.epoch_begin + trainer.current_epoch)
-            dataset[1].world_size = trainer.world_size
+            dataset.global_rank = trainer.global_rank
+            dataset.real_epoch = int(args.epoch_begin + trainer.current_epoch)
+            dataset.world_size = trainer.world_size
         else:
             dataset.global_rank = trainer.global_rank
             dataset.real_epoch = int(args.epoch_begin + trainer.current_epoch)
