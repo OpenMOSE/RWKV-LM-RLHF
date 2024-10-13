@@ -1,15 +1,15 @@
-python train.py --load_model "/home/client/Projects/RWKV-Infer-FLA/RWKV-Infer/models/RWKV-x060-Jpn-14B-20240819-ctx4096.pth" \
- --wandb "RWKV-LM-RLHF Code 14b Test" --proj_dir "Outputs/14b-Code" \
+python train.py --load_model "/home/client/Projects/RWKV-LM-RLHF/v6/myfolder/models/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth" \
+ --wandb "RWKV-LM-RLHF Code 1B6 Softplus test" --proj_dir "myfolder/Outputs/1b6-Code" \
  --chunk_ctx 512 \
  --vocab_size 65536 --ctx_len 65536 \
  --epoch_steps 200 --epoch_count 200 --epoch_begin 0 --epoch_save 1 \
- --micro_bsz 1 --n_layer 61 --n_embd 4096 \
+ --micro_bsz 1 --n_layer 24 --n_embd 2048 \
  --lr_init 2e-5 --lr_final 1e-6 \
  --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
  --accelerator gpu --devices 1 --precision 'bf16' \
  --grad_cp 1 --my_testing "x060" \
  --strategy deepspeed_stage_2_offload\
- --layer_profile 'layerprofile/61_TEST_pissa.csv' \
+ --layer_profile 'layerprofile/24_TEST.csv' \
  --quant 1 \
  --quant_mode 'fp8'\
  --gpu_arch 'cuda' \
@@ -18,5 +18,5 @@ python train.py --load_model "/home/client/Projects/RWKV-Infer-FLA/RWKV-Infer/mo
  --smoothing 0.01 \
  --random_mode 1 \
  --optim '' \
- --train_data_file 'datasets/claudeoai.h5' \
+ --train_data_file 'myfolder/datasets/claudeoai.h5' \
  --accumulate_grad_batches 1

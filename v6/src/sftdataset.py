@@ -41,7 +41,7 @@ class HDF5TopKTensorDataset(Dataset):
         
         # limit sequence length
         seq_len = min(len(tokens), self.max_seq_length)
-        print(f'sftdataset : tokens length={len(tokens)}')
+        #print(f'sftdataset : tokens length={len(tokens)}')
         tokens = tokens[:seq_len]
         
         # # padding and mask
@@ -65,9 +65,9 @@ class HDF5TopKTensorDataset(Dataset):
         input_tokens = padded_tokens[:-1]
         target_tokens = padded_tokens[1:]
 
-        print(f'sftdataset : input_tokens length={len(input_tokens)}')
-        print(f'sftdataset : target_tokens length={len(target_tokens)}')
-        print(f'sftdataset : attention_mask length={len(attention_mask)}')
+        #print(f'sftdataset : input_tokens length={len(input_tokens)}')
+        #print(f'sftdataset : target_tokens length={len(target_tokens)}')
+        #print(f'sftdataset : attention_mask length={len(attention_mask)}')
         
         return {
             'input_ids': torch.from_numpy(input_tokens),

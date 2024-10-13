@@ -149,6 +149,30 @@ class FP8HybridMatmul(torch.autograd.Function):
     
 fp8_matmul = FP8HybridMatmul.apply
 
+@torch.jit.script
+def fp16_matmul(a,b):
+    #with torch.no_grad():
+        a = torch.clamp(a, min=-448.0, max=448.0) # for avoid NaN
+        return (a.to(dtype=b.dtype) @ b ).to(dtype=a.dtype)
+    
+class FP16HybridMatmul(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input, weight):
+        ctx.save_for_backward(weight)
+        # fp8_hybrid_matmulを呼び出し、出力はBF16
+        output = fp16_matmul_(input, weight)
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output): #これやらないとBackwardでLossが右肩上がりになる
+        weight, = ctx.saved_tensors
+        grad_input = torch.matmul(grad_output, weight.to(dtype=torch.bfloat16).t())
+        del weight
+        # 重みは完全に凍結されているので、grad_weightは不要
+        return grad_input, None
+    
+fp16_matmul_ = FP16HybridMatmul.apply
+
 
 
     
@@ -189,6 +213,9 @@ def rwkv_quantize(quant_type, weight):
     elif quant_type=='fp8':
         qweight = weight.data.to(dtype = torch.float8_e4m3fn)
         qstate = None
+    elif quant_type=='fp16':
+        qweight = weight.data.to(dtype = torch.float16) # faster in MI100
+        qstate = None
     return qweight, qstate
 
 
@@ -204,6 +231,8 @@ def rwkv_dequantize(quant_type, weight, qstate):
     elif quant_type=='int8':
         deweight= bnb.functional.dequantize(weight.data,state=qstate)
     elif quant_type=='fp8':
+        deweight= weight.data
+    elif quant_type=='fp16':
         deweight= weight.data
     return deweight.to(torch.bfloat16)
 
@@ -237,7 +266,7 @@ class HeadLoraLinear(nn.Module):
             nn.init.zeros_(self.lora_B)
             self.bonemode = False
         self.pissa = False
-        #self.is_quant = False
+        self.is_quant = False
 
     def pissa_load(self, init_A, init_B):
         self.pissa = True
@@ -281,6 +310,10 @@ class HeadLoraLinear(nn.Module):
                 return (
                     fp8_matmul(x,self.Qweight.t()) + 
                     F.linear(F.linear(x, self.lora_A), self.lora_B))
+            elif self.pissa and self.Qweight.dtype == torch.float16: #FP16 PISSA
+                return (
+                    fp16_matmul(x,self.Qweight.t()) + 
+                    F.linear(F.linear(x, self.lora_A), self.lora_B))
             elif self.pissa: #INT8 NF4 PISSA
                 temporal_weight = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
                 return (
@@ -298,6 +331,10 @@ class HeadLoraLinear(nn.Module):
 
             elif self.Qweight.dtype == torch.float8_e4m3fn: #FP8 LoRA
                 return (fp8_matmul(x,self.Qweight.t()) + self.scaling *
+                        F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)
+                )
+            elif self.Qweight.dtype == torch.float16: #FP16 LoRA
+                return (fp16_matmul(x,self.Qweight.t()) + self.scaling *
                         F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)
                 )
             
@@ -405,6 +442,10 @@ class LoraLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :) Chaos Modified
                 return (
                     fp8_matmul(x,self.Qweight.t()) + 
                     F.linear(F.linear(x, self.lora_A), self.lora_B))
+            elif self.pissa and self.Qweight.dtype == torch.float16: #FP16 PISSA
+                return (
+                    fp16_matmul(x,self.Qweight.t()) + 
+                    F.linear(F.linear(x, self.lora_A), self.lora_B))
             elif self.pissa: #INT8 NF4 PISSA
                 temporal_weight = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
                 return (
@@ -422,6 +463,11 @@ class LoraLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :) Chaos Modified
 
             elif self.Qweight.dtype == torch.float8_e4m3fn: #FP8 LoRA
                 return (fp8_matmul(x,self.Qweight.t()) + self.scaling *
+                        F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)
+                )
+            
+            elif self.Qweight.dtype == torch.float16: #FP16 LoRA
+                return (fp16_matmul(x,self.Qweight.t()) + self.scaling *
                         F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)
                 )
             
@@ -518,7 +564,33 @@ class LabelSmoothingLoss(torch.nn.Module):
     #     smooth_one_hot = one_hot * (1 - self.smoothing) + self.smoothing / n_classes
     #     log_prob = F.log_softmax(pred, dim=-1)
     #     return torch.sum(-smooth_one_hot * log_prob, dim=-1)
+
+
     def forward(self, pred, target):
+        n_classes = pred.size(-1)
+        
+        # Softplusを適用
+        softplus_pred = F.softplus(pred)
+        
+        # 正規化（softmaxの代わり）
+        prob = softplus_pred / (softplus_pred.sum(dim=-1, keepdim=True) + self.epsilon)
+        
+        # 対数をとる（log_softmaxの代わり）
+        log_prob = torch.log(prob + self.epsilon)
+        
+        # 正解ラベルの負の対数尤度を取得
+        nll_loss = -log_prob.gather(dim=-1, index=target.unsqueeze(1)).squeeze(1)
+        
+        # 平均の負の対数尤度を計算
+        smooth_loss = -log_prob.sum(dim=-1) / n_classes
+        
+        # ラベルスムージングを適用
+        loss = (1 - self.smoothing) * nll_loss + self.smoothing * smooth_loss
+        
+        return loss
+
+
+    def forward2(self, pred, target):
         n_classes = pred.size(-1)
         # Log-Softmaxを計算
         log_prob = F.log_softmax(pred, dim=-1)
@@ -529,6 +601,8 @@ class LabelSmoothingLoss(torch.nn.Module):
         # ラベルスムージングを適用
         loss = (1 - self.smoothing) * nll_loss + self.smoothing * smooth_loss
         return loss#.mean()
+    
+
 
     # def forward(self, pred, target):
     #     n_classes = pred.size(-1)
@@ -1641,7 +1715,7 @@ class RWKV(pl.LightningModule):
                         return prev_loss,prev_smooth_loss,last_shift_states, last_wkv_states, prev_token_amount, status
                     
                     student_logits,new_shift_states, new_wkv_states = self(chunk_input_ids,last_shift_states, last_wkv_states)
-                    print(f'logit sum0={torch.sum(student_logits)}')
+                    #print(f'logit sum0={torch.sum(student_logits)}')
                     # Label Smoothing Loss
                     label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
                     student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
@@ -1664,18 +1738,18 @@ class RWKV(pl.LightningModule):
      
                     current_token_amount = chunk_input_ids.shape[1]#sum_mask
 
-                    print(f'current token amount = {current_token_amount}')
+                    #print(f'current token amount = {current_token_amount}')
 
                     # Combine losses
                     if sum_mask == mask.shape[0]:
-                        print('nomask')
+                        #print('nomask')
                         loss = smooth_loss.mean() + 1e-8 #args.alpha * smooth_loss.mean() + (1 - args.alpha) * kl_loss.mean()
                         smooth_loss = smooth_loss.mean()
                         #kl_loss = kl_loss.mean()
                         loss = L2Wrap.apply(loss, student_logits, current_token_amount)
                     else:
-                        print('masked')
-                        print(f'smooth_loss = {smooth_loss.shape} mask = {mask.shape}')
+                        #print('masked')
+                        #print(f'smooth_loss = {smooth_loss.shape} mask = {mask.shape}')
                         smooth_loss = torch.sum(smooth_loss * mask + 1e-8) / sum_mask
                         loss = smooth_loss
                         #kl_loss = torch.sum(kl_loss.view(-1) * mask) / sum_mask
@@ -1684,7 +1758,7 @@ class RWKV(pl.LightningModule):
                     
                     new_token_amount = prev_token_amount + current_token_amount
                     if new_token_amount > 0:
-                        print(f'loss ={float(loss)}')
+                        #print(f'loss ={float(loss)}')
                         new_loss = prev_loss * (prev_token_amount / new_token_amount) + loss * (current_token_amount / new_token_amount)
                         
                         #print(f'new_loss ={float(new_loss)}')
@@ -2040,11 +2114,12 @@ class RWKV(pl.LightningModule):
                     #reject_prob = -torch.sum(loss_reject[-length_reject:])
                     pref_ratio = args.dpo_beta * (chosen_prob - reject_prob - chosen_ref_prob + reject_ref_prob)
                     pref_matches += (pref_ratio > 0)
-                    pref_ratio = - F.logsigmoid(pref_ratio)
+                    #pref_ratio = - F.logsigmoid(pref_ratio)
+                    pref_ratio = F.softplus(-pref_ratio)
                     
 
                     final_loss = (l2_pos_loss*args.dpo_alpha) + pref_ratio
-                    final_loss = L2Wrap.apply(final_loss, RT)
+                    final_loss = L2Wrap.apply(final_loss, outputs_pos)
 
                     loss2 = loss2 + final_loss # FinalLoss
                     loss1 = loss1 + l2_pos_loss # SFT Loss
@@ -2168,63 +2243,7 @@ class RWKV(pl.LightningModule):
                 return loss2
 
 
-            elif args.dpo and 0:
-                batch_dpo = batch
-                #idx, targets = batch_general
-
-                loss1 = 0.0
-                self.trainer.loss_1_general_or_sft = float(loss1) # for logging
-                
-                try: self.trainer.pref_match_percentage
-                except (NameError, AttributeError): self.trainer.pref_match_percentage = 0.5
-                pref_matches = 0
-                bsz = len(batch_dpo)
-                loss2 = 0.0
-                for s in range(bsz):
-                    chosen_input,chosen_output,length_chosen,chosen_ref_prob, reject_input,reject_output,length_reject,reject_ref_prob = batch_dpo[s]
-
-                    chosen_input_len = len(chosen_input)
-                    chosen_output_len = len(chosen_output)
-
-                    reject_input_len = len(reject_input)
-                    reject_output_len=len(reject_output)
-
-                    if self.inputtalkmax < chosen_input_len:
-                        self.inputtalkmax = chosen_input_len
-                    if self.inputtalkmax < chosen_output_len:
-                        self.inputtalkmax = chosen_output_len
-                    if self.inputtalkmax < reject_input_len:
-                        self.inputtalkmax = reject_input_len
-                    if self.inputtalkmax < reject_output_len:
-                        self.inputtalkmax = reject_output_len
-                    
-                    chosen_logits = self(chosen_input)
-                    loss_chosen = F.cross_entropy(chosen_logits.view(-1, chosen_logits.size(-1)), chosen_output.view(-1), reduction='none') # .squeeze()
-                    del chosen_logits
-                    gc.collect()
-                    torch.cuda.empty_cache()
-                    chosen_prob = -torch.sum(loss_chosen[-length_chosen:])
-                    reject_logits = self(reject_input)
-                    loss_reject = F.cross_entropy(reject_logits.view(-1, reject_logits.size(-1)), reject_output.view(-1), reduction='none') # .squeeze()
-                    del reject_logits
-                    gc.collect()
-                    torch.cuda.empty_cache()
-                    reject_prob = -torch.sum(loss_reject[-length_reject:])
-                    pref_ratio = args.dpo_beta * (chosen_prob - reject_prob - chosen_ref_prob + reject_ref_prob)
-                    pref_matches += (pref_ratio > 0)
-                    loss2 = loss2 - F.logsigmoid(pref_ratio)
-                loss2 = loss2 / bsz
-                self.trainer.loss_2_dpo = float(loss2)
-                self.trainer.pref_match_percentage = 0.9 * self.trainer.pref_match_percentage + 0.1 * (pref_matches / bsz)
-
-                
-                
-
-                #return args.dpo_general_corpus_ratio * loss1 + (1-args.dpo_general_corpus_ratio) * loss2
-                return loss2
-            ################################################################################################################# dpo
-
-            #basically already returned if dpo mode
+            
 
 
 
