@@ -128,7 +128,7 @@ python merge.py --base_model $base_model \
 ```
 
 ## Todo
-   - 1. Re-engineering DPO Algorithm with Gradient Checkpointing - Cancelled.
+   - 1. Re-engineering DPO Algorithm with Gradient Checkpointing - Test implemented.
    - 2. SimPO research - Cancelled
    - 3. Self-Play ORPO research - Cancelled
    - 4. Re-engineering LISA+ - Cancelled
