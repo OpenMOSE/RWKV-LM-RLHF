@@ -124,7 +124,7 @@ if __name__ == "__main__":
     parser.add_argument("--random_mode", default=1, type=int)
 
     #new optim
-    parser.add_argument("--optim", default="lion", type=str)
+    parser.add_argument("--optim", default="", type=str)
 
 
 
