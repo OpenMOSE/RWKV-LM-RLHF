@@ -15,5 +15,5 @@ python train.py --load_model 'myfolder/models/RWKV-x060-Jpn-7B-20240816-ctx4096.
  --gpu_arch 'cuda' \
  --orpo 1 \
  --orpo_alpha 0.0006 \
- --rlhf_train_file 'example/RLHF/output_save/rlhf_example_dataset.save' \
+ --rlhf_train_file 'example/ORPO/output_save/rlhf_example_dataset.save' \
  --rlhf_max_corpus_len 1024

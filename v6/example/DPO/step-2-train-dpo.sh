@@ -1,0 +1,20 @@
+python train.py --load_model 'myfolder/models/RWKV-x060-Jpn-7B-20240816-ctx4096.pth' \
+ --wandb "RWKV-LM-RLHF 7B-RLHF DPO" --proj_dir "myfolder/Outputs/7B-RLHF-DPO"\
+ --infctx 0 \
+ --vocab_size 65536 --ctx_len 2048 \
+ --epoch_steps 200 --epoch_count 1000 --epoch_begin 0 --epoch_save 1 \
+ --micro_bsz 1 --n_layer 32 --n_embd 4096\
+ --lr_init 5e-6 --lr_final 1e-6 \
+ --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
+ --accelerator gpu --devices 1 --precision bf16 \
+ --grad_cp 1 --my_testing "x060" \
+ --strategy deepspeed_stage_1 \
+ --layer_profile 'layerprofile/32_TEST.csv' \
+ --quant 1 \
+ --quant_mode 'nf4'\
+ --gpu_arch 'cuda' \
+ --dpo 1 \
+ --dpo_alpha 0.1 \
+ --dpo_beta 0.01 \
+ --rlhf_train_file 'example/DPO/output_save/rlhf_example_dataset.save' \
+ --rlhf_max_corpus_len 1024
