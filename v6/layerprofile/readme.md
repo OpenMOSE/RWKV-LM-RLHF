@@ -14,7 +14,6 @@ Maximize LLM fine-tuning effectiveness within limited VRAM constraints through s
 ## 🧠 Key Concept
 | Layer Type | LoRA Rank | Rationale |
 |------------|-----------|-----------|
-| Embedding  | Higher    | Direct input interaction |
 | Intermediate | Lower   | General feature capture |
 | Head       | Higher    | Direct output generation |
 
@@ -38,7 +37,3 @@ Maximize LLM fine-tuning effectiveness within limited VRAM constraints through s
 3. Analyze performance-VRAM trade-offs
 4. Fine-tune auxiliary hyperparameters
 
-> 💼 **Pro Tip**: Adapt rank distribution based on specific task requirements and available hardware resources.
-
-## 🌟 Conclusion
-This innovative approach balances model adaptability with resource constraints, potentially revolutionizing LLM fine-tuning on limited hardware. Remember: thorough experimentation is key to unlocking its full potential!
