@@ -2037,7 +2037,7 @@ class RWKV(pl.LightningModule):
                     reject_prob = -torch.sum(loss_reject[len2-length_reject:len2])
 
 
-                    reject_prob = -torch.sum(loss_reject[-length_reject:])
+                    #reject_prob = -torch.sum(loss_reject[-length_reject:])
                     pref_ratio = args.dpo_beta * (chosen_prob - reject_prob - chosen_ref_prob + reject_ref_prob)
                     pref_matches += (pref_ratio > 0)
                     pref_ratio = - F.logsigmoid(pref_ratio)
