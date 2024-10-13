@@ -1,6 +1,6 @@
-## RLHF Fine-tuning
+## DPO Fine-tuning
 
-Odds Ratio Preference Optimization
+Direct Preference Optimization
 
 Example Training Steps with x060 7B Model
 
@@ -17,13 +17,15 @@ Currently, only Single-turn RLHF support(i think its enough)
   - Prepare CSV file with (prompt,chosen keys)
   - if not contain reject, you can use this script for generating reject
     ```
-    ./example/RLHF/step-0-make-reject.sh    
+    ./example/DPO/step-0-make-reject.sh    
     ```
 ### Step.1 Generate Tokenized File
   - ```
-    ./example/RLHF/step-1-make-save.sh
+    ./example/DPO/step-1-make-save.sh
     ```
 ### Step.2 Train
+  - dpo_alpha is Combine rate with sft(0.1 to 0.5 is recommend)
+  - orpo_beta is DPO combine rate(0.01 to 0.1 is recommend)
   - ```
-    ./example/RLHF/step-2-train-orpo.sh
+    ./example/DPO/step-2-train-dpo.sh
     ```

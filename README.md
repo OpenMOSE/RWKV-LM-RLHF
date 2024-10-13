@@ -19,6 +19,15 @@ A repository exploring the possibilities for deeper fine-tuning of RWKV.
 
    - Designed to mitigate common issues in RLHF like reward hacking and overoptimization
 
+- **RLHF Training with DPO(Direct Preference Optimization)**: 
+
+  Direct Preference Optimization (DPO) is an advanced training method for Large Language Models that aims to align model outputs with human preferences more effectively than traditional methods.
+   - Directly optimizes for human preferences without the need for a separate reward model
+
+   - Simplifies the training pipeline compared to other preference learning methods
+
+   - More stable training process compared to RL-based methods
+
 - **Infinite Context Compression Distillation Training**:
   - This approach involves simultaneously training a student model using compressed logits data pre-acquired from a larger parameter model (for example, 14B) as soft labels, and the dataset as hard labels.
 
@@ -55,7 +64,8 @@ A repository exploring the possibilities for deeper fine-tuning of RWKV.
    - Cuda or Rocm GPU.(NVIDIA RTX3090,4090, AMD MI100)
 
 ## How to Use
-   - [Odds Ratio Preference Optimization document](v6/example/RLHF/readme.md)
+   - [Odds Ratio Preference Optimization document](v6/example/ORPO/readme.md)
+   - [Direct Preference Optimization document](v6/example/DPO/readme.md)
    - [Distillation document](v6/example/Distillation/readme.md)
    - [SFT document](v6/example/SFT/readme.md)
 

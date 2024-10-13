@@ -97,8 +97,13 @@ if __name__ == "__main__":
     
 
 
-    parser.add_argument("--dpo", default=0, type=int) 
+    parser.add_argument("--dpo", default=0, type=int)
+    parser.add_argument("--dpo_alpha", default=0.1, type=float) 
     parser.add_argument("--dpo_beta", default=0.01, type=float)
+
+
+
+
     parser.add_argument("--orpo", default=0, type=int) #orpo
     parser.add_argument("--orpo_alpha", default=0.01, type=float) #orpo
 
@@ -544,8 +549,8 @@ if __name__ == "__main__":
 
     # must set shuffle=False, persistent_workers=False (because worker is in another thread)
     if args.orpo or args.dpo:
-        if args.dpo == 1:
-            args.dpo = 0
+       # if args.dpo == 1:
+       #     args.dpo = 0
         print("RLHF Mode") 
         #from pytorch_lightning.trainer.supporters import CombinedLoader
         #data_loader = DataLoader(train_data, shuffle=False, pin_memory=True, batch_size=args.micro_bsz, num_workers=1, persistent_workers=False, drop_last=True)
