@@ -68,6 +68,7 @@ A repository exploring the possibilities for deeper fine-tuning of RWKV.
    - [Direct Preference Optimization document](v6/example/DPO/readme.md)
    - [Distillation document](v6/example/Distillation/readme.md)
    - [SFT document](v6/example/SFT/readme.md)
+   - [Layer Profile](v6/layerprofile/readme.md)
 
 
 ## Orpo Usages
