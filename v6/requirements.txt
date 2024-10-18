@@ -9,4 +9,3 @@ triton
 transformers
 einops
 h5py
-lion-pytorch

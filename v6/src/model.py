@@ -20,7 +20,7 @@ if importlib.util.find_spec('deepspeed'):
     import deepspeed
     from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 
-from src.adam_mini import Adam_mini
+#from src.adam_mini import Adam_mini
 
 import bitsandbytes as bnb
 from bitsandbytes.functional import QuantState
@@ -28,7 +28,7 @@ from bitsandbytes.functional import QuantState
 from .infctx_module import *
 from einops import rearrange
 from fla.ops.rwkv6 import chunk_rwkv6, fused_recurrent_rwkv6
-from lion_pytorch import Lion
+#from lion_pytorch import Lion
 from einops._torch_specific import allow_ops_in_compiled_graph  # requires einops>=0.6.1
 allow_ops_in_compiled_graph()
 
@@ -108,46 +108,47 @@ def fp8_hybrid_matmul_noreshape(a,b):
         else:
                 return a.to(dtype=b.dtype) @ b
 
-@torch.jit.script #FP8 Experiment Matmul
-def fp8_hybrid_matmul(a,b): # shape3 @ shape2 only
-    with torch.no_grad():
-        if b.dtype == torch.float8_e4m3fn:
-                xg = a
-                S0=xg.shape[0]
-                S1=xg.shape[1]
-                if xg.dtype != torch.float8_e4m3fn:
-                    xg = torch.clamp(xg, min=-448.0, max=448.0) # for avoid NaN
-                
-                x, output_amax = torch._scaled_mm(
-                    xg.view(S0*S1,xg.shape[2]).to(torch.float8_e4m3fn).contiguous(),
-                    b,
-                    bias=None,
-                    out_dtype=a.dtype,
-                    scale_a=torch.tensor(1.0, device='cuda'),
-                    scale_b=torch.tensor(1.0, device='cuda')
-                )
-                #x.requires_grad = False
-                return x.view(S0, S1, -1)
-        else:
-                return a.to(dtype=b.dtype) @ b
-        
-class FP8HybridMatmul(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, input, weight):
-        ctx.save_for_backward(weight)
-        # fp8_hybrid_matmulを呼び出し、出力はBF16
-        output = fp8_hybrid_matmul(input, weight)
-        return output
+if 'cuda' in os.environ["RWKV_MY_ARCHITECTURE"]:
+    @torch.jit.script #FP8 Experiment Matmul
+    def fp8_hybrid_matmul(a,b): # shape3 @ shape2 only
+        with torch.no_grad():
+            if b.dtype == torch.float8_e4m3fn:
+                    xg = a
+                    S0=xg.shape[0]
+                    S1=xg.shape[1]
+                    if xg.dtype != torch.float8_e4m3fn:
+                        xg = torch.clamp(xg, min=-448.0, max=448.0) # for avoid NaN
+                    
+                    x, output_amax = torch._scaled_mm(
+                        xg.view(S0*S1,xg.shape[2]).to(torch.float8_e4m3fn).contiguous(),
+                        b,
+                        bias=None,
+                        out_dtype=a.dtype,
+                        scale_a=torch.tensor(1.0, device='cuda'),
+                        scale_b=torch.tensor(1.0, device='cuda')
+                    )
+                    #x.requires_grad = False
+                    return x.view(S0, S1, -1)
+            else:
+                    return a.to(dtype=b.dtype) @ b
+            
+    class FP8HybridMatmul(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, input, weight):
+            ctx.save_for_backward(weight)
+            # fp8_hybrid_matmulを呼び出し、出力はBF16
+            output = fp8_hybrid_matmul(input, weight)
+            return output
 
-    @staticmethod
-    def backward(ctx, grad_output): #これやらないとBackwardでLossが右肩上がりになる
-        weight, = ctx.saved_tensors
-        grad_input = torch.matmul(grad_output, weight.to(dtype=torch.bfloat16).t())
-        del weight
-        # 重みは完全に凍結されているので、grad_weightは不要
-        return grad_input, None
-    
-fp8_matmul = FP8HybridMatmul.apply
+        @staticmethod
+        def backward(ctx, grad_output): #これやらないとBackwardでLossが右肩上がりになる
+            weight, = ctx.saved_tensors
+            grad_input = torch.matmul(grad_output, weight.to(dtype=torch.bfloat16).t())
+            del weight
+            # 重みは完全に凍結されているので、grad_weightは不要
+            return grad_input, None
+        
+    fp8_matmul = FP8HybridMatmul.apply
 
 @torch.jit.script
 def fp16_matmul(a,b):
@@ -659,10 +660,10 @@ if 'x060' in os.environ["RWKV_MY_TESTING"]:
                         x = rearrange(o, 'b h l d -> b l (h d)')
                         return x, state
 
-if 'x060' in os.environ["RWKV_MY_TESTING"]:
+if 'x060' in os.environ["RWKV_MY_TESTING"] and os.environ["RWKV_TRAIN_TYPE"] != 'infctx':
     if 'rocm' in os.environ["RWKV_MY_ARCHITECTURE"]:
         wkv6_cuda = load(name="wkv6", sources=["cuda/wkv6_op.cpp", f"cuda/wkv6_cuda.cu"],
-                    verbose=True, extra_cuda_cflags=["-fopenmp -ffast-math -munsafe-fp-atomics --gpu-max-threads-per-block=120 -enable-vectorize-compares", f"-D_N_={HEAD_SIZE}", f"-D_T_={int(os.environ['RWKV_CTXLEN'])}"])
+                    verbose=True, extra_cuda_cflags=["-fopenmp -ffast-math -munsafe-fp-atomics --gpu-max-threads-per-block=120", f"-D_N_={HEAD_SIZE}", f"-D_T_={int(os.environ['RWKV_CTXLEN'])}"])
     else:
         wkv6_cuda = load(name="wkv6", sources=["cuda/wkv6_op.cpp", f"cuda/wkv6_cuda.cu"],
                     verbose=True, extra_cuda_cflags=["-res-usage", "--use_fast_math", "-O3", "-Xptxas -O3", "--extra-device-vectorization", f"-D_N_={HEAD_SIZE}", f"-D_T_={int(os.environ['RWKV_CTXLEN'])}"])  
@@ -1471,8 +1472,8 @@ class RWKV(pl.LightningModule):
              
             if self.deepspeed_offload:
                 return DeepSpeedCPUAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=True, amsgrad=False)
-            if args.optim=='lion':
-                return Lion(optim_groups, lr=self.args.lr_init, betas=self.args.betas, weight_decay=0, use_triton=True)
+            #if args.optim=='lion':
+            #    return Lion(optim_groups, lr=self.args.lr_init, betas=self.args.betas, weight_decay=0, use_triton=True)
             return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
         else:
             
@@ -1480,8 +1481,8 @@ class RWKV(pl.LightningModule):
              
             if self.deepspeed_offload:
                 return DeepSpeedCPUAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=False, weight_decay=0, amsgrad=False)
-            if args.optim=='lion':
-                return Lion(optim_groups, lr=self.args.lr_init, betas=self.args.betas, weight_decay=0, use_triton=True)
+            #if args.optim=='lion':
+            #   return Lion(optim_groups, lr=self.args.lr_init, betas=self.args.betas, weight_decay=0, use_triton=True)
             return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=False, weight_decay=0, amsgrad=False)
         # return ZeroOneAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, weight_decay=0, amsgrad=False, cuda_aware=False)
 
