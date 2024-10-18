@@ -1,7 +1,7 @@
-base_model='/home/client/Projects/RWKV-Infer-FLA/RWKV-Infer/models/RWKV-x060-Jpn-14B-20240819-ctx4096.pth'
-lora_init='Outputs/14b-Code/init_pissa.pth'
-lora_checkpoint='Outputs/14b-Code/rwkv-1.pth'
-output='Outputs/14b-Code/rwkv-1-merged.pth'
+base_model='myfolder/models/RWKV-x060-Jpn-7B-20240816-ctx4096.pth'
+lora_init='myfolder/Outputs/7BDist/init_pissa.pth'
+lora_checkpoint='myfolder/Outputs/7BDist/rwkv-1.pth'
+output='myfolder/Outputs/7BDist/rwkv-1-merged.pth'
 QUANT='' #follow train
 TYPE='pissa'
 Lora_scaling=2.0

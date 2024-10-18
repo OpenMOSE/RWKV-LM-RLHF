@@ -1,14 +1,14 @@
-python train.py --load_model "/home/client/Projects/RWKV-LM-RLHF/v6/myfolder/models/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth" \
- --wandb "RWKV-LM-RLHF Code 1B6 Softplus test" --proj_dir "myfolder/Outputs/1b6-Code" \
+python train.py --load_model "myfolder/models/RWKV-6-World-0.4B-v2-20231113-ctx4096.pth" \
+ --wandb "RWKV-LM-RLHF Code 0b4 Test SoftPlus" --proj_dir "myfolder/Outputs/0b4Code" \
  --chunk_ctx 512 \
  --vocab_size 65536 --ctx_len 65536 \
  --epoch_steps 200 --epoch_count 200 --epoch_begin 0 --epoch_save 1 \
- --micro_bsz 1 --n_layer 24 --n_embd 2048 \
- --lr_init 2e-5 --lr_final 1e-6 \
+ --micro_bsz 8 --n_layer 24 --n_embd 1024 \
+ --lr_init 1e-4 --lr_final 1e-6 \
  --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
  --accelerator gpu --devices 1 --precision 'bf16' \
  --grad_cp 1 --my_testing "x060" \
- --strategy deepspeed_stage_2_offload\
+ --strategy deepspeed_stage_2_offload \
  --layer_profile 'layerprofile/24_TEST.csv' \
  --quant 1 \
  --quant_mode 'fp8'\
