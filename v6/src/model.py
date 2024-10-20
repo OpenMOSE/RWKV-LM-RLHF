@@ -1226,9 +1226,6 @@ class Block(nn.Module):
             B, T, C = x.size()
             if self.layer_id == 0:
                 x = self.ln0(x)
-                # if args.my_pos_emb > 0:
-                #     pos_emb = (self.pos_emb_x + self.pos_emb_y).reshape(T+1, -1)[:-1,:]
-                #     x = x + pos_emb
 
             if self.args.dropout == 0:
                 if self.layer_id == 0 and args.pre_ffn > 0:
@@ -1558,8 +1555,8 @@ class RWKV(pl.LightningModule):
             T_train = args.chunk_ctx  #chunk size
 
             if args.distillation:
-                temperature = args.temperature
-                alpha = args.alpha
+                #temperature = args.temperature
+                #alpha = args.alpha
                 smoothing = args.smoothing
 
                 input_ids = batch['input_ids']
@@ -1599,7 +1596,6 @@ class RWKV(pl.LightningModule):
                     # Label Smoothing Loss
                     label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
                     student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
-                    #smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
                     smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
 
                     # Top-k teacher logits KL-divergence loss
@@ -1611,6 +1607,7 @@ class RWKV(pl.LightningModule):
                     current_token_amount = chunk_input_ids.shape[1]#sum_mask
 
                     # Combine losses
+                    #print(f'summask = {sum_mask} maskshape = {mask.shape[0]}')
                     if sum_mask == mask.shape[0]:
                         loss = args.alpha * smooth_loss.mean() + (1 - args.alpha) * kl_loss.mean()
                         smooth_loss = smooth_loss.mean()
@@ -1643,6 +1640,15 @@ class RWKV(pl.LightningModule):
                     chunk_start = i * T_train
                     chunk_end = (i + 1) * T_train#min((i + 1) * T_train, T)
                     #print(f'chunk start = {chunk_start} chunk end = {chunk_end} diff = {chunk_end-chunk_start}')
+
+                    # chunk_input_ids = input_ids[:, chunk_start:chunk_end]
+                    # chunk_target = target[:, chunk_start:chunk_end]
+                    # chunk_top_k_values = top_k_values[:, chunk_start:chunk_end]
+                    # chunk_top_k_indices = top_k_indices[:, chunk_start:chunk_end]
+                    # chunk_attention_mask = attention_mask[:, chunk_start:chunk_end]
+
+                    # print(f'{chunk_input_ids.shape} {chunk_target.shape} {chunk_top_k_values.shape} {chunk_top_k_indices.shape} {chunk_attention_mask.shape}')
+
                     
                     total_loss, smooth_loss,kl_loss, new_shift_states, new_wkv_states, token_amount , status = torch_checkpoint(
                         checkpointed_step2,
@@ -1659,7 +1665,12 @@ class RWKV(pl.LightningModule):
                         token_amount,
                         use_reentrant=False
                     )
-                    states = BlockStateList(new_shift_states, new_wkv_states)
+                    #states = BlockStateList(new_shift_states, new_wkv_states)
+                    states.shift_states = new_shift_states
+                    states.wkv_states = new_wkv_states
+
+                    if status == 'skip':
+                        break
 
                     if status == 'proceed':
                         proceedtokens = proceedtokens + (chunk_end-chunk_start)
@@ -1793,11 +1804,11 @@ class RWKV(pl.LightningModule):
                         token_amount,
                         use_reentrant=False
                     )
-                    #if status == 'skip':
-                    #    break
-                    states = BlockStateList(new_shift_states, new_wkv_states)
-                    #states.shift_states = new_shift_states
-                    #states.wkv_states = new_wkv_states
+                    if status == 'skip':
+                        break
+                    #states = BlockStateList(new_shift_states, new_wkv_states)
+                    states.shift_states = new_shift_states
+                    states.wkv_states = new_wkv_states
 
                     if status == 'proceed':
                         proceedtokens = proceedtokens + (chunk_end-chunk_start)
@@ -1968,27 +1979,33 @@ class RWKV(pl.LightningModule):
                 smoothing = args.smoothing
 
                 input_ids = batch['input_ids']
+                target = batch['target_ids']
                 top_k_values = batch['top_k_values']
                 top_k_indices = batch['top_k_indices']
                 attention_mask = batch['attention_mask']
 
+                #max_len = int(input_ids.shape[1])#int(attention_mask.sum(dim=1).max().item())
                 max_len = int(attention_mask.sum(dim=1).max().item())
                 #print(f'max attention len = {max_len}')
 
                 input_ids = input_ids[:, :max_len]
+                target = target[:, :max_len]
                 top_k_values = top_k_values[:, :max_len]
                 top_k_indices = top_k_indices[:, :max_len, :]
                 attention_mask = attention_mask[:, :max_len]
 
                 # Forward: input_ids[:, :-1]を使用
-                student_logits = self(input_ids[:, :-1])
+                student_logits = self(input_ids)
 
                 # 評価: input_ids[:, 1:]を使用
-                targets = input_ids[:, 1:].contiguous().view(-1) #
+                #targets = input_ids[:, 1:].contiguous().view(-1) #
+
+                targets = target.contiguous().view(-1)
                 #del input_ids
 
                 # マスクの調整
-                mask = attention_mask[:, 1:].contiguous().view(-1) #.contiguous()
+                #mask = attention_mask[:, 1:].contiguous().view(-1) #.contiguous()
+                mask = attention_mask.contiguous().view(-1)
                 #del attention_mask
                 sum_mask = torch.sum(mask).item()
 
@@ -2001,12 +2018,16 @@ class RWKV(pl.LightningModule):
                 smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
 
                 # Top-k teacher logitsを使用したKL-divergence loss
-                teacher_probs = top_k_values[:, :-1]
-                teacher_indices = top_k_indices[:, :-1]
+                teacher_probs = top_k_values#[:, :-1]
+                teacher_indices = top_k_indices#[:, :-1]
+
+                #print(f'teacher_probs shape = {teacher_probs.shape}')
 
                 
                 # 学生モデルのlogitsからTop-k値を取得
                 student_top_k_logits = torch.gather(student_logits, -1, teacher_indices)
+
+                #print(f'student_top_k_logits shape = {student_top_k_logits.shape}')
                 
                 kl_loss = self.kl_divergence_loss(student_top_k_logits, teacher_probs, temperature)
 
