@@ -70,19 +70,21 @@ class HDF5TopKTensorDataset(Dataset):
         # padded_tokens[:seq_len] = tokens
         
         padded_top_k_values = np.zeros((self.max_seq_length, self.top_k), dtype=np.float32)
-        padded_top_k_values[:seq_len-1] = top_k_values[:-1]
+        padded_top_k_values[:seq_len-1] = top_k_values[:seq_len-1]
         
         padded_top_k_indices = np.zeros((self.max_seq_length, self.top_k), dtype=np.int64)
-        padded_top_k_indices[:seq_len-1] = top_k_indices[:-1]
+        padded_top_k_indices[:seq_len-1] = top_k_indices[:seq_len-1]
 
 
 
         # padding and mask
         padded_tokens_input = np.zeros(self.max_seq_length, dtype=np.int64)
-        padded_tokens_input[:seq_len-1] = tokens[:-1]
+        padded_tokens_input[:seq_len-1] = tokens[:seq_len-1]
 
         padded_tokens_target = np.zeros(self.max_seq_length, dtype=np.int64)
-        padded_tokens_target[:seq_len-1] = tokens[1:]
+        #padded_tokens_target[:seq_len] = tokens[:seq_len]
+        #padded_tokens_target = padded_tokens_target[1:]
+        padded_tokens_target[0:seq_len-1] = tokens[1:seq_len]
         
         attention_mask = np.zeros(self.max_seq_length, dtype=np.float32)
         attention_mask[:seq_len-1] = 1.0
