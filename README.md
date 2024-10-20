@@ -65,6 +65,8 @@ A repository exploring the possibilities for deeper fine-tuning of RWKV.
    - CUDA 12.4+, Rocm 6.2+
    - Python 3.12+
    - Pytorch 2.5+
+   - Bitsandbytes (in MI100 with Rocm6.2.2, need build)
+   - some case need (conda install libstdcxx -c conda-forge --override-channels) for building cuda kernel
 
 ## How to Use
    - [Odds Ratio Preference Optimization document](v6/example/ORPO/readme.md)
