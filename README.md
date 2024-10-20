@@ -62,6 +62,9 @@ A repository exploring the possibilities for deeper fine-tuning of RWKV.
 ## System Requirements
    - CPU RAM >= 32GB
    - Cuda or Rocm GPU.(NVIDIA RTX3090,4090, AMD MI100)
+   - CUDA 12.4+, Rocm 6.2+
+   - Python 3.12+
+   - Pytorch 2.5+
 
 ## How to Use
    - [Odds Ratio Preference Optimization document](v6/example/ORPO/readme.md)

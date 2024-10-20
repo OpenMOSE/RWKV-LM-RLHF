@@ -516,9 +516,9 @@ if __name__ == "__main__":
         rank_zero_info(f"########## Quant... ##########")
         for name, m in model.named_modules():
             if hasattr(m, "quant") and callable(getattr(m, "quant")):
-                    m.quant(args.quant_mode,'cuda')
-                    #print(f'{name} Quant')
-                    rank_zero_info(f'{name} Quant')
+                    m.quant(args.quant_mode,model.target_gpu)
+                    print(f'{name} Quant on {model.target_gpu}')
+                    #rank_zero_info(f'{name} Quant')
 
     
     

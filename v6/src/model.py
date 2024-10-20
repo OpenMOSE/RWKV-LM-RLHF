@@ -118,8 +118,8 @@ if 'cuda' in os.environ["RWKV_MY_ARCHITECTURE"]:
                     S1=xg.shape[1]
                     if xg.dtype != torch.float8_e4m3fn:
                         xg = torch.clamp(xg, min=-448.0, max=448.0) # for avoid NaN
-                    
-                    x, output_amax = torch._scaled_mm(
+                    #in torch2.5+ deleted absmax 
+                    x = torch._scaled_mm(
                         xg.view(S0*S1,xg.shape[2]).to(torch.float8_e4m3fn).contiguous(),
                         b,
                         bias=None,
@@ -1316,6 +1316,7 @@ class RWKV(pl.LightningModule):
         print(f'Target GPUNo: {GPUNo}')
 
         target_gpu = f'cuda:{GPUNo}'
+        self.target_gpu = target_gpu
         
         self.args = args
         self.inputtalkmax = 0
