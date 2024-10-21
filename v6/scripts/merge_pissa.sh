@@ -1,7 +1,7 @@
-base_model='myfolder/models/RWKV-x060-Jpn-7B-20240816-ctx4096.pth'
-lora_init='myfolder/Outputs/7BDist/init_pissa.pth'
-lora_checkpoint='myfolder/Outputs/7BDist/rwkv-1.pth'
-output='myfolder/Outputs/7BDist/rwkv-1-merged.pth'
+base_model='myfolder/models/RWKV-x060-World-3B-v2.1-20240417-ctx4096.pth'
+lora_init='myfolder/Outputs/3BDistillation/init_pissa.pth'
+lora_checkpoint='myfolder/Outputs/3BDistillation/rwkv-2.pth'
+output='myfolder/Outputs/3BDistillation/rwkv-2-merged.pth'
 QUANT='' #follow train
 TYPE='pissa'
 Lora_scaling=2.0
