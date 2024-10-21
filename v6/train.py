@@ -105,6 +105,7 @@ if __name__ == "__main__":
 
 
     parser.add_argument("--orpo", default=0, type=int) #orpo
+    parser.add_argument("--orpo_mode", default=1, type=int) #orpo
     parser.add_argument("--orpo_alpha", default=0.01, type=float) #orpo
 
 
@@ -186,6 +187,7 @@ if __name__ == "__main__":
 
     if args.infctx:
         os.environ["RWKV_TRAIN_TYPE"]='infctx'
+        os.environ["RWKV_CTXLEN"] = str(args.chunk_ctx)
     else:
         os.environ["RWKV_TRAIN_TYPE"]='normal'
 

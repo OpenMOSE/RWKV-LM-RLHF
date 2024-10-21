@@ -1,6 +1,6 @@
-base_model='myfolder/models/RWKV-x060-Jpn-7B-20240816-ctx4096.pth'
-lora_checkpoint='myfolder/Outputs/7B-RLHF-DPO/rwkv-17.pth'
-output='myfolder/Outputs/7B-RLHF-DPO/rwkv-17-merged.pth'
+base_model='myfolder/Outputs/3BDistillation/rwkv-2-merged.pth'
+lora_checkpoint='myfolder/Outputs/3B-RLHF-ORPO/rwkv-8.pth'
+output='myfolder/Outputs/3B-RLHF-ORPO/rwkv-8-merged.pth'
 QUANT='' #follow train
 TYPE='lora'
 Lora_scaling=2.0
