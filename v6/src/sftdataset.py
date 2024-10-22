@@ -41,42 +41,30 @@ class HDF5TopKTensorDataset(Dataset):
         
         # limit sequence length
         seq_len = min(len(tokens), self.max_seq_length)
-        #print(f'sftdataset : tokens length={len(tokens)}')
         tokens = tokens[:seq_len]
         
-        # # padding and mask
-        # padded_tokens_input = np.zeros(self.max_seq_length, dtype=np.int64)
-        # padded_tokens_input[:seq_len-1] = tokens[:-1]
-
-        # padded_tokens_target = np.zeros(self.max_seq_length, dtype=np.int64)
-        # padded_tokens_target[:seq_len-1] = tokens[1:]
-        
-        # attention_mask = np.zeros(self.max_seq_length, dtype=np.float32)
-        # attention_mask[:seq_len-1] = 1.0
 
         # Padding and mask
         padded_tokens_input = np.zeros(self.max_seq_length, dtype=np.int64)
         padded_tokens_input[:seq_len-1] = tokens[:seq_len-1]
 
         padded_tokens_target = np.zeros(self.max_seq_length, dtype=np.int64)
-        #padded_tokens_target[:seq_len-1] = tokens[:seq_len-1]
         padded_tokens_target[0:seq_len-1] = tokens[1:seq_len]
         
         attention_mask = np.zeros(self.max_seq_length, dtype=np.float32)
-        attention_mask[:seq_len-1] = 1.0
+        attention_mask[0:seq_len-1] = 1.0
+
+        print(f'dataloader sum attentionmask = {np.sum(attention_mask)}')
         
         # Prepare input and target
         input_tokens = padded_tokens_input#padded_tokens[:-1]
         target_tokens = padded_tokens_target#padded_tokens[1:]
 
-        #print(f'sftdataset : input_tokens length={len(input_tokens)}')
-        #print(f'sftdataset : target_tokens length={len(target_tokens)}')
-        #print(f'sftdataset : attention_mask length={len(attention_mask)}')
         
         return {
             'input_ids': torch.from_numpy(input_tokens),
             'target_ids': torch.from_numpy(target_tokens),
-            'attention_mask': torch.from_numpy(attention_mask).to(dtype=torch.bfloat16)#[1:]
+            'attention_mask': torch.from_numpy(attention_mask)#.to(dtype=torch.bfloat16)#[1:]
         }
 
 def collate_fn(batch):

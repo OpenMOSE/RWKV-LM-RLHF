@@ -323,9 +323,9 @@ class HeadLoraLinear(nn.Module):
             
             elif self.bonemode : #Any Quantize
                 temporal_weight = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
-                #w = rearrange(temporal_weight, '(a r1) (b r2) -> a b r1 r2', r1 = self.r, r2 = self.r)@self.bone+self.bone
-                #w = rearrange(w, 'a b r1 r2 ->(a r1) (b r2) ')
-                w = BoneProcessing(temporal_weight,self.bone,self.r)
+                w = rearrange(temporal_weight, '(a r1) (b r2) -> a b r1 r2', r1 = self.r, r2 = self.r)@self.bone+self.bone
+                w = rearrange(w, 'a b r1 r2 ->(a r1) (b r2) ')
+                # = BoneProcessing(temporal_weight,self.bone,self.r)
                 w = w + temporal_weight
             
                 return x @ w.t() #F.linear(x,(temporal_weight+w))
@@ -1203,20 +1203,30 @@ class Block(nn.Module):
                 #    pos_emb = (self.pos_emb_x + self.pos_emb_y).reshape(T+1, -1)[:-1,:]
                 #    x = x + pos_emb
 
-            if self.args.dropout == 0:
-                if self.layer_id == 0 and args.pre_ffn > 0:
-                    x = x + self.ffnPre(self.ln1(x))
-                else:
-                    att_out, att_state = self.att(self.ln1(x), last_state.time_mix_state)
-                    x = x + att_out
-                ffn_out, fnn_state = self.ffn(self.ln2(x), last_state.channel_mix_state)
-                x = x + ffn_out
+            # if self.args.dropout == 0:
+            #     if self.layer_id == 0 and args.pre_ffn > 0:
+            #         x = x + self.ffnPre(self.ln1(x))
+            #     else:
+            #         att_out, att_state = self.att(self.ln1(x), last_state.time_mix_state)
+            #         x = x + att_out
+            #     ffn_out, fnn_state = self.ffn(self.ln2(x), last_state.channel_mix_state)
+            #     x = x + ffn_out
+            # else:
+            #     if self.layer_id == 0 and args.pre_ffn > 0:
+            #         x = self.drop0(x + self.ffnPre(self.ln1(x)))
+            #     else:
+            #         x = self.drop0(x + self.att(self.ln1(x)))
+            #     x = self.drop1(x + self.ffn(self.ln2(x)))
+            if self.layer_id == 0 and args.pre_ffn > 0:
+                x = x + self.ffnPre(self.ln1(x))
+                x = x if self.args.dropout == 0 else self.drop0(x)
             else:
-                if self.layer_id == 0 and args.pre_ffn > 0:
-                    x = self.drop0(x + self.ffnPre(self.ln1(x)))
-                else:
-                    x = self.drop0(x + self.att(self.ln1(x)))
-                x = self.drop1(x + self.ffn(self.ln2(x)))
+                att_out, att_state = self.att(self.ln1(x), last_state.time_mix_state)
+                x = x + att_out
+                x = x if self.args.dropout == 0 else self.drop0(x)
+            ffn_out, fnn_state = self.ffn(self.ln2(x), last_state.channel_mix_state)
+            x = x + ffn_out
+            x = x if self.args.dropout == 0 else self.drop1(x)
 
  
             return x, BlockState(att_state, fnn_state)
@@ -1680,7 +1690,7 @@ class RWKV(pl.LightningModule):
                 self.trainer.kl_loss = float(kl_loss)
                 self.trainer.realproceedtokens =float(proceedtokens)
 
-                return total_loss#, states
+                return total_loss.float()#, states
             
 
 
@@ -1691,7 +1701,24 @@ class RWKV(pl.LightningModule):
 
                 input_ids = batch['input_ids']
                 target = batch['target_ids']
-                attention_mask = batch['attention_mask']
+                attention_mask = batch['attention_mask'].float()
+
+                #print(attention_mask)
+
+                #print(f'attentionmask shape = {attention_mask.shape}')
+
+                #print(f'sum = {torch.sum(attention_mask[0][0:attention_mask.shape[1]-2])}')
+                total = 0
+                #for i in range(attention_mask.shape[1]):
+                #    print(f'i = {i} a = {attention_mask[0][i]}')
+                #    total = total + attention_mask[0][i].float()
+                #print(f'total = {total}')
+
+                #print(attention_mask[0, 4095])
+
+                max_len = int(attention_mask.sum(dim=1).max().item())
+
+                #print(f'maxAttentionsize = {max_len}')
 
 
                 #target = input_ids[:,1:]
@@ -1699,9 +1726,9 @@ class RWKV(pl.LightningModule):
                 #input_ids = input_ids[:,:-1]
 
                 B, T = input_ids.shape
-                total_loss = torch.tensor(0., dtype=self.emb.weight.dtype).requires_grad_()
+                total_loss = torch.tensor(0., dtype=torch.float32).requires_grad_()
                 #kl_loss = torch.tensor(0., dtype=self.emb.weight.dtype).requires_grad_()
-                smooth_loss = torch.tensor(0., dtype=self.emb.weight.dtype).requires_grad_()
+                smooth_loss = torch.tensor(0., dtype=torch.float32).requires_grad_()
                 token_amount = 0
                 C = args.n_embd
                 H =  args.dim_att // args.head_size_a
@@ -1722,9 +1749,12 @@ class RWKV(pl.LightningModule):
                     mask = chunk_attention_mask.contiguous().view(-1)
                     #print(f'mask = {mask}')
                     sum_mask = torch.sum(mask).item()
+
+                    print(sum_mask)
                     
                     if sum_mask == 0:
                         status = 'skip'
+                        print('skip')
                         return prev_loss,prev_smooth_loss,last_shift_states, last_wkv_states, prev_token_amount, status
                     
                     student_logits,new_shift_states, new_wkv_states = self(chunk_input_ids,last_shift_states, last_wkv_states)
@@ -1740,10 +1770,15 @@ class RWKV(pl.LightningModule):
                     #     #smooth_loss = label_smoothing_loss(student_logits_shifted, targets, True) #Through
                     #     smooth_loss = F.cross_entropy(student_logits_shifted.view(-1, student_logits_shifted.size(-1)), targets.reshape(-1))
                     # else:
-                    smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
+
+
+                    smooth_loss = label_smoothing_loss(student_logits_shifted.float(), targets)
                     #smooth_loss = F.cross_entropy(student_logits.view(-1, student_logits.size(-1)), targets.reshape(-1), reduction='none')
+
+
+
                     #del student_logits_shifted
-                    del targets
+                    #del targets
                   
 
                     #student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
@@ -1754,20 +1789,26 @@ class RWKV(pl.LightningModule):
                     #print(f'current token amount = {current_token_amount}')
 
                     # Combine losses
-                    if sum_mask == mask.shape[0]:
-                        #print('nomask')
-                        loss = smooth_loss.mean() + 1e-8 #args.alpha * smooth_loss.mean() + (1 - args.alpha) * kl_loss.mean()
-                        smooth_loss = smooth_loss.mean()
-                        #kl_loss = kl_loss.mean()
-                        loss = L2Wrap.apply(loss, student_logits, current_token_amount)
-                    else:
-                        #print('masked')
-                        #print(f'smooth_loss = {smooth_loss.shape} mask = {mask.shape}')
-                        smooth_loss = torch.sum(smooth_loss * mask + 1e-8) / sum_mask
-                        loss = smooth_loss
-                        #kl_loss = torch.sum(kl_loss.view(-1) * mask) / sum_mask
-                        #loss = smooth_loss#args.alpha * smooth_loss + (1 - args.alpha) * kl_loss
-                        loss = L2Wrap.apply(loss, student_logits, current_token_amount)
+                    # if sum_mask == mask.shape[0]:
+                    #     #print('nomask')
+                    #     loss = smooth_loss.mean()#args.alpha * smooth_loss.mean() + (1 - args.alpha) * kl_loss.mean()
+                    #     smooth_loss = loss#smooth_loss.mean()
+                    #     #kl_loss = kl_loss.mean()
+                    #     loss = L2Wrap.apply(loss, student_logits, current_token_amount)
+                    # else:
+                    #     #print('masked')
+                    #     #print(f'smooth_loss = {smooth_loss.shape} mask = {mask.shape}')
+                    #     smooth_loss = torch.sum(smooth_loss * mask) / sum_mask
+                    #     loss = smooth_loss
+                    #     #kl_loss = torch.sum(kl_loss.view(-1) * mask) / sum_mask
+                    #     #loss = smooth_loss#args.alpha * smooth_loss + (1 - args.alpha) * kl_loss
+                    #     loss = L2Wrap.apply(loss, student_logits, current_token_amount)
+
+                    smooth_loss = torch.sum(smooth_loss * mask) / sum_mask
+                    loss = smooth_loss
+                    loss = L2Wrap.apply(loss, student_logits, current_token_amount)
+
+                    print(f'checkpoint loss = {loss}')
                     
                     new_token_amount = prev_token_amount + current_token_amount
                     if new_token_amount > 0:
@@ -1783,14 +1824,38 @@ class RWKV(pl.LightningModule):
                         #new_kl_loss = kl_loss
 
                     status = 'proceed'
+                    print(f'new_loss loss = {new_loss}')
                     return new_loss, new_smooth_loss,new_shift_states, new_wkv_states, new_token_amount, status
                 
                 proceedtokens = 0
+
+                batchmax_tokens = max_len
+
+                remainder = max_len % 1024
+                if remainder == 0:
+                    max_len = max_len
+                else:
+                    padding = 1024 - remainder
+                    max_len = max_len + padding
                 
-                for i in range(math.ceil(T / T_train)):
-                    chunk_start = i * T_train
-                    chunk_end = (i + 1) * T_train#min((i + 1) * T_train, T)
-                    #print(f'chunk start = {chunk_start} chunk end = {chunk_end} diff = {chunk_end-chunk_start}')
+                if max_len < 1024:
+                    max_len = 1024
+
+
+                print(f'T = {T}')
+
+                T_train = min(args.chunk_ctx,max_len)
+                print(f'T_train = {T_train}')
+
+                #print(f'math.ceil(T / T_train) = {math.ceil(T / T_train)}')
+
+                chunk_start = 0
+                while True:
+                    chunk_end = chunk_start + T_train
+                    if chunk_end > T:
+                        chunk_end = T
+
+                    print(f'chunk start = {chunk_start} chunk end = {chunk_end} diff = {chunk_end-chunk_start}')
                     total_loss, smooth_loss, new_shift_states, new_wkv_states, token_amount , status = torch_checkpoint(
                     #total_loss, smooth_loss, new_shift_states, new_wkv_states, token_amount , status = deepspeed.checkpointing.checkpoint(
                         checkpointed_step2,
@@ -1806,19 +1871,61 @@ class RWKV(pl.LightningModule):
                     )
                     if status == 'skip':
                         break
-                    #states = BlockStateList(new_shift_states, new_wkv_states)
-                    states.shift_states = new_shift_states
-                    states.wkv_states = new_wkv_states
+                    states = BlockStateList(new_shift_states, new_wkv_states)
+                    #states.shift_states = new_shift_states
+                    #states.wkv_states = new_wkv_states
 
                     if status == 'proceed':
                         proceedtokens = proceedtokens + (chunk_end-chunk_start)
 
-                
+                    chunk_start = chunk_end
+                    if chunk_start >= batchmax_tokens:
+                        break
+
                 self.trainer.smooth_loss = float(smooth_loss)
-                #self.trainer.kl_loss = float(kl_loss)
                 self.trainer.realproceedtokens =float(proceedtokens)
 
-                #print(f'total_loss = {float(total_loss)}')
+                print(f'total_loss dtype = {total_loss.dtype}')
+
+                print(f'totalloss = {total_loss}')
+
+                
+                # for i in range(math.ceil(T / T_train)):
+                #     print('loop start-------------------------------------------------------------------------------')
+                #     print(f'i = {i}')
+                #     print(f'T_train = {T_train}')
+                #     print(f'math.ceil(T / T_train) = {math.ceil(T / T_train)}')
+                #     chunk_start = i * T_train
+                #     chunk_end = (i + 1) * T_train#min((i + 1) * T_train, T)
+                #     print(f'chunk start = {chunk_start} chunk end = {chunk_end} diff = {chunk_end-chunk_start}')
+                #     total_loss, smooth_loss, new_shift_states, new_wkv_states, token_amount , status = torch_checkpoint(
+                #     #total_loss, smooth_loss, new_shift_states, new_wkv_states, token_amount , status = deepspeed.checkpointing.checkpoint(
+                #         checkpointed_step2,
+                #         input_ids[:, chunk_start:chunk_end],
+                #         target[:, chunk_start:chunk_end],
+                #         attention_mask[:, chunk_start:chunk_end],
+                #         total_loss,
+                #         smooth_loss,
+                #         states.shift_states,
+                #         states.wkv_states,
+                #         token_amount,
+                #         use_reentrant=False
+                #     )
+                #     if status == 'skip':
+                #         break
+                #     states = BlockStateList(new_shift_states, new_wkv_states)
+                #     #states.shift_states = new_shift_states
+                #     #states.wkv_states = new_wkv_states
+
+                #     if status == 'proceed':
+                #         proceedtokens = proceedtokens + (chunk_end-chunk_start)
+
+                
+                # self.trainer.smooth_loss = float(smooth_loss)
+                # #self.trainer.kl_loss = float(kl_loss)
+                # self.trainer.realproceedtokens =float(proceedtokens)
+
+                # #print(f'total_loss = {float(total_loss)}')
 
                 return total_loss#, states
 
