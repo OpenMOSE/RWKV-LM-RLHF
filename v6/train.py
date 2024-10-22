@@ -505,6 +505,10 @@ if __name__ == "__main__":
         model.load_state_dict(torch.load(args.load_adapter, map_location="cpu"),
                               strict=False)
         
+    if os.path.isfile(args.load_adapter) and AdapterMethod == 'bone':
+        model.load_state_dict(torch.load(args.load_adapter, map_location="cpu"),
+                              strict=False)
+        
     if os.path.isfile(args.load_adapter) and AdapterMethod == 'pissa':
         model.load_state_dict(torch.load(args.load_adapter, map_location="cpu"),
                             strict=False)
