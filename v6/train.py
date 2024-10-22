@@ -11,6 +11,8 @@ if __name__ == "__main__":
     from pytorch_lightning.utilities import rank_zero_info, rank_zero_only
     import pytorch_lightning as pl
     from src.layerprofiler import LayerProfiler
+    #from lightning.pytorch.strategies import SingleDeviceStrategy, FSDPStrategy, DDPStrategy, DeepSpeedStrategy
+    #from lightning.pytorch.accelerators.accelerator import Accelerator
 
     #LayerProfiler l_profile
     
@@ -126,6 +128,8 @@ if __name__ == "__main__":
 
     #new optim
     parser.add_argument("--optim", default="", type=str)
+
+    #parser.add_argument("--accelerator", default="gpu", type=str)
 
 
 
@@ -525,9 +529,8 @@ if __name__ == "__main__":
                     m.quant(args.quant_mode,model.target_gpu)
                     print(f'{name} Quant on {model.target_gpu}')
                     #rank_zero_info(f'{name} Quant')
-
     
-    
+     
 
     if pl.__version__[0]=='2':
         trainer = Trainer(sync_batchnorm=True,accelerator=args.accelerator,strategy=args.strategy,devices=args.devices,num_nodes=args.num_nodes,precision=args.precision,
@@ -539,19 +542,19 @@ if __name__ == "__main__":
             callbacks=[train_callback(args)],
         )
 
-    # if trainer.global_rank == 0:
-    #     for n in model.state_dict():
-    #         shape = model.state_dict()[n].shape
-    #         shape = [i for i in shape if i != 1]
-    #         if len(shape) > 1:
-    #             print(f"{str(shape[0]).ljust(5)} {str(shape[1]).ljust(5)} {n}")
-    #         else:
-    #             print(f"{str(shape[0]).ljust(5)}       {n}")
+    if trainer.global_rank == 0:
+        for n in model.state_dict():
+            shape = model.state_dict()[n].shape
+            shape = [i for i in shape if i != 1]
+            if len(shape) > 1:
+                print(f"{str(shape[0]).ljust(5)} {str(shape[1]).ljust(5)} {n}")
+            else:
+                print(f"{str(shape[0]).ljust(5)}       {n}")
 
     if "deepspeed" in args.strategy:
         trainer.strategy.config["zero_optimization"]["allgather_bucket_size"] = args.ds_bucket_mb * 1000 * 1000
         trainer.strategy.config["zero_optimization"]["reduce_bucket_size"] = args.ds_bucket_mb * 1000 * 1000
-        #trainer.strategy.config["zero_optimization"]["overlap_comm"] = False
+        trainer.strategy.config["zero_optimization"]["overlap_comm"] = False
 
     # must set shuffle=False, persistent_workers=False (because worker is in another thread)
     if args.orpo or args.dpo:
