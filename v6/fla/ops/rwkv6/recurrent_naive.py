@@ -40,19 +40,20 @@ def naive_recurrent_rwkv6(
     return o.to(orig_dtype), ht
 
 
+@torch.no_grad
+@torch.jit.script
 def naive_recurrent_rwkv6_bwd(
-    q,
-    k,
-    v,
-    w,
-    u,
-    o,
-    do,
-    initial_state=None,
-    output_final_state=False
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    w: torch.Tensor,
+    u: torch.Tensor,
+    o: torch.Tensor,
+    do: torch.Tensor,
+    initial_state: Optional[torch.Tensor] = None
 ):
-    q, k, v, w, u, o, do = map(lambda x: x.float(), (q, k, v, w, u, o, do))
-    B, H, T, K, V = *q.shape, v.shape[-1]
+    q, k, v, w, u, o, do = (x.to(dtype=torch.float32) for x in (q, k, v, w, u, o, do))
+    B, H, T, K, V = q.shape[0], q.shape[1], q.shape[2], q.shape[3], v.shape[-1]
     h = torch.zeros(B, H, K, V, dtype=torch.float32, device=q.device)
     dq = torch.zeros_like(q)
     dq_aux = torch.zeros_like(q)
@@ -83,7 +84,7 @@ def naive_recurrent_rwkv6_bwd(
         k_i = k[:, :, i]
         v_i = v[:, :, i]
         du_i = (d_kv_i * k_i[..., None] * v_i[..., None, :]).sum(-1)
-        du += du_i
+        du += du_i.sum(0)
         dk_i = (dh * v_i[..., None, :]).sum(-1)
         dk_aux[:, :, i] = dk_i
         dk_i += (d_kv_i * u[None, ..., None] * v_i[..., None, :]).sum(-1)
@@ -99,4 +100,4 @@ def naive_recurrent_rwkv6_bwd(
     for i in range(T - 2, -1, -1):
         dw[:, :, i] = dw[:, :, i+1] + dq_aux[:, :, i+1] * q[:, :, i+1] - dk_aux[:, :, i] * k[:, :, i]
 
-    return dq, dk, dv, dw, du
+    return dq, dk, dv, dw, du, dh

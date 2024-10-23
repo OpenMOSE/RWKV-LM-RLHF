@@ -17,8 +17,9 @@ from transformers.utils import logging
 
 from fla.layers.gla import GatedLinearAttention
 from fla.models.gla.configuration_gla import GLAConfig
-from fla.models.utils import RecurrentCache
-from fla.modules import FusedCrossEntropyLoss, RMSNorm
+from fla.models.utils import Cache
+from fla.modules import (FusedCrossEntropyLoss, FusedLinearCrossEntropyLoss,
+                         RMSNorm)
 from fla.modules.activations import swiglu_linear
 
 logger = logging.get_logger(__name__)
@@ -72,7 +73,6 @@ class GLABlock(nn.Module):
             feature_map=config.feature_map,
             use_short_conv=config.use_short_conv,
             conv_size=config.conv_size,
-            share_conv_kernel=config.share_conv_kernel,
             use_output_gate=config.use_output_gate,
             gate_fn=config.hidden_act,
             elementwise_affine=config.elementwise_affine,
@@ -216,8 +216,8 @@ class GLAModel(GLAPreTrainedModel):
         if use_cache:
             if past_key_values is None:
                 past_key_values = [layer.attn.init_state(batch_size) for layer in self.layers]
-            if not isinstance(past_key_values, RecurrentCache):
-                past_key_values = RecurrentCache.from_legacy_cache(past_key_values)
+            if not isinstance(past_key_values, Cache):
+                past_key_values = Cache.from_legacy_cache(past_key_values)
 
         if self.gradient_checkpointing and self.training:
             if use_cache:
@@ -259,14 +259,11 @@ class GLAModel(GLAPreTrainedModel):
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
-        next_cache = None
-        if use_cache:
-            next_cache = past_key_values.to_legacy_cache()
         if not return_dict:
-            return tuple(x for x in [hidden_states, next_cache, all_hidden_states, all_attns] if x is not None)
+            return tuple(i for i in [hidden_states, past_key_values, all_hidden_states, all_attns] if i is not None)
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
-            past_key_values=next_cache,
+            past_key_values=past_key_values,
             hidden_states=all_hidden_states,
             attentions=all_attns
         )
@@ -327,8 +324,8 @@ class GLAForCausalLM(GLAPreTrainedModel):
     ):
         # only last token for `inputs_ids` if the `past_key_values` is passed along.
         if past_key_values is not None:
-            if not isinstance(past_key_values, RecurrentCache):
-                past_key_values = RecurrentCache.from_legacy_cache(past_key_values, input_ids.shape[1] - 1)
+            if not isinstance(past_key_values, Cache):
+                past_key_values = Cache.from_legacy_cache(past_key_values, input_ids.shape[1] - 1)
             input_ids, attention_mask = input_ids[:, -1:], attention_mask[:, -1:]
         # if `inputs_embeds` are passed, we only want to use them in the 1st generation step
         if inputs_embeds is not None and past_key_values is None:
@@ -377,18 +374,28 @@ class GLAForCausalLM(GLAPreTrainedModel):
         )
 
         hidden_states = outputs[0]
-        logits = self.lm_head(hidden_states)
+        fuse_linear_and_cross_entropy = self.config.fuse_cross_entropy and self.training
+        logits = None if fuse_linear_and_cross_entropy else self.lm_head(hidden_states)
 
         loss = None
         if labels is not None:
             if self.config.fuse_cross_entropy:
-                loss_fct = FusedCrossEntropyLoss(inplace_backward=True)
+                if fuse_linear_and_cross_entropy:
+                    loss_fct = FusedLinearCrossEntropyLoss()
+                else:
+                    loss_fct = FusedCrossEntropyLoss(inplace_backward=True)
             else:
                 loss_fct = nn.CrossEntropyLoss()
             # Enable model parallelism
-            labels = labels.to(logits.device)
+            labels = labels.to(hidden_states.device)
             labels = torch.cat((labels[..., 1:], torch.full_like(labels[:, :1], loss_fct.ignore_index)), 1)
-            loss = loss_fct(logits.view(-1, self.config.vocab_size), labels.view(-1))
+            if fuse_linear_and_cross_entropy:
+                loss = loss_fct(hidden_states.view(-1, self.config.hidden_size),
+                                labels.view(-1),
+                                self.lm_head.weight,
+                                self.lm_head.bias)
+            else:
+                loss = loss_fct(logits.view(-1, self.config.vocab_size), labels.view(-1))
 
         if not return_dict:
             output = (logits,) + outputs[1:]
