@@ -3,19 +3,14 @@
 import torch
 from einops import rearrange
 
-from fla.ops.rwkv6.chunk import chunk_rwkv6
-from fla.ops.rwkv6.recurrent_fuse import fused_recurrent_rwkv6
-
 
 def naive_chunk_rwkv6(
-    q,
-    k,
-    v,
-    w,
-    u,
-    chunk_size=32,
-    initial_state=None,
-    output_final_state=True,
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    w: torch.Tensor,
+    u: torch.Tensor,
+    chunk_size: int = 32
 ):
     assert q.shape[-2] % chunk_size == 0
     orig_dtype = q.dtype
@@ -46,34 +41,3 @@ def naive_chunk_rwkv6(
         o_intra[:, :, :, i] = intra_inter_o + intra_intra_o
     o = o_inter + o_intra
     return rearrange(o, 'b h n c d -> b h (n c) d').to(orig_dtype)
-
-
-if __name__ == "__main__":
-    B = 4
-    H = 4
-    L = 1024
-    D = 100
-    dtype = torch.bfloat16
-    require_grad = True
-    q = (torch.randn(B, H, L, D).cuda().to(dtype)).requires_grad_(require_grad)
-    k = (torch.randn(B, H, L, D).cuda().to(dtype)).requires_grad_(require_grad)
-    v = torch.randn(B, H, L, 2*D).cuda().to(dtype).requires_grad_(require_grad)
-    w = torch.nn.functional.logsigmoid(torch.randn(B, H, L, D)).cuda().to(dtype).requires_grad_(require_grad)
-    u = (torch.randn(H, D).cuda().to(dtype)).requires_grad_(require_grad)
-    do = torch.rand_like(v).cuda()
-    o2, _ = chunk_rwkv6(q, k, v, w.clone(), u)
-    o, _ = fused_recurrent_rwkv6(q, k, v, w, u, scale=1.0)
-    o.backward(do)
-    dq, q.grad = q.grad.clone(), None
-    dk, k.grad = k.grad.clone(), None
-    dv, v.grad = v.grad.clone(), None
-    dw, w.grad = w.grad.clone(), None
-    du, u.grad = u.grad.clone(), None
-    print((o - o2).abs().max())
-    o2.backward(do)
-    print((o-o2).abs().max())
-    print((q.grad - dq).abs().max())
-    print((k.grad - dk).abs().max())
-    print((v.grad - dv).abs().max())
-    print((w.grad - dw).abs().max())
-    print((u.grad - du).abs().max())

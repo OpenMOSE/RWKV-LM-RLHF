@@ -221,21 +221,22 @@ def rwkv_quantize(quant_type, weight):
 
 
 def rwkv_dequantize(quant_type, weight, qstate):
-    #device = weight.device
-    if quant_type=='4bit':
-        deweight= bnb.functional.dequantize_4bit(weight.data,quant_state=qstate)
-    elif quant_type=='nf4':
-        #print(qstate)
-        deweight= bnb.functional.dequantize_nf4(weight.data,quant_state=qstate)
-    elif quant_type=='fp4':
-        deweight= bnb.functional.dequantize_fp4(weight.data,quant_state=qstate)
-    elif quant_type=='int8':
-        deweight= bnb.functional.dequantize(weight.data,state=qstate)
-    elif quant_type=='fp8':
-        deweight= weight.data
-    elif quant_type=='fp16':
-        deweight= weight.data
-    return deweight.to(torch.bfloat16)
+    #with torch.no_grad():
+        #device = weight.device
+        if quant_type=='4bit':
+            deweight= bnb.functional.dequantize_4bit(weight.data,quant_state=qstate)
+        elif quant_type=='nf4':
+            #print(qstate)
+            deweight= bnb.functional.dequantize_nf4(weight.data,quant_state=qstate)
+        elif quant_type=='fp4':
+            deweight= bnb.functional.dequantize_fp4(weight.data,quant_state=qstate)
+        elif quant_type=='int8':
+            deweight= bnb.functional.dequantize(weight.data,state=qstate)
+        elif quant_type=='fp8':
+            deweight= weight.data
+        elif quant_type=='fp16':
+            deweight= weight.data
+        return deweight.to(torch.bfloat16).contiguous()
 
 
 class HeadLoraLinear(nn.Module):
@@ -306,6 +307,8 @@ class HeadLoraLinear(nn.Module):
         self.weight = None # Because Latest Pytorch-lightning forced to BF16 type. thats why delete
     def forward(self, x):
 
+        x = torch.clamp(x, min=-448.0, max=448.0) # for avoid NaN
+
         if self.is_quant:
             if self.pissa and self.Qweight.dtype == torch.float8_e4m3fn: #FP8 PISSA
                 return (
@@ -323,9 +326,9 @@ class HeadLoraLinear(nn.Module):
             
             elif self.bonemode : #Any Quantize
                 temporal_weight = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
-                w = rearrange(temporal_weight, '(a r1) (b r2) -> a b r1 r2', r1 = self.r, r2 = self.r)@self.bone+self.bone
-                w = rearrange(w, 'a b r1 r2 ->(a r1) (b r2) ')
-                # = BoneProcessing(temporal_weight,self.bone,self.r)
+                #w = rearrange(temporal_weight, '(a r1) (b r2) -> a b r1 r2', r1 = self.r, r2 = self.r)@self.bone+self.bone
+                #w = rearrange(w, 'a b r1 r2 ->(a r1) (b r2) ')
+                w = BoneProcessing(temporal_weight,self.bone,self.r)
                 w = w + temporal_weight
             
                 return x @ w.t() #F.linear(x,(temporal_weight+w))
@@ -437,6 +440,8 @@ class LoraLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :) Chaos Modified
         self.Qweight, self.qstate= rwkv_quantize(self.quant_type, (self.weight.data).to(target_gpu))
         self.weight = None # Because Latest Pytorch-lightning forced to BF16 type. thats why delete
     def forward(self, x):
+
+        x = torch.clamp(x, min=-448.0, max=448.0) # for avoid NaN
 
         if self.is_quant:
             if self.pissa and self.Qweight.dtype == torch.float8_e4m3fn: #FP8 PISSA
@@ -648,17 +653,72 @@ class LabelSmoothingLoss(torch.nn.Module):
 from torch.utils.cpp_extension import load
 
 HEAD_SIZE = int(os.environ["RWKV_HEAD_SIZE_A"])
-
+FLAMODE = 1
 if 'x060' in os.environ["RWKV_MY_TESTING"]:
         if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
-                    def RUN_CUDA_RWKV6_STATE(B, T, C, H, r, k, v, w, u, s):
-                        r = rearrange(r, 'b l (h d) -> b h l d', h = H)
-                        k = rearrange(k, 'b l (h d) -> b h l d', h = H)
-                        v = rearrange(v, 'b l (h d) -> b h l d', h = H)
-                        w = rearrange(-torch.exp(w), 'b l (h d) -> b h l d', h = H)
-                        o, state = chunk_rwkv6(r, k, v, w, u=u, scale=1., initial_state=s, output_final_state=True)
-                        x = rearrange(o, 'b h l d -> b l (h d)')
-                        return x, state
+                    if FLAMODE:
+                        def RUN_CUDA_RWKV6_STATE(B, T, C, H, r, k, v, w, u, s):
+                            r = rearrange(r, 'b l (h d) -> b h l d', h = H)
+                            k = rearrange(k, 'b l (h d) -> b h l d', h = H)
+                            v = rearrange(v, 'b l (h d) -> b h l d', h = H)
+                            w = rearrange(-torch.exp(w), 'b l (h d) -> b h l d', h = H)
+                            o, state = chunk_rwkv6(r, k, v, w, u=u, scale=1., initial_state=s, output_final_state=True)
+                            x = rearrange(o, 'b h l d -> b l (h d)')
+                            return x, state
+                    else:
+                        wkv6state_cuda = load(name="wkv6infctx", sources=["cuda/wkv6infctx_op.cpp", f"cuda/wkv6infctx_cuda.cu"],
+                            verbose=True, extra_cuda_cflags=["-res-usage", "--use_fast_math", "-O3", "-Xptxas -O3", "--extra-device-vectorization", f"-D_N_={HEAD_SIZE}", f"-D_T_={int(os.environ['RWKV_CTXLEN'])}"])
+                
+                        class WKV_6STATE(torch.autograd.Function):
+                            @staticmethod
+                            def forward(ctx, B, T, C, H, r, k, v, w, u, s):
+                                with torch.no_grad():
+                                    assert r.dtype == torch.bfloat16
+                                    assert k.dtype == torch.bfloat16
+                                    assert v.dtype == torch.bfloat16
+                                    assert w.dtype == torch.bfloat16
+                                    assert u.dtype == torch.bfloat16
+                                    assert s.dtype == torch.bfloat16
+                                    assert HEAD_SIZE == C // H
+                                    ctx.B = B
+                                    ctx.T = T
+                                    ctx.C = C
+                                    ctx.H = H
+                                    assert r.is_contiguous()
+                                    assert k.is_contiguous()
+                                    assert v.is_contiguous()
+                                    assert w.is_contiguous()
+                                    assert u.is_contiguous()
+                                    assert s.is_contiguous()
+                                    ctx.save_for_backward(r, k, v, w, u, s)
+                                    y = torch.empty((B, T, C), device=r.device, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
+                                    wkv6state_cuda.forward(B, T, C, H, r, k, v, w, u, s, y)
+                                    return y
+
+                            @staticmethod
+                            def backward(ctx, gy):
+                                with torch.no_grad():
+                                    assert gy.dtype == torch.bfloat16
+                                    B = ctx.B
+                                    T = ctx.T
+                                    C = ctx.C
+                                    H = ctx.H
+                                    assert gy.is_contiguous()
+                                    r, k, v, w, u, s = ctx.saved_tensors
+                                    gr = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
+                                    gk = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
+                                    gv = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
+                                    gw = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
+                                    gu = torch.empty((B, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
+                                    gs = torch.empty((B, H, C//H, C//H), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
+                                    wkv6state_cuda.backward(B, T, C, H, r, k, v, w, u, s, gy, gr, gk, gv, gw, gu, gs)
+                                    gu = torch.sum(gu, 0).view(H, C//H)
+                                    gs = torch.sum(gs, 0).view(H, C//H, C//H)
+                                    return (None, None, None, None, gr, gk, gv, gw, gu, gs)
+
+                        def RUN_CUDA_RWKV6_STATE(B, T, C, H, r, k, v, w, u, s):
+                            x = WKV_6STATE.apply(B, T, C, H, r, k, v, w, u, s)
+                            return x, s
 
 if 'x060' in os.environ["RWKV_MY_TESTING"] and os.environ["RWKV_TRAIN_TYPE"] != 'infctx':
     if 'rocm' in os.environ["RWKV_MY_ARCHITECTURE"]:
@@ -1278,6 +1338,61 @@ if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
             else:
                 gy.scatter_(-1, ids, maxx * factor)
             return (grad_output, gy, None)
+    class MemoryEfficientL2Wrap(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, loss, y, attention_mask):
+            # 必要な情報のみを保存
+            ctx.save_for_backward(y, attention_mask)
+            ctx.token_amount = attention_mask.sum().item()
+            return loss
+
+        @staticmethod
+        def backward(ctx, grad_output):
+            y, attention_mask = ctx.saved_tensors
+            
+            # メモリ効率の良い実装
+            with torch.no_grad():
+                factor = 1e-4 / ctx.token_amount
+                mask = attention_mask.unsqueeze(-1)
+                
+                # インプレース操作を使用
+                gy = torch.zeros_like(y)
+                masked_y = y.masked_fill(~mask.bool(), float('-inf'))
+                maxx, ids = torch.max(masked_y, -1, keepdim=True)
+                
+                if os.environ.get("WN_FIX_L2WRAP"):
+                    gy.scatter_(-1, ids, maxx * factor * grad_output)
+                else:
+                    gy.scatter_(-1, ids, maxx * factor)
+                
+                gy.mul_(mask)  # インプレース乗算
+                
+            return (grad_output, gy, None)
+    class L2Wrap_infctx(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, loss, y, factor, currentMask):
+            # Currently (8th July 2023), save_for_backward, causes an issue with
+            # pytorch.compile (see: https://github.com/pytorch/pytorch/blob/e600505e3209eaf539e8bc99870ea55236cefbf5/torch/_dynamo/variables/higher_order_ops.py#L735)
+            # 
+            # Due to L2Wrap being a major hotspot, we should monitor this for future support.
+            # so that once its resolved, we can include the L2Wrap step in the torch.compile path
+            #
+            # See also:
+            # - checkpointed_step
+            ctx.save_for_backward(y, factor, currentMask)
+            return loss
+
+        @staticmethod
+        def backward(ctx, grad_output):
+            y, factor, currentMask = ctx.saved_tensors
+
+            maxx, ids = torch.max(y, -1, keepdim=True)
+            gy = torch.zeros_like(y)
+            gy.scatter_(-1, ids, maxx * factor)
+
+            # We ensure the mask is reshaped accordingly, and apply it against gy
+            gy = gy * currentMask.reshape(gy.shape[0],gy.shape[1],1) # currentMask[:, None][None, :]
+            return (grad_output, gy, None, None)
 else:
     class L2Wrap(torch.autograd.Function):
         @staticmethod
@@ -1488,10 +1603,10 @@ class RWKV(pl.LightningModule):
                 #return Lion(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
              
             if self.deepspeed_offload:
-                return DeepSpeedCPUAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=False, weight_decay=0, amsgrad=False)
+                return DeepSpeedCPUAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=True, weight_decay=0, amsgrad=False)
             #if args.optim=='lion':
             #   return Lion(optim_groups, lr=self.args.lr_init, betas=self.args.betas, weight_decay=0, use_triton=True)
-            return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=False, weight_decay=0, amsgrad=False)
+            return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, weight_decay=0, amsgrad=False)
         # return ZeroOneAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, weight_decay=0, amsgrad=False, cuda_aware=False)
 
     @property
@@ -1524,9 +1639,10 @@ class RWKV(pl.LightningModule):
                 BlockStateList(last_shift_states, last_wkv_states))):
                 # x = x.to(block.device)
                 if args.grad_cp == 1 and i > 0:  # and i < len(self.blocks)-1
-                    x, new_block_state = torch_checkpoint(block, x, block_state, use_reentrant=False)
+                    x, new_block_state = torch_checkpoint(block, x, block_state, x_emb, use_reentrant=False)
                 else:
-                    x, new_block_state = block(x, block_state)
+                    x, new_block_state = block(x, block_state, x_emb)
+                    #x, new_block_state = deepspeed.checkpointing.checkpoint
                 new_states[i] = new_block_state
 
             x = self.ln_out(x)
@@ -1695,39 +1811,16 @@ class RWKV(pl.LightningModule):
 
 
             if args.sft:
-                #temperature = args.temperature
-                #alpha = args.alpha
+
                 smoothing = args.smoothing
 
                 input_ids = batch['input_ids']
                 target = batch['target_ids']
                 attention_mask = batch['attention_mask'].float()
-
-                #print(attention_mask)
-
-                #print(f'attentionmask shape = {attention_mask.shape}')
-
-                #print(f'sum = {torch.sum(attention_mask[0][0:attention_mask.shape[1]-2])}')
-                total = 0
-                #for i in range(attention_mask.shape[1]):
-                #    print(f'i = {i} a = {attention_mask[0][i]}')
-                #    total = total + attention_mask[0][i].float()
-                #print(f'total = {total}')
-
-                #print(attention_mask[0, 4095])
-
                 max_len = int(attention_mask.sum(dim=1).max().item())
-
-                #print(f'maxAttentionsize = {max_len}')
-
-
-                #target = input_ids[:,1:]
-                #attention_mask = attention_mask[:,:-1]
-                #input_ids = input_ids[:,:-1]
 
                 B, T = input_ids.shape
                 total_loss = torch.tensor(0., dtype=torch.float32).requires_grad_()
-                #kl_loss = torch.tensor(0., dtype=self.emb.weight.dtype).requires_grad_()
                 smooth_loss = torch.tensor(0., dtype=torch.float32).requires_grad_()
                 token_amount = 0
                 C = args.n_embd
@@ -1735,20 +1828,52 @@ class RWKV(pl.LightningModule):
                 assert C==H*args.head_size_a
                 states = BlockStateList.create(args.n_layer, B, C, H, self.emb.weight.device,
                     self.emb.weight.dtype)
+                
+                def robust_masked_mean(values, mask, clip_min=-100, clip_max=100):
+                    EPSILON = 1e-8
+                    assert torch.is_tensor(values), "values must be a tensor"
+                    assert torch.is_tensor(mask), "mask must be a tensor"
+                    assert values.shape == mask.shape, f"Shape mismatch: values {values.shape} vs mask {mask.shape}"
+                    mask = mask.float()
+                    if not ((mask == 0) | (mask == 1)).all():
+                        print("Warning: mask contains values other than 0 and 1")
+                        mask = (mask > 0.5).float()
+                    clipped_values = torch.clamp(values, clip_min, clip_max)
+                    scale = torch.max(torch.abs(clipped_values))
+                    if scale > EPSILON:
+                        scaled_values = clipped_values / scale
+                    else:
+                        scaled_values = clipped_values
+                    sum_mask = torch.sum(mask)
+                    if sum_mask <= EPSILON:
+                        return torch.zeros_like(values.mean())
+                    masked_sum = torch.sum(scaled_values * mask)
+                    mean = masked_sum / (sum_mask + EPSILON)
+                    if scale > EPSILON:
+                        mean = mean * scale
+                    if torch.isnan(mean) or torch.isinf(mean):
+                        print("Warning: Result is NaN or Inf")
+                        return torch.zeros_like(mean)
+                    
+                    return mean
 
 
 
-                def checkpointed_step2(chunk_input_ids,chunk_target_ids,#, chunk_top_k_values, chunk_top_k_indices, 
+                def checkpointed_step2(chunk_input_ids,chunk_target_ids,
                                     chunk_attention_mask,
                                       prev_loss,
                                         prev_smooth_loss,
-                                          #prev_kl_loss,
                                             last_shift_states,last_wkv_states, prev_token_amount):
                     # Forward pass
                     targets = chunk_target_ids.contiguous().view(-1)
                     mask = chunk_attention_mask.contiguous().view(-1)
+                    batchsize = chunk_attention_mask.shape[0]
                     #print(f'mask = {mask}')
                     sum_mask = torch.sum(mask).item()
+
+                    avg_mask_sum = torch.sum(mask) / batchsize
+                    L2Wrap_factor = 1e-4 / avg_mask_sum
+
 
                     print(sum_mask)
                     
@@ -1758,70 +1883,44 @@ class RWKV(pl.LightningModule):
                         return prev_loss,prev_smooth_loss,last_shift_states, last_wkv_states, prev_token_amount, status
                     
                     student_logits,new_shift_states, new_wkv_states = self(chunk_input_ids,last_shift_states, last_wkv_states)
-                    #print(f'logit sum0={torch.sum(student_logits)}')
+                    print(f'logit sum0={torch.sum(student_logits)}')
                     # Label Smoothing Loss
-                    label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
-                    student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
-                    #print(f'logit sum1={torch.sum(student_logits_shifted)}')
-                    #smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
-                    #student_logits_shifted = student_logits_shifted[:, :targets.size(1)]
-                    #print(f'student_logits_shifted = {student_logits_shifted.shape} targets = {targets.shape}')
-                    # if smoothing == 0:
-                    #     #smooth_loss = label_smoothing_loss(student_logits_shifted, targets, True) #Through
-                    #     smooth_loss = F.cross_entropy(student_logits_shifted.view(-1, student_logits_shifted.size(-1)), targets.reshape(-1))
-                    # else:
+                    #label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+                    #student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1)).float()
+
+                    #smooth_loss = label_smoothing_loss(student_logits_shifted.float(), targets)
+                    smooth_loss = F.cross_entropy(student_logits.view(-1, student_logits.size(-1)), targets.reshape(-1), reduction='none')
 
 
-                    smooth_loss = label_smoothing_loss(student_logits_shifted.float(), targets)
-                    #smooth_loss = F.cross_entropy(student_logits.view(-1, student_logits.size(-1)), targets.reshape(-1), reduction='none')
-
-
-
-                    #del student_logits_shifted
-                    #del targets
-                  
-
-                    #student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
-                    #smooth_loss = smooth_cross_entropy(student_logits_shifted,targets,smoothing)
-     
                     current_token_amount = chunk_input_ids.shape[1]#sum_mask
 
                     #print(f'current token amount = {current_token_amount}')
 
-                    # Combine losses
-                    # if sum_mask == mask.shape[0]:
-                    #     #print('nomask')
-                    #     loss = smooth_loss.mean()#args.alpha * smooth_loss.mean() + (1 - args.alpha) * kl_loss.mean()
-                    #     smooth_loss = loss#smooth_loss.mean()
-                    #     #kl_loss = kl_loss.mean()
-                    #     loss = L2Wrap.apply(loss, student_logits, current_token_amount)
-                    # else:
-                    #     #print('masked')
-                    #     #print(f'smooth_loss = {smooth_loss.shape} mask = {mask.shape}')
-                    #     smooth_loss = torch.sum(smooth_loss * mask) / sum_mask
-                    #     loss = smooth_loss
-                    #     #kl_loss = torch.sum(kl_loss.view(-1) * mask) / sum_mask
-                    #     #loss = smooth_loss#args.alpha * smooth_loss + (1 - args.alpha) * kl_loss
-                    #     loss = L2Wrap.apply(loss, student_logits, current_token_amount)
 
                     smooth_loss = torch.sum(smooth_loss * mask) / sum_mask
+                    #smooth_loss = robust_masked_mean(smooth_loss, mask)
+
+
                     loss = smooth_loss
-                    loss = L2Wrap.apply(loss, student_logits, current_token_amount)
+                    #loss = L2Wrap.apply(loss, student_logits, current_token_amount)
+
+                    #MemoryEfficientL2Wrap
+                    #if loss <= 0.0:
+                    #    loss = torch.tensor(0, dtype=self.emb.weight.dtype).requires_grad_()
+                    loss = L2Wrap_infctx.apply(loss, student_logits,L2Wrap_factor, mask)
 
                     print(f'checkpoint loss = {loss}')
                     
                     new_token_amount = prev_token_amount + current_token_amount
                     if new_token_amount > 0:
-                        #print(f'loss ={float(loss)}')
                         new_loss = prev_loss * (prev_token_amount / new_token_amount) + loss * (current_token_amount / new_token_amount)
-                        
-                        #print(f'new_loss ={float(new_loss)}')
                         new_smooth_loss = prev_smooth_loss * (prev_token_amount / new_token_amount) + smooth_loss * (current_token_amount / new_token_amount)
-                        #new_kl_loss = prev_kl_loss * (prev_token_amount / new_token_amount) + kl_loss * (current_token_amount / new_token_amount)
                     else:
                         new_loss = prev_loss
                         new_smooth_loss = smooth_loss
-                        #new_kl_loss = kl_loss
+
+
+                     
 
                     status = 'proceed'
                     print(f'new_loss loss = {new_loss}')
@@ -1857,7 +1956,7 @@ class RWKV(pl.LightningModule):
 
                     print(f'chunk start = {chunk_start} chunk end = {chunk_end} diff = {chunk_end-chunk_start}')
                     total_loss, smooth_loss, new_shift_states, new_wkv_states, token_amount , status = torch_checkpoint(
-                    #total_loss, smooth_loss, new_shift_states, new_wkv_states, token_amount , status = deepspeed.checkpointing.checkpoint(
+
                         checkpointed_step2,
                         input_ids[:, chunk_start:chunk_end],
                         target[:, chunk_start:chunk_end],
@@ -1872,8 +1971,7 @@ class RWKV(pl.LightningModule):
                     if status == 'skip':
                         break
                     states = BlockStateList(new_shift_states, new_wkv_states)
-                    #states.shift_states = new_shift_states
-                    #states.wkv_states = new_wkv_states
+
 
                     if status == 'proceed':
                         proceedtokens = proceedtokens + (chunk_end-chunk_start)
