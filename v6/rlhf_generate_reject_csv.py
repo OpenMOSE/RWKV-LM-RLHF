@@ -86,11 +86,19 @@ with open(input_file_path, mode='r', encoding='utf-8', newline='') as input_file
         
         # 各行を読み込みながら処理
         for row in csv_reader:
-            prompt = row['prompt']
-            chosen = row['chosen']
-            reject = row['reject']
+            print(row)
+            #prompt = row['prompt']
+            #chosen = row['chosen']
+            #reject = row['reject']
 
-            if len(prompt) > 0:
+            prompt = row.get('prompt')
+            if prompt is None:
+                prompt = row.get('\ufeffprompt', '')  # BOM付きのキーをチェック
+            
+            chosen = row.get('chosen', '')
+            reject = row.get('reject', '')
+
+            if len(prompt) > 0 and len(chosen) > 0:
                 occurrence = {}
                 out_tokens = []
                 out_last = 0

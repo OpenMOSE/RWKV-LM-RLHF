@@ -2,13 +2,13 @@ import torch
 ######state
 class TimeMixState:
     def __init__(self, shift_state: torch.Tensor, wkv_state: torch.Tensor):
-        self.shift_state = shift_state
-        self.wkv_state = wkv_state
+        self.shift_state = shift_state.clone().detach()
+        self.wkv_state = wkv_state.clone().detach()
 
 
 class ChannelMixState:
     def __init__(self, shift_state: torch.Tensor):
-        self.shift_state = shift_state
+        self.shift_state = shift_state.clone().detach()
 
 
 class BlockState:

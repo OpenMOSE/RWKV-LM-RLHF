@@ -1,5 +1,5 @@
 Layer,Mode,Rank,Alpha,Dropout,LISAProb,LoRAProb,LRScale
-emb,freeze,0,0,,1,,1
+emb,full,0,0,,1,,1
 0,pissa,128,128,0.1,1,,1
 1,pissa,128,128,0.1,,1,1
 2,pissa,128,128,0.1,,1,1
