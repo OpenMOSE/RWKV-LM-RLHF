@@ -9,7 +9,7 @@ python train.py --load_model "myfolder/models/RWKV-x060-Jpn-7B-20240816-ctx4096.
  --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
  --accelerator gpu --devices 1 --precision 'bf16' \
  --grad_cp 1 --my_testing "x060" \
- --strategy deepspeed_stage_2_offload\
+ --strategy deepspeed_stage_2 \
  --layer_profile 'layerprofile/32_TEST.csv' \
  --quant 1 \
  --quant_mode 'nf4'\
@@ -20,4 +20,5 @@ python train.py --load_model "myfolder/models/RWKV-x060-Jpn-7B-20240816-ctx4096.
  --random_mode 1 \
  --optim '' \
  --train_data_file 'example/SFT/output_h5/sftdataset.h5' \
+ --infctx_dataset_multiplier 100 \
  --accumulate_grad_batches 1

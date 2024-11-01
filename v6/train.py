@@ -36,6 +36,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--ctx_len", default=2048, type=int) #maximum context size
     parser.add_argument("--infctx", default=1, type=int) #from RWKV-PEFT :)
+    parser.add_argument("--infctx_dataset_multiplier", default=100, type=int) #from RWKV-PEFT :)
     parser.add_argument("--chunk_ctx", default=512, type=int)
 
 

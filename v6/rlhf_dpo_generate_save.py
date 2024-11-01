@@ -32,9 +32,15 @@ with open(args.input_csv, "r",encoding='utf-8-sig', newline='') as file:
     for row in reader:
         #print(row)
         ToRawData = {}
-        prompt = row["prompt"]
-        chosen = row["chosen"]
-        reject = row["reject"]
+        #prompt = row["prompt"]
+        #chosen = row["chosen"]
+        #reject = row["reject"]
+        prompt = row.get('prompt')
+        if prompt is None:
+            prompt = row.get('\ufeffprompt', '')  # BOM付きのキーをチェック
+        
+        chosen = row.get('chosen', '')
+        reject = row.get('reject', '')
 
         ToRawData["prompt"] = prompt
         ToRawData["chosen"] = chosen

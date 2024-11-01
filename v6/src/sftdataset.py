@@ -22,7 +22,7 @@ class HDF5TopKTensorDataset(Dataset):
     
     def __getitem__(self, idx):
 
-        N = 1
+        N = self.args.infctx_dataset_multiplier
 
         random_indices = [random.randint(0, self.dataset_length - 1) for _ in range(N)]
 
@@ -36,7 +36,7 @@ class HDF5TopKTensorDataset(Dataset):
                 idx = 0
             random_indices = [idx]
 
-        print(f'idx = {idx}')
+        #print(f'idx = {idx}')
 
         with h5py.File(self.file_path, 'r') as f:
 
@@ -53,7 +53,11 @@ class HDF5TopKTensorDataset(Dataset):
         # limit sequence length
         seq_len = min(len(tokens), self.max_seq_length)
         tokens = tokens[:seq_len]
-        
+
+        #print(f'tokens count = {len(tokens)}')
+
+        tokens_n1 = tokens[:seq_len-1]
+        #print(f'tokens_n1 count = {len(tokens_n1)}')
 
         # Padding and mask
         padded_tokens_input = np.zeros(self.max_seq_length, dtype=np.int64)
@@ -61,11 +65,14 @@ class HDF5TopKTensorDataset(Dataset):
 
         padded_tokens_target = np.zeros(self.max_seq_length, dtype=np.int64)
         padded_tokens_target[0:seq_len-1] = tokens[1:seq_len]
+
+        #print(padded_tokens_input)
+        #print(padded_tokens_target)
         
         attention_mask = np.zeros(self.max_seq_length, dtype=np.float32)
         attention_mask[0:seq_len-1] = 1.0
 
-        print(f'dataloader sum attentionmask = {np.sum(attention_mask)}')
+        #print(f'dataloader sum attentionmask = {np.sum(attention_mask)}')
         
         # Prepare input and target
         input_tokens = padded_tokens_input#padded_tokens[:-1]
