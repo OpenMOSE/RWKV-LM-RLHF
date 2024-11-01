@@ -48,8 +48,8 @@ def __nop(ob):
 MyModule = nn.Module
 MyFunction = __nop
 #if os.environ["RWKV_JIT_ON"] == "1":
-#MyModule = torch.jit.ScriptModule
-#MyFunction = torch.jit.script_method
+    #MyModule = torch.jit.ScriptModule
+    #MyFunction = torch.jit.script_method
 
 
 
@@ -151,8 +151,8 @@ if 'cuda' in os.environ["RWKV_MY_ARCHITECTURE"]:
     fp8_matmul = FP8HybridMatmul.apply
 
 @torch.jit.script
-def fp16_matmul(a,b):
-    #with torch.no_grad():
+def fp16_matmul_(a,b):
+    with torch.no_grad():
         a = torch.clamp(a, min=-448.0, max=448.0) # for avoid NaN
         return (a.to(dtype=b.dtype) @ b ).to(dtype=a.dtype)
     
@@ -161,18 +161,21 @@ class FP16HybridMatmul(torch.autograd.Function):
     def forward(ctx, input, weight):
         ctx.save_for_backward(weight)
         # fp8_hybrid_matmulを呼び出し、出力はBF16
+        #print('omanko')
         output = fp16_matmul_(input, weight)
         return output
 
     @staticmethod
     def backward(ctx, grad_output): #これやらないとBackwardでLossが右肩上がりになる
         weight, = ctx.saved_tensors
-        grad_input = torch.matmul(grad_output, weight.to(dtype=torch.bfloat16).t())
+        #grad_input = torch.matmul(grad_output, weight.to(dtype=torch.bfloat16).t())
+        #try FP16 Grad
+        grad_input = torch.matmul(grad_output.to(dtype=torch.float16), weight.t()).to(dtype=torch.bfloat16)
         del weight
         # 重みは完全に凍結されているので、grad_weightは不要
         return grad_input, None
     
-fp16_matmul_ = FP16HybridMatmul.apply
+fp16_matmul = FP16HybridMatmul.apply
 
 
 
@@ -204,12 +207,25 @@ def BoneProcessing(weight,bone,r:int):
 def rwkv_quantize(quant_type, weight):
     global NowCurrentlyGPUNo
     if quant_type=='4bit':
+        weight= weight.to(torch.bfloat16)
         qweight, qstate= bnb.functional.quantize_4bit((weight.data))
     elif quant_type=='nf4':
+        weight= weight.to(torch.bfloat16)
+        qweight, qstate= bnb.functional.quantize_nf4((weight.data))
+    elif quant_type=='nf4fp16':
+        weight = weight.to(dtype=torch.float16)
+        print(f'before quant weight datatype to {weight.dtype}')
         qweight, qstate= bnb.functional.quantize_nf4((weight.data))
     elif quant_type=='fp4':
+        weight= weight.to(torch.bfloat16)
         qweight, qstate= bnb.functional.quantize_fp4((weight.data))
     elif quant_type=='int8':
+        weight= weight.to(torch.float32)
+        qweight, qstate= bnb.functional.quantize((weight.data))
+    elif quant_type=='int8fp16':
+        #weight = weight.to(dtype=torch.float16)
+        weight= weight.to(torch.float32)
+        print(f'before quant weight datatype to {weight.dtype}')
         qweight, qstate= bnb.functional.quantize((weight.data))
     elif quant_type=='fp8':
         qweight = weight.data.to(dtype = torch.float8_e4m3fn)
@@ -224,20 +240,23 @@ def rwkv_dequantize(quant_type, weight, qstate):
     #with torch.no_grad():
         #device = weight.device
         if quant_type=='4bit':
-            deweight= bnb.functional.dequantize_4bit(weight.data,quant_state=qstate)
+            deweight= bnb.functional.dequantize_4bit(weight.data,quant_state=qstate).to(torch.bfloat16)
         elif quant_type=='nf4':
-            #print(qstate)
-            deweight= bnb.functional.dequantize_nf4(weight.data,quant_state=qstate)
+            deweight= bnb.functional.dequantize_nf4(weight.data,quant_state=qstate).to(torch.bfloat16)
+        elif quant_type=='nf4fp16':
+            deweight= bnb.functional.dequantize_nf4(weight.data,quant_state=qstate).to(torch.float16)
         elif quant_type=='fp4':
-            deweight= bnb.functional.dequantize_fp4(weight.data,quant_state=qstate)
+            deweight= bnb.functional.dequantize_fp4(weight.data,quant_state=qstate).to(torch.bfloat16)
         elif quant_type=='int8':
-            deweight= bnb.functional.dequantize(weight.data,state=qstate)
+            deweight= bnb.functional.dequantize(weight.data,state=qstate).to(torch.bfloat16)
+        elif quant_type=='int8fp16':
+            deweight= bnb.functional.dequantize(weight.data,state=qstate).to(torch.float16)
+            #print(f'deweight type = {deweight.dtype}')
         elif quant_type=='fp8':
-            deweight= weight.data
+            deweight= weight.data.to(torch.bfloat16)
         elif quant_type=='fp16':
             deweight= weight.data
-        return deweight.to(torch.bfloat16).contiguous()
-
+        return deweight#.to(torch.bfloat16).contiguous()
 
 class HeadLoraLinear(nn.Module):
     def __init__(self, in_features: int, out_features: int, bias: bool):
@@ -269,12 +288,12 @@ class HeadLoraLinear(nn.Module):
             self.bonemode = False
         self.pissa = False
         self.is_quant = False
-
+    @torch.jit.ignore
     def pissa_load(self, init_A, init_B):
         self.pissa = True
         self.weight.data = self.weight.data - init_B @ init_A
 
-
+    @torch.jit.ignore
     def pissa_init(self, svd_niter):
 
         self.pissa = True
@@ -299,12 +318,13 @@ class HeadLoraLinear(nn.Module):
     #     return (
     #         F.linear(x, self.weight) + self.scaling *
     #         F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)) 
-
+    @torch.jit.ignore
     def quant(self, quant_type,target_gpu):
         self.is_quant = True
         self.quant_type = quant_type
         self.Qweight, self.qstate= rwkv_quantize(self.quant_type, (self.weight.data).to(target_gpu))
         self.weight = None # Because Latest Pytorch-lightning forced to BF16 type. thats why delete
+    @torch.jit.ignore
     def forward(self, x):
 
         #x = torch.clamp(x, min=-448.0, max=448.0) # for avoid NaN
@@ -320,15 +340,20 @@ class HeadLoraLinear(nn.Module):
                     F.linear(F.linear(x, self.lora_A), self.lora_B))
             elif self.pissa: #INT8 NF4 PISSA
                 temporal_weight = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
+                if temporal_weight.dtype == torch.float16:
+                    #print('fp16')
+                    return (
+                        fp16_matmul(x,temporal_weight.t()) + 
+                        F.linear(F.linear(x, self.lora_A), self.lora_B))
                 return (
                     F.linear(x, temporal_weight) + 
                     F.linear(F.linear(x, self.lora_A), self.lora_B))
             
             elif self.bonemode : #Any Quantize
                 temporal_weight = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
-                #w = rearrange(temporal_weight, '(a r1) (b r2) -> a b r1 r2', r1 = self.r, r2 = self.r)@self.bone+self.bone
-                #w = rearrange(w, 'a b r1 r2 ->(a r1) (b r2) ')
-                w = BoneProcessing(temporal_weight,self.bone,self.r)
+                w = rearrange(temporal_weight, '(a r1) (b r2) -> a b r1 r2', r1 = self.r, r2 = self.r)@self.bone+self.bone
+                w = rearrange(w, 'a b r1 r2 ->(a r1) (b r2) ')
+                #w = BoneProcessing(temporal_weight,self.bone,self.r)
                 w = w + temporal_weight
             
                 return x @ w.t() #F.linear(x,(temporal_weight+w))
@@ -343,9 +368,15 @@ class HeadLoraLinear(nn.Module):
                 )
             
             #INT8 NF4 LoRA
+            w = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
+            #print(f'lora mode dtype = {w.dtype}')
+            if w.dtype == torch.float16:
+                 return (fp16_matmul(x,w.t()) + self.scaling *
+                        F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)
+                )
             return ( 
-                F.linear(x, rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)) + self.scaling *
-                F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)) 
+                    F.linear(x, w) + self.scaling *
+                    F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)) 
 
 
         if self.pissa:
@@ -361,7 +392,7 @@ class HeadLoraLinear(nn.Module):
             F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)) 
 
         
-    
+@torch.jit.ignore
 class LoraEmbedding(nn.Module): #Not working well. please help
     def __init__(self, num_embeddings, embedding_dim, r=8, alpha=16, dropout=0.1):
         super().__init__()
@@ -374,7 +405,7 @@ class LoraEmbedding(nn.Module): #Not working well. please help
         # Initialize LoRA parameters
         nn.init.normal_(self.lora_A, std=1 / r)
         nn.init.zeros_(self.lora_B)
-
+    @torch.jit.ignore
     def forward(self, x):
         # Regular embedding
         embedded = self.weight(x)
@@ -386,6 +417,7 @@ class LoraEmbedding(nn.Module): #Not working well. please help
         return embedded + self.scaling * lora_embedded
 
 #@torch.jit.unused
+
 class LoraLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :) Chaos Modified
     @torch.jit.unused
     def __init__(self, in_features: int, out_features: int, bias: bool, n_layer: int):
@@ -418,11 +450,11 @@ class LoraLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :) Chaos Modified
             self.bonemode = False
         self.pissa = False
         self.is_quant = False
-
+    @torch.jit.ignore
     def pissa_load(self, init_A, init_B):
         self.pissa = True
         self.weight.data = self.weight.data - init_B @ init_A
-
+    @torch.jit.ignore
     def pissa_init(self, svd_niter):
 
         self.pissa = True
@@ -433,12 +465,13 @@ class LoraLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :) Chaos Modified
         self.lora_A.data = lora_A
         self.lora_B.data = lora_B
         self.weight.data = self.weight.data - lora_B @ lora_A
-    @torch.jit.unused
+    @torch.jit.ignore
     def quant(self, quant_type,target_gpu):
         self.is_quant = True
         self.quant_type = quant_type
-        self.Qweight, self.qstate= rwkv_quantize(self.quant_type, (self.weight.data).to(target_gpu))
+        self.Qweight, self.qstate= rwkv_quantize(self.quant_type, (self.weight).to(device=target_gpu))
         self.weight = None # Because Latest Pytorch-lightning forced to BF16 type. thats why delete
+    @torch.jit.ignore
     def forward(self, x):
 
         #x = torch.clamp(x, min=-448.0, max=448.0) # for avoid NaN
@@ -454,15 +487,19 @@ class LoraLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :) Chaos Modified
                     F.linear(F.linear(x, self.lora_A), self.lora_B))
             elif self.pissa: #INT8 NF4 PISSA
                 temporal_weight = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
+                if temporal_weight.dtype == torch.float16:
+                    return (
+                        fp16_matmul(x,temporal_weight.t()) + 
+                        F.linear(F.linear(x, self.lora_A), self.lora_B))
                 return (
                     F.linear(x, temporal_weight) + 
                     F.linear(F.linear(x, self.lora_A), self.lora_B))
             
             elif self.bonemode : #Any Quantize
                 temporal_weight = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
-                #w = rearrange(temporal_weight, '(a r1) (b r2) -> a b r1 r2', r1 = self.r, r2 = self.r)@self.bone+self.bone
-                #w = rearrange(w, 'a b r1 r2 ->(a r1) (b r2) ')
-                w = BoneProcessing(temporal_weight,self.bone,self.r)
+                w = rearrange(temporal_weight, '(a r1) (b r2) -> a b r1 r2', r1 = self.r, r2 = self.r)@self.bone+self.bone
+                w = rearrange(w, 'a b r1 r2 ->(a r1) (b r2) ')
+                #w = BoneProcessing(temporal_weight,self.bone,self.r)
                 w = w + temporal_weight
             
                 return x @ w.t() #F.linear(x,(temporal_weight+w))
@@ -478,9 +515,15 @@ class LoraLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :) Chaos Modified
                 )
             
             #INT8 NF4 LoRA
-            return ( 
-                F.linear(x, rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)) + self.scaling *
-                F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)) 
+            w = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
+            if w.dtype == torch.float16:
+                 return (fp16_matmul(x,w.t()) + self.scaling *
+                        F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)
+                )
+            else:
+                return ( 
+                    F.linear(x, w) + self.scaling *
+                    F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)) 
 
 
         if self.pissa:
@@ -503,12 +546,13 @@ class QuantLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :)
         self.weight = nn.Parameter(torch.empty((out_features, in_features)))
         assert bias == False, "Biased QuantLinear not supported"
         self.is_quant = False
-
+    @torch.jit.ignore
     def quant(self, quant_type,target_gpu):
         self.is_quant = True
         self.quant_type = quant_type
         #self.dummy_tensor = nn.Parameter(torch.zeros(1))
         self.weight.data, self.qstate= rwkv_quantize(self.quant_type, (self.weight.data).to(target_gpu))
+    @torch.jit.ignore
     def forward(self, x):
 
         if self.is_quant:
@@ -658,6 +702,7 @@ FLAMODE = 1
 if 'x060' in os.environ["RWKV_MY_TESTING"]:
         if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
                     if FLAMODE:
+                        @torch.jit.ignore
                         def RUN_CUDA_RWKV6_STATE(B, T, C, H, r, k, v, w, u, s):
                             r = rearrange(r, 'b l (h d) -> b h l d', h = H)
                             k = rearrange(k, 'b l (h d) -> b h l d', h = H)
@@ -716,7 +761,7 @@ if 'x060' in os.environ["RWKV_MY_TESTING"]:
                                     gu = torch.sum(gu, 0).view(H, C//H)
                                     gs = torch.sum(gs, 0).view(H, C//H, C//H)
                                     return (None, None, None, None, gr, gk, gv, gw, gu, gs)
-
+                        @torch.jit.ignore
                         def RUN_CUDA_RWKV6_STATE(B, T, C, H, r, k, v, w, u, s):
                             x = WKV_6STATE.apply(B, T, C, H, r, k, v, w, u, s)
                             #x, s = rwkv_inner(r,k,v,w,u,s,T)
@@ -771,7 +816,7 @@ if 'x060' in os.environ["RWKV_MY_TESTING"] and os.environ["RWKV_TRAIN_TYPE"] != 
                 wkv6_cuda.backward(B, T, C, H, r, k, v, w, u, gy, gr, gk, gv, gw, gu)
                 gu = torch.sum(gu, 0).view(H, C//H)
                 return (None, None, None, None, gr, gk, gv, gw, gu)
-
+    @torch.jit.ignore
     def RUN_CUDA_RWKV6(B, T, C, H, r, k, v, w, u):
         
         return WKV_6.apply(B, T, C, H, r, k, v, w, u)
@@ -871,7 +916,8 @@ class RWKV_Tmix_x060(MyModule):
 
         self.ln_x = nn.GroupNorm(self.n_head, args.dim_att, eps=(1e-5)*(args.head_size_divisor**2))
 
-    @MyFunction
+    #@MyFunction
+    
     def jit_func(self, x):
         B, T, C = x.size()
 
@@ -1053,6 +1099,7 @@ class RWKV_Tmix_x060_infctx(MyModule):
             self.gate = make_linear_att(args.n_embd, args.dim_att, bias=False,n_layer=self.layer_id)
         self.ln_x = nn.GroupNorm(self.n_head, args.dim_att, eps=(1e-5)*(args.head_size_divisor**2))
     #@torch.jit.script_method
+    
     def jit_func0(self,x,shift_state,time_maa_x,time_maa_w1,time_maa_w2,time_maa_w,time_maa_k,time_maa_v,time_maa_r,time_maa_g):
         B, T, C = x.size()
         xx = torch.concat((shift_state.unsqueeze(1), x[:, :-1]), dim=1) - x
@@ -1069,7 +1116,8 @@ class RWKV_Tmix_x060_infctx(MyModule):
         xg = x + xx * (time_maa_g + mg)
 
         return xw,xk,xv,xr,xg
-    @MyFunction
+    #@MyFunction
+    @torch.compile
     def jit_func(self, x, shift_state):
         B, T, C = x.size()
         xx = torch.concat((shift_state.unsqueeze(1), x[:, :-1]), dim=1) - x
@@ -1106,7 +1154,7 @@ class RWKV_Tmix_x060_infctx(MyModule):
 
         return r, k, v, g, w, x[:, -1]
 
-    @MyFunction
+    @torch.compile
     def jit_func_2(self, x, g, timemixstate:TimeMixState):
         B, T, C = x.size()
         x = x.view(B * T, C)
@@ -1114,7 +1162,7 @@ class RWKV_Tmix_x060_infctx(MyModule):
         x = self.ln_x(x).view(B, T, C)
         x = self.output(x * g)
         return x, timemixstate
-
+    #@torch.compile
     def forward(self, x, last_state: TimeMixState):
         B, T, C = x.size()
         H = self.n_head
@@ -1166,7 +1214,7 @@ class RWKV_CMix_x060_infctx(MyModule):
             self.receptance = make_linear_ffn(args.n_embd, args.n_embd, bias=False,n_layer=self.layer_id)
             self.value = make_linear_ffn(args.dim_ffn, args.n_embd, bias=False,n_layer=self.layer_id)
 
-    @MyFunction
+    @torch.compile
     def forward(self, x, last_state: ChannelMixState):
         xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]), dim=1) - x
         xk = x + xx * self.time_maa_k
@@ -2022,15 +2070,15 @@ class RWKV(pl.LightningModule):
                     L2Wrap_factor = 1e-4 / avg_mask_sum
 
 
-                    print(sum_mask)
+                    #print(sum_mask)
                     
                     if sum_mask == 0:
                         status = 'skip'
-                        print('skip')
+                        #print('skip')
                         return prev_loss,prev_smooth_loss,last_shift_states, last_wkv_states, prev_token_amount, status
                     
                     student_logits,new_shift_states, new_wkv_states = self(chunk_input_ids,last_shift_states, last_wkv_states)
-                    print(f'logit sum0={torch.sum(student_logits)}')
+                    #print(f'logit sum0={torch.sum(student_logits)}')
                     # Label Smoothing Loss
                     label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
                     student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1)).float()
@@ -2056,7 +2104,7 @@ class RWKV(pl.LightningModule):
                     #    loss = torch.tensor(0, dtype=self.emb.weight.dtype).requires_grad_()
                     #loss = L2Wrap_infctx.apply(loss, student_logits,L2Wrap_factor, mask)
 
-                    print(f'checkpoint loss = {loss}')
+                    #print(f'checkpoint loss = {loss}')
                     
                     new_token_amount = prev_token_amount + current_token_amount
                     if new_token_amount > 0:
@@ -2070,7 +2118,7 @@ class RWKV(pl.LightningModule):
                      
 
                     status = 'proceed'
-                    print(f'new_loss loss = {new_loss}')
+                    #print(f'new_loss loss = {new_loss}')
                     return new_loss, new_smooth_loss,new_shift_states, new_wkv_states, new_token_amount, status
                 
                 proceedtokens = 0
@@ -2088,10 +2136,10 @@ class RWKV(pl.LightningModule):
                 #     max_len = 1024
 
 
-                print(f'T = {T}')
+                #print(f'T = {T}')
 
                 T_train = args.chunk_ctx#min(args.chunk_ctx,max_len)
-                print(f'T_train = {T_train}')
+                #print(f'T_train = {T_train}')
 
                 #print(f'math.ceil(T / T_train) = {math.ceil(T / T_train)}')
 
@@ -2101,7 +2149,7 @@ class RWKV(pl.LightningModule):
                     if chunk_end > T:
                         chunk_end = T
 
-                    print(f'chunk start = {chunk_start} chunk end = {chunk_end} diff = {chunk_end-chunk_start}')
+                    #print(f'chunk start = {chunk_start} chunk end = {chunk_end} diff = {chunk_end-chunk_start}')
                     total_loss, smooth_loss, new_shift_states, new_wkv_states, token_amount , status = torch_checkpoint(
 
                         checkpointed_step2,
@@ -2130,9 +2178,9 @@ class RWKV(pl.LightningModule):
                 self.trainer.smooth_loss = float(smooth_loss)
                 self.trainer.realproceedtokens =float(proceedtokens)
 
-                print(f'total_loss dtype = {total_loss.dtype}')
+                #print(f'total_loss dtype = {total_loss.dtype}')
 
-                print(f'totalloss = {total_loss}')
+                #print(f'totalloss = {total_loss}')
 
                 
                 # for i in range(math.ceil(T / T_train)):
