@@ -15,26 +15,22 @@ from torch.nn import functional as F
 import pytorch_lightning as pl
 from pytorch_lightning.utilities import rank_zero_info, rank_zero_only
 from pytorch_lightning.strategies import DeepSpeedStrategy
-from torch._lowrank import svd_lowrank
+
 if importlib.util.find_spec('deepspeed'):
     import deepspeed
     from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 
-#from src.adam_mini import Adam_mini
-
-import bitsandbytes as bnb
-from bitsandbytes.functional import QuantState
-
 from .infctx_module import *
-from einops import rearrange
+
 from fla.ops.rwkv6 import chunk_rwkv6, fused_recurrent_rwkv6
 #from lion_pytorch import Lion
 from einops._torch_specific import allow_ops_in_compiled_graph  # requires einops>=0.6.1
+from einops import rearrange
 allow_ops_in_compiled_graph()
 
 from .config import LAYER_CONFIG
 
-# from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
+from .linears import make_linear_att,make_linear_ffn,make_linear_head,make_emb
 
 try:
     print('RWKV_MY_TESTING', os.environ["RWKV_MY_TESTING"])
@@ -47,561 +43,6 @@ def __nop(ob):
 
 MyModule = nn.Module
 MyFunction = __nop
-#if os.environ["RWKV_JIT_ON"] == "1":
-    #MyModule = torch.jit.ScriptModule
-    #MyFunction = torch.jit.script_method
-
-
-
-def inspect_pytorch_variable(var, name="Variable"):
-    print(f"Inspecting {name}:")
-    
-    # 型の確認
-    print(f"Type: {type(var)}")
-    
-    # テンソルの場合
-    if isinstance(var, torch.Tensor):
-        print(f"Shape: {var.shape}")
-        print(f"Dtype: {var.dtype}")
-        print(f"Device: {var.device}")
-        print(f"Requires grad: {var.requires_grad}")
-        
-        # GPUにある場合、どのGPUかを表示
-        if var.is_cuda:
-            print(f"GPU index: {var.get_device()}")
-        
-        print(f"Data:\n{var}")
-    
-    # リストやタプルの場合
-    elif isinstance(var, (list, tuple)):
-        print(f"Length: {len(var)}")
-        print("Contents:")
-        for i, item in enumerate(var):
-            inspect_pytorch_variable(item, f"{name}[{i}]")
-    
-    # 辞書の場合
-    elif isinstance(var, dict):
-        print(f"Keys: {list(var.keys())}")
-        print("Contents:")
-        for key, value in var.items():
-            inspect_pytorch_variable(value, f"{name}['{key}']")
-    
-    # その他の型の場合
-    else:
-        print(f"Value: {var}")
-    
-    print()  # 空行を追加
-
-def fp8_hybrid_matmul_noreshape(a,b):
-    #with torch.no_grad():
-        if b.dtype == torch.float8_e4m3fn:
-                xg = a
-                x, output_amax = torch._scaled_mm(
-                    xg.to(torch.float8_e4m3fn).contiguous(),
-                    b,
-                    bias=None,
-                    out_dtype=a.dtype,
-                    scale_a=torch.tensor(1.0, device='cuda'),
-                    scale_b=torch.tensor(1.0, device='cuda')
-                )
-                return x
-        else:
-                return a.to(dtype=b.dtype) @ b
-
-if 'cuda' in os.environ["RWKV_MY_ARCHITECTURE"]:
-    @torch.jit.script #FP8 Experiment Matmul
-    def fp8_hybrid_matmul(a,b): # shape3 @ shape2 only
-        with torch.no_grad():
-            if b.dtype == torch.float8_e4m3fn:
-                    xg = a
-                    S0=xg.shape[0]
-                    S1=xg.shape[1]
-                    if xg.dtype != torch.float8_e4m3fn:
-                        xg = torch.clamp(xg, min=-448.0, max=448.0) # for avoid NaN
-                    #in torch2.5+ deleted absmax 
-                    x = torch._scaled_mm(
-                        xg.view(S0*S1,xg.shape[2]).to(torch.float8_e4m3fn).contiguous(),
-                        b,
-                        bias=None,
-                        out_dtype=a.dtype,
-                        scale_a=torch.tensor(1.0, device='cuda'),
-                        scale_b=torch.tensor(1.0, device='cuda')
-                    )
-                    #x.requires_grad = False
-                    return x.view(S0, S1, -1)
-            else:
-                    return a.to(dtype=b.dtype) @ b
-            
-    class FP8HybridMatmul(torch.autograd.Function):
-        @staticmethod
-        def forward(ctx, input, weight):
-            ctx.save_for_backward(weight)
-            # fp8_hybrid_matmulを呼び出し、出力はBF16
-            output = fp8_hybrid_matmul(input, weight)
-            return output
-
-        @staticmethod
-        def backward(ctx, grad_output): #これやらないとBackwardでLossが右肩上がりになる
-            weight, = ctx.saved_tensors
-            grad_input = torch.matmul(grad_output, weight.to(dtype=torch.bfloat16).t())
-            del weight
-            # 重みは完全に凍結されているので、grad_weightは不要
-            return grad_input, None
-        
-    fp8_matmul = FP8HybridMatmul.apply
-
-@torch.jit.script
-def fp16_matmul_(a,b):
-    with torch.no_grad():
-        a = torch.clamp(a, min=-448.0, max=448.0) # for avoid NaN
-        return (a.to(dtype=b.dtype) @ b ).to(dtype=a.dtype)
-    
-class FP16HybridMatmul(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, input, weight):
-        ctx.save_for_backward(weight)
-        # fp8_hybrid_matmulを呼び出し、出力はBF16
-        #print('omanko')
-        output = fp16_matmul_(input, weight)
-        return output
-
-    @staticmethod
-    def backward(ctx, grad_output): #これやらないとBackwardでLossが右肩上がりになる
-        weight, = ctx.saved_tensors
-        #grad_input = torch.matmul(grad_output, weight.to(dtype=torch.bfloat16).t())
-        #try FP16 Grad
-        grad_input = torch.matmul(grad_output.to(dtype=torch.float16), weight.t()).to(dtype=torch.bfloat16)
-        del weight
-        # 重みは完全に凍結されているので、grad_weightは不要
-        return grad_input, None
-    
-fp16_matmul = FP16HybridMatmul.apply
-
-
-
-    
-        
-
-        
-#@#torch.jit.script 
-def BoneProcessing(weight,bone,r:int):
-    # 'weight'の形状を取得
-    # H, W = weight.shape
-    # assert H % r == 0 and W % r == 0
-    # w = weight.reshape(H // r, r, W // r, r)
-    # w = w.permute(0, 2, 1, 3)
-    # w = torch.matmul(w, bone) + bone
-    # w = w.reshape(H, W)
-
-    H, W = weight.shape
-    assert H % r == 0 and W % r == 0
-    w = weight.view(H // r, r, W // r, r)
-    w = w.permute(0, 2, 1, 3)
-    w = torch.matmul(w, bone) + bone
-    w = w.view(H, W)
-
-    return w
-
-        
-
-def rwkv_quantize(quant_type, weight):
-    global NowCurrentlyGPUNo
-    if quant_type=='4bit':
-        weight= weight.to(torch.bfloat16)
-        qweight, qstate= bnb.functional.quantize_4bit((weight.data))
-    elif quant_type=='nf4':
-        weight= weight.to(torch.bfloat16)
-        qweight, qstate= bnb.functional.quantize_nf4((weight.data))
-    elif quant_type=='nf4fp16':
-        weight = weight.to(dtype=torch.float16)
-        print(f'before quant weight datatype to {weight.dtype}')
-        qweight, qstate= bnb.functional.quantize_nf4((weight.data))
-    elif quant_type=='fp4':
-        weight= weight.to(torch.bfloat16)
-        qweight, qstate= bnb.functional.quantize_fp4((weight.data))
-    elif quant_type=='int8':
-        weight= weight.to(torch.float32)
-        qweight, qstate= bnb.functional.quantize((weight.data))
-    elif quant_type=='int8fp16':
-        #weight = weight.to(dtype=torch.float16)
-        weight= weight.to(torch.float32)
-        print(f'before quant weight datatype to {weight.dtype}')
-        qweight, qstate= bnb.functional.quantize((weight.data))
-    elif quant_type=='fp8':
-        qweight = weight.data.to(dtype = torch.float8_e4m3fn)
-        qstate = None
-    elif quant_type=='fp16':
-        qweight = weight.data.to(dtype = torch.float16) # faster in MI100
-        qstate = None
-    return qweight, qstate
-
-
-def rwkv_dequantize(quant_type, weight, qstate):
-    #with torch.no_grad():
-        #device = weight.device
-        if quant_type=='4bit':
-            deweight= bnb.functional.dequantize_4bit(weight.data,quant_state=qstate).to(torch.bfloat16)
-        elif quant_type=='nf4':
-            deweight= bnb.functional.dequantize_nf4(weight.data,quant_state=qstate).to(torch.bfloat16)
-        elif quant_type=='nf4fp16':
-            deweight= bnb.functional.dequantize_nf4(weight.data,quant_state=qstate).to(torch.float16)
-        elif quant_type=='fp4':
-            deweight= bnb.functional.dequantize_fp4(weight.data,quant_state=qstate).to(torch.bfloat16)
-        elif quant_type=='int8':
-            deweight= bnb.functional.dequantize(weight.data,state=qstate).to(torch.bfloat16)
-        elif quant_type=='int8fp16':
-            deweight= bnb.functional.dequantize(weight.data,state=qstate).to(torch.float16)
-            #print(f'deweight type = {deweight.dtype}')
-        elif quant_type=='fp8':
-            deweight= weight.data.to(torch.bfloat16)
-        elif quant_type=='fp16':
-            deweight= weight.data
-        return deweight#.to(torch.bfloat16).contiguous()
-
-class HeadLoraLinear(nn.Module):
-    def __init__(self, in_features: int, out_features: int, bias: bool):
-        super().__init__()
-
-        self.weight = nn.Parameter(torch.empty((out_features, in_features)))
-        assert bias == False, "Biased LoraLinear not supported"
-
-        if LAYER_CONFIG[f'head']['mode'] == 'bone':
-            print('bone mode')
-            r = int(LAYER_CONFIG[f'head']['rank'])
-            self.r = r
-            self.bone = nn.Parameter(torch.zeros(in_features//self.r, self.r, self.r))
-            self.bonemode = True
-
-        else:
-            r = int(LAYER_CONFIG[f'head']['rank'])
-            alpha = int(LAYER_CONFIG[f'head']['alpha'])
-            dropout = float(LAYER_CONFIG[f'head']['dropout'])
-
-            self.lora_A = nn.Parameter(torch.empty(r, in_features))
-            self.lora_B = nn.Parameter(torch.empty(out_features, r))
-            self.lora_dropout = nn.Dropout(dropout)
-            self.scaling = alpha / r
-            self.r = r
-            nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
-            nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
-            nn.init.zeros_(self.lora_B)
-            self.bonemode = False
-        self.pissa = False
-        self.is_quant = False
-    @torch.jit.ignore
-    def pissa_load(self, init_A, init_B):
-        self.pissa = True
-        self.weight.data = self.weight.data - init_B @ init_A
-
-    @torch.jit.ignore
-    def pissa_init(self, svd_niter):
-
-        self.pissa = True
-        Ur, Sr, Vr = svd_lowrank(self.weight.data, self.r, niter=svd_niter)
-        Vhr = Vr.t()
-        lora_A = torch.diag(torch.sqrt(Sr)) @ Vhr
-        lora_B = Ur @ torch.diag(torch.sqrt(Sr))
-        self.lora_A.data = lora_A
-        self.lora_B.data = lora_B
-        self.weight.data = self.weight.data - lora_B @ lora_A
-
-    # def forward(self, x):
-    #     if self.pissa:
-    #         return (
-    #             F.linear(x, self.weight) + 
-    #             F.linear(F.linear(x, self.lora_A), self.lora_B))
-    #     if self.bonemode:
-    #         w = rearrange(self.weight, '(a r1) (b r2) -> a b r1 r2', r1 = self.r, r2 = self.r)@self.bone+self.bone
-    #         w = rearrange(w, 'a b r1 r2 ->(a r1) (b r2) ')
-    #         return F.linear(x,self.weight+w)
-
-    #     return (
-    #         F.linear(x, self.weight) + self.scaling *
-    #         F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)) 
-    @torch.jit.ignore
-    def quant(self, quant_type,target_gpu):
-        self.is_quant = True
-        self.quant_type = quant_type
-        self.Qweight, self.qstate= rwkv_quantize(self.quant_type, (self.weight.data).to(target_gpu))
-        self.weight = None # Because Latest Pytorch-lightning forced to BF16 type. thats why delete
-    @torch.jit.ignore
-    def forward(self, x):
-
-        #x = torch.clamp(x, min=-448.0, max=448.0) # for avoid NaN
-
-        if self.is_quant:
-            if self.pissa and self.Qweight.dtype == torch.float8_e4m3fn: #FP8 PISSA
-                return (
-                    fp8_matmul(x,self.Qweight.t()) + 
-                    F.linear(F.linear(x, self.lora_A), self.lora_B))
-            elif self.pissa and self.Qweight.dtype == torch.float16: #FP16 PISSA
-                return (
-                    fp16_matmul(x,self.Qweight.t()) + 
-                    F.linear(F.linear(x, self.lora_A), self.lora_B))
-            elif self.pissa: #INT8 NF4 PISSA
-                temporal_weight = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
-                if temporal_weight.dtype == torch.float16:
-                    #print('fp16')
-                    return (
-                        fp16_matmul(x,temporal_weight.t()) + 
-                        F.linear(F.linear(x, self.lora_A), self.lora_B))
-                return (
-                    F.linear(x, temporal_weight) + 
-                    F.linear(F.linear(x, self.lora_A), self.lora_B))
-            
-            elif self.bonemode : #Any Quantize
-                temporal_weight = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
-                w = rearrange(temporal_weight, '(a r1) (b r2) -> a b r1 r2', r1 = self.r, r2 = self.r)@self.bone+self.bone
-                w = rearrange(w, 'a b r1 r2 ->(a r1) (b r2) ')
-                #w = BoneProcessing(temporal_weight,self.bone,self.r)
-                w = w + temporal_weight
-            
-                return x @ w.t() #F.linear(x,(temporal_weight+w))
-
-            elif self.Qweight.dtype == torch.float8_e4m3fn: #FP8 LoRA
-                return (fp8_matmul(x,self.Qweight.t()) + self.scaling *
-                        F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)
-                )
-            elif self.Qweight.dtype == torch.float16: #FP16 LoRA
-                return (fp16_matmul(x,self.Qweight.t()) + self.scaling *
-                        F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)
-                )
-            
-            #INT8 NF4 LoRA
-            w = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
-            #print(f'lora mode dtype = {w.dtype}')
-            if w.dtype == torch.float16:
-                 return (fp16_matmul(x,w.t()) + self.scaling *
-                        F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)
-                )
-            return ( 
-                    F.linear(x, w) + self.scaling *
-                    F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)) 
-
-
-        if self.pissa:
-            return (
-                F.linear(x, self.weight) + 
-                F.linear(F.linear(x, self.lora_A), self.lora_B))
-        elif self.bonemode:
-            w = rearrange(self.weight, '(a r1) (b r2) -> a b r1 r2', r1 = self.r, r2 = self.r)@self.bone+self.bone
-            w = rearrange(w, 'a b r1 r2 ->(a r1) (b r2) ')
-            return F.linear(x,self.weight+w)
-        return (
-            F.linear(x, self.weight) + self.scaling *
-            F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)) 
-
-        
-@torch.jit.ignore
-class LoraEmbedding(nn.Module): #Not working well. please help
-    def __init__(self, num_embeddings, embedding_dim, r=8, alpha=16, dropout=0.1):
-        super().__init__()
-        self.weight = nn.Embedding(num_embeddings, embedding_dim)
-        self.lora_A = nn.Parameter(torch.zeros(r, num_embeddings))
-        self.lora_B = nn.Parameter(torch.zeros(embedding_dim, r))
-        self.scaling = alpha / r
-        self.dropout = nn.Dropout(dropout)
-
-        # Initialize LoRA parameters
-        nn.init.normal_(self.lora_A, std=1 / r)
-        nn.init.zeros_(self.lora_B)
-    @torch.jit.ignore
-    def forward(self, x):
-        # Regular embedding
-        embedded = self.weight(x)
-        
-        # LoRA path
-        lora_embedded = self.dropout(F.embedding(x, self.lora_A.T))  # [batch_size, seq_len, r]
-        lora_embedded = lora_embedded @ self.lora_B.T  # [batch_size, seq_len, embedding_dim]
-        
-        return embedded + self.scaling * lora_embedded
-
-#@torch.jit.unused
-
-class LoraLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :) Chaos Modified
-    @torch.jit.unused
-    def __init__(self, in_features: int, out_features: int, bias: bool, n_layer: int):
-        super().__init__()
-
-        self.weight = nn.Parameter(torch.empty((out_features, in_features)))
-        assert bias == False, "Biased LoraLinear not supported"
-
-        if LAYER_CONFIG[f'{str(n_layer)}']['mode'] == 'bone':
-            print('bone mode')
-            r = int(LAYER_CONFIG[f'{str(n_layer)}']['rank'])
-            self.r = r
-            self.bone = nn.Parameter(torch.zeros(in_features//self.r, self.r, self.r))
-            self.bonemode = True
-        else:
-            r = int(LAYER_CONFIG[f'{str(n_layer)}']['rank'])
-            alpha = int(LAYER_CONFIG[f'{str(n_layer)}']['alpha'])
-            d = LAYER_CONFIG[f'{str(n_layer)}']
-
-            dropout = float(LAYER_CONFIG[f'{str(n_layer)}']['dropout'])
-
-            self.lora_A = nn.Parameter(torch.empty(r, in_features))
-            self.lora_B = nn.Parameter(torch.empty(out_features, r))
-            self.lora_dropout = nn.Dropout(dropout)
-            self.scaling = alpha / r
-            self.r = r
-            nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
-            nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
-            nn.init.zeros_(self.lora_B)
-            self.bonemode = False
-        self.pissa = False
-        self.is_quant = False
-    @torch.jit.ignore
-    def pissa_load(self, init_A, init_B):
-        self.pissa = True
-        self.weight.data = self.weight.data - init_B @ init_A
-    @torch.jit.ignore
-    def pissa_init(self, svd_niter):
-
-        self.pissa = True
-        Ur, Sr, Vr = svd_lowrank(self.weight.data, self.r, niter=svd_niter)
-        Vhr = Vr.t()
-        lora_A = torch.diag(torch.sqrt(Sr)) @ Vhr
-        lora_B = Ur @ torch.diag(torch.sqrt(Sr))
-        self.lora_A.data = lora_A
-        self.lora_B.data = lora_B
-        self.weight.data = self.weight.data - lora_B @ lora_A
-    @torch.jit.ignore
-    def quant(self, quant_type,target_gpu):
-        self.is_quant = True
-        self.quant_type = quant_type
-        self.Qweight, self.qstate= rwkv_quantize(self.quant_type, (self.weight).to(device=target_gpu))
-        self.weight = None # Because Latest Pytorch-lightning forced to BF16 type. thats why delete
-    @torch.jit.ignore
-    def forward(self, x):
-
-        #x = torch.clamp(x, min=-448.0, max=448.0) # for avoid NaN
-
-        if self.is_quant:
-            if self.pissa and self.Qweight.dtype == torch.float8_e4m3fn: #FP8 PISSA
-                return (
-                    fp8_matmul(x,self.Qweight.t()) + 
-                    F.linear(F.linear(x, self.lora_A), self.lora_B))
-            elif self.pissa and self.Qweight.dtype == torch.float16: #FP16 PISSA
-                return (
-                    fp16_matmul(x,self.Qweight.t()) + 
-                    F.linear(F.linear(x, self.lora_A), self.lora_B))
-            elif self.pissa: #INT8 NF4 PISSA
-                temporal_weight = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
-                if temporal_weight.dtype == torch.float16:
-                    return (
-                        fp16_matmul(x,temporal_weight.t()) + 
-                        F.linear(F.linear(x, self.lora_A), self.lora_B))
-                return (
-                    F.linear(x, temporal_weight) + 
-                    F.linear(F.linear(x, self.lora_A), self.lora_B))
-            
-            elif self.bonemode : #Any Quantize
-                temporal_weight = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
-                w = rearrange(temporal_weight, '(a r1) (b r2) -> a b r1 r2', r1 = self.r, r2 = self.r)@self.bone+self.bone
-                w = rearrange(w, 'a b r1 r2 ->(a r1) (b r2) ')
-                #w = BoneProcessing(temporal_weight,self.bone,self.r)
-                w = w + temporal_weight
-            
-                return x @ w.t() #F.linear(x,(temporal_weight+w))
-
-            elif self.Qweight.dtype == torch.float8_e4m3fn: #FP8 LoRA
-                return (fp8_matmul(x,self.Qweight.t()) + self.scaling *
-                        F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)
-                )
-            
-            elif self.Qweight.dtype == torch.float16: #FP16 LoRA
-                return (fp16_matmul(x,self.Qweight.t()) + self.scaling *
-                        F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)
-                )
-            
-            #INT8 NF4 LoRA
-            w = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
-            if w.dtype == torch.float16:
-                 return (fp16_matmul(x,w.t()) + self.scaling *
-                        F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)
-                )
-            else:
-                return ( 
-                    F.linear(x, w) + self.scaling *
-                    F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)) 
-
-
-        if self.pissa:
-            return (
-                F.linear(x, self.weight) + 
-                F.linear(F.linear(x, self.lora_A), self.lora_B))
-        elif self.bonemode:
-            w = rearrange(self.weight, '(a r1) (b r2) -> a b r1 r2', r1 = self.r, r2 = self.r)@self.bone+self.bone
-            w = rearrange(w, 'a b r1 r2 ->(a r1) (b r2) ')
-            return F.linear(x,self.weight+w)
-        return (
-            F.linear(x, self.weight) + self.scaling *
-            F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B))  
-    
-
-class QuantLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :)
-    def __init__(self, in_features: int, out_features: int, bias: bool, n_layer: int):
-        super().__init__()
-
-        self.weight = nn.Parameter(torch.empty((out_features, in_features)))
-        assert bias == False, "Biased QuantLinear not supported"
-        self.is_quant = False
-    @torch.jit.ignore
-    def quant(self, quant_type,target_gpu):
-        self.is_quant = True
-        self.quant_type = quant_type
-        #self.dummy_tensor = nn.Parameter(torch.zeros(1))
-        self.weight.data, self.qstate= rwkv_quantize(self.quant_type, (self.weight.data).to(target_gpu))
-    @torch.jit.ignore
-    def forward(self, x):
-
-        if self.is_quant:
-            return F.linear(x, rwkv_dequantize(self.quant_type, self.weight.data, self.qstate))
-        else:
-            return F.linear(x, self.weight)
-        
-@functools.wraps(LoraLinear)
-def make_linear_att(*args, **kwargs):
-    layer_id = kwargs.get('n_layer')
-    if LAYER_CONFIG[f'{str(layer_id)}']['mode'] == 'freeze':
-        return QuantLinear(*args, **kwargs)
-    elif "att" in LAYER_CONFIG[f'{str(layer_id)}']["parts"]:
-        return LoraLinear(*args, **kwargs)
-    else:
-        return nn.Linear(*args, **kwargs) # will Error
-
-
-@functools.wraps(LoraLinear)
-def make_linear_ffn(*args, **kwargs):
-    layer_id = kwargs.get('n_layer')
-    #print(f'ffn layerid = {layer_id}')
-    if LAYER_CONFIG[f'{str(layer_id)}']['mode'] == 'freeze':
-        return QuantLinear(*args, **kwargs)
-    elif "ffn" in LAYER_CONFIG[f'{str(layer_id)}']["parts"]:
-        return LoraLinear(*args, **kwargs)
-    else:
-        return nn.Linear(*args, **kwargs) # will Error
-    
-
-@functools.wraps(HeadLoraLinear)
-def make_linear_head(*args, **kwargs):
-    #layer_id = kwargs.get('n_layer')
-    #print(f'ffn layerid = {layer_id}')
-    if LAYER_CONFIG[f'head']['mode'] == 'full' or LAYER_CONFIG[f'head']['mode'] == 'freeze':
-        return nn.Linear(*args, **kwargs)
-    else:
-        return HeadLoraLinear(*args, **kwargs)
-    
-
-@functools.wraps(LoraEmbedding)
-def make_emb(*args, **kwargs):
-    #layer_id = kwargs.get('n_layer')
-    #print(f'ffn layerid = {layer_id}')
-    if LAYER_CONFIG[f'emb']['mode'] == 'full' or LAYER_CONFIG[f'emb']['mode'] == 'freeze':
-        return nn.Embedding(*args, **kwargs)
-    else:
-        return LoraEmbedding(*args, **kwargs)
-
     
 class LabelSmoothingLoss(torch.nn.Module):
     def __init__(self, smoothing=0.001 , epsilon=1e-8):
@@ -616,78 +57,28 @@ class LabelSmoothingLoss(torch.nn.Module):
     #     return torch.sum(-smooth_one_hot * log_prob, dim=-1)
 
 
-    def forward(self, pred, target):
+    def forward(self, pred, target): #Approch1
         n_classes = pred.size(-1)
-        
-        # Softplusを適用
         softplus_pred = F.softplus(pred)
-        
-        # 正規化（softmaxの代わり）
         prob = softplus_pred / (softplus_pred.sum(dim=-1, keepdim=True) + self.epsilon)
-        
-        # 対数をとる（log_softmaxの代わり）
         log_prob = torch.log(prob + self.epsilon)
-        
-        # 正解ラベルの負の対数尤度を取得
         nll_loss = -log_prob.gather(dim=-1, index=target.unsqueeze(1)).squeeze(1)
-        
-        # 平均の負の対数尤度を計算
         smooth_loss = -log_prob.sum(dim=-1) / n_classes
-        
-        # ラベルスムージングを適用
         loss = (1 - self.smoothing) * nll_loss + self.smoothing * smooth_loss
         
         return loss
 
 
-    def forward2(self, pred, target):
+    def forward2(self, pred, target): #Approch2
         n_classes = pred.size(-1)
-        # Log-Softmaxを計算
         log_prob = F.log_softmax(pred, dim=-1)
-        # 正解ラベルの負の対数尤度を取得
         nll_loss = -log_prob.gather(dim=-1, index=target.unsqueeze(1)).squeeze(1)
-        # 平均の負の対数尤度を計算
         smooth_loss = -log_prob.sum(dim=-1) / n_classes
-        # ラベルスムージングを適用
         loss = (1 - self.smoothing) * nll_loss + self.smoothing * smooth_loss
         return loss#.mean()
     
 
-
-    # def forward(self, pred, target):
-    #     n_classes = pred.size(-1)
-    #     one_hot = torch.zeros_like(pred).scatter(1, target.unsqueeze(1), 1)
-    #     smooth_one_hot = one_hot * (1 - self.smoothing) + self.smoothing / n_classes
-    #     log_prob = F.log_softmax(pred, dim=-1)
-    #     return torch.sum(-smooth_one_hot * log_prob, dim=-1)
-
-    # def forward(self, pred, target):
-    #     n_classes = pred.size(-1)
-        
-    #     # 入力値のクリッピング
-    #     pred = torch.clamp(pred, min=-100, max=100)
-        
-    #     # より安定したsoftmax計算
-    #     max_val = pred.max(dim=-1, keepdim=True).values
-    #     stable_pred = pred - max_val
-    #     exp_pred = torch.exp(stable_pred)
-    #     softmax_pred = exp_pred / (torch.sum(exp_pred, dim=-1, keepdim=True) + self.epsilon)
-        
-    #     # log_softmaxの計算
-    #     log_prob = torch.log(softmax_pred + self.epsilon)
-        
-    #     # one-hot encodingとスムージング
-    #     one_hot = torch.zeros_like(pred).scatter(1, target.unsqueeze(1), 1)
-    #     smooth_one_hot = one_hot * (1 - self.smoothing) + self.smoothing / n_classes
-        
-    #     # 損失の計算
-    #     loss = torch.sum(-smooth_one_hot * log_prob, dim=-1)
-        
-    #     # NaNチェック
-    #     if torch.isnan(loss).any():
-    #         print("NaN detected in loss calculation")
-        
-    #     return loss
+ 
 
 
 ########################################################################################################
@@ -711,61 +102,6 @@ if 'x060' in os.environ["RWKV_MY_TESTING"]:
                             o, state = chunk_rwkv6(r, k, v, w, u=u, scale=1., initial_state=s, output_final_state=True)
                             x = rearrange(o, 'b h l d -> b l (h d)')
                             return x, state
-                    else:
-                        wkv6state_cuda = load(name="wkv6infctx", sources=["cuda/wkv6infctx_op.cpp", f"cuda/wkv6infctx_cuda.cu"],
-                            verbose=True, extra_cuda_cflags=["-res-usage", "--use_fast_math", "-O3", "-Xptxas -O3", "--extra-device-vectorization", f"-D_N_={HEAD_SIZE}", f"-D_T_={int(os.environ['RWKV_CTXLEN'])}"])
-                
-                        class WKV_6STATE(torch.autograd.Function):
-                            @staticmethod
-                            def forward(ctx, B, T, C, H, r, k, v, w, u, s):
-                                with torch.no_grad():
-                                    assert r.dtype == torch.bfloat16
-                                    assert k.dtype == torch.bfloat16
-                                    assert v.dtype == torch.bfloat16
-                                    assert w.dtype == torch.bfloat16
-                                    assert u.dtype == torch.bfloat16
-                                    assert s.dtype == torch.bfloat16
-                                    assert HEAD_SIZE == C // H
-                                    ctx.B = B
-                                    ctx.T = T
-                                    ctx.C = C
-                                    ctx.H = H
-                                    assert r.is_contiguous()
-                                    assert k.is_contiguous()
-                                    assert v.is_contiguous()
-                                    assert w.is_contiguous()
-                                    assert u.is_contiguous()
-                                    assert s.is_contiguous()
-                                    ctx.save_for_backward(r, k, v, w, u, s)
-                                    y = torch.empty((B, T, C), device=r.device, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
-                                    wkv6state_cuda.forward(B, T, C, H, r, k, v, w, u, s, y)
-                                    return y
-
-                            @staticmethod
-                            def backward(ctx, gy):
-                                with torch.no_grad():
-                                    assert gy.dtype == torch.bfloat16
-                                    B = ctx.B
-                                    T = ctx.T
-                                    C = ctx.C
-                                    H = ctx.H
-                                    assert gy.is_contiguous()
-                                    r, k, v, w, u, s = ctx.saved_tensors
-                                    gr = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
-                                    gk = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
-                                    gv = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
-                                    gw = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
-                                    gu = torch.empty((B, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
-                                    gs = torch.empty((B, H, C//H, C//H), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
-                                    wkv6state_cuda.backward(B, T, C, H, r, k, v, w, u, s, gy, gr, gk, gv, gw, gu, gs)
-                                    gu = torch.sum(gu, 0).view(H, C//H)
-                                    gs = torch.sum(gs, 0).view(H, C//H, C//H)
-                                    return (None, None, None, None, gr, gk, gv, gw, gu, gs)
-                        @torch.jit.ignore
-                        def RUN_CUDA_RWKV6_STATE(B, T, C, H, r, k, v, w, u, s):
-                            x = WKV_6STATE.apply(B, T, C, H, r, k, v, w, u, s)
-                            #x, s = rwkv_inner(r,k,v,w,u,s,T)
-                            return x, s
 
 if 'x060' in os.environ["RWKV_MY_TESTING"] and os.environ["RWKV_TRAIN_TYPE"] != 'infctx':
     if 'rocm' in os.environ["RWKV_MY_ARCHITECTURE"]:
@@ -1100,22 +436,6 @@ class RWKV_Tmix_x060_infctx(MyModule):
         self.ln_x = nn.GroupNorm(self.n_head, args.dim_att, eps=(1e-5)*(args.head_size_divisor**2))
     #@torch.jit.script_method
     
-    def jit_func0(self,x,shift_state,time_maa_x,time_maa_w1,time_maa_w2,time_maa_w,time_maa_k,time_maa_v,time_maa_r,time_maa_g):
-        B, T, C = x.size()
-        xx = torch.concat((shift_state.unsqueeze(1), x[:, :-1]), dim=1) - x
-
-        xxx = x + xx * time_maa_x
-        xxx = torch.tanh(xxx @ time_maa_w1).view(B*T, 5, -1).transpose(0, 1)
-        xxx = torch.bmm(xxx, time_maa_w2).view(5, B, T, -1)
-        mw, mk, mv, mr, mg = xxx.unbind(dim=0)
-
-        xw = x + xx * (time_maa_w + mw)
-        xk = x + xx * (time_maa_k + mk)
-        xv = x + xx * (time_maa_v + mv)
-        xr = x + xx * (time_maa_r + mr)
-        xg = x + xx * (time_maa_g + mg)
-
-        return xw,xk,xv,xr,xg
     #@MyFunction
     @torch.compile
     def jit_func(self, x, shift_state):
@@ -1133,17 +453,6 @@ class RWKV_Tmix_x060_infctx(MyModule):
         xr = x + xx * (self.time_maa_r + mr)
         xg = x + xx * (self.time_maa_g + mg)
 
-        # xw,xk,xv,xr,xg = self.jit_func0(x,shift_state,
-        #                                 self.time_maa_x,
-        #                                 self.time_maa_w1,
-        #                                 self.time_maa_w2,
-        #                                 self.time_maa_w,
-        #                                 self.time_maa_k,
-        #                                 self.time_maa_v,
-        #                                 self.time_maa_r,
-        #                                 self.time_maa_g,
-        #                                 )
-
         r = self.receptance(xr)
         k = self.key(xk)
         v = self.value(xv)
@@ -1154,7 +463,7 @@ class RWKV_Tmix_x060_infctx(MyModule):
 
         return r, k, v, g, w, x[:, -1]
 
-    @torch.compile
+    #@torch.compile
     def jit_func_2(self, x, g, timemixstate:TimeMixState):
         B, T, C = x.size()
         x = x.view(B * T, C)
@@ -1214,7 +523,7 @@ class RWKV_CMix_x060_infctx(MyModule):
             self.receptance = make_linear_ffn(args.n_embd, args.n_embd, bias=False,n_layer=self.layer_id)
             self.value = make_linear_ffn(args.dim_ffn, args.n_embd, bias=False,n_layer=self.layer_id)
 
-    @torch.compile
+    #@torch.compile
     def forward(self, x, last_state: ChannelMixState):
         xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]), dim=1) - x
         xk = x + xx * self.time_maa_k
@@ -1279,14 +588,14 @@ class Block(nn.Module):
             #     self.pos_emb_x = nn.Parameter(torch.zeros((1,args.my_pos_emb,args.n_embd)))
             #     self.pos_emb_y = nn.Parameter(torch.zeros((args.my_pos_emb,1,args.n_embd)))
 
-        if self.layer_id == 0 and self.args.pre_ffn > 0:
-            self.ffnPre = RWKV_ChannelMix(args, 0)
-        else:
-            if 'x060' in os.environ["RWKV_MY_TESTING"]:
-                if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
-                    self.att = RWKV_Tmix_x060_infctx(args, layer_id)
-                else:
-                    self.att = RWKV_Tmix_x060(args, layer_id)
+        #if self.layer_id == 0 and self.args.pre_ffn > 0:
+        #    self.ffnPre = RWKV_ChannelMix(args, 0)
+        #else:
+        if 'x060' in os.environ["RWKV_MY_TESTING"]:
+            if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
+                self.att = RWKV_Tmix_x060_infctx(args, layer_id)
+            else:
+                self.att = RWKV_Tmix_x060(args, layer_id)
             # else:
             #     self.att = RWKV_TimeMix_RWKV5(args, layer_id)
 
@@ -1401,12 +710,10 @@ if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
         def backward(ctx, grad_output):
             y, attention_mask = ctx.saved_tensors
             
-            # メモリ効率の良い実装
             with torch.no_grad():
                 factor = 1e-4 / ctx.token_amount
                 mask = attention_mask.unsqueeze(-1)
                 
-                # インプレース操作を使用
                 gy = torch.zeros_like(y)
                 masked_y = y.masked_fill(~mask.bool(), float('-inf'))
                 maxx, ids = torch.max(masked_y, -1, keepdim=True)
@@ -1416,7 +723,7 @@ if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
                 else:
                     gy.scatter_(-1, ids, maxx * factor)
                 
-                gy.mul_(mask)  # インプレース乗算
+                gy.mul_(mask)  
                 
             return (grad_output, gy, None)
     class L2Wrap_infctx(torch.autograd.Function):
