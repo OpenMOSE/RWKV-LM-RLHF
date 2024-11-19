@@ -639,17 +639,21 @@ class QuantLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :)
         self.weight = nn.Parameter(torch.empty((out_features, in_features)))
         assert bias == False, "Biased QuantLinear not supported"
         self.is_quant = False
-    @torch.jit.ignore
+    #@torch.jit.ignore
     def quant(self, quant_type,target_gpu):
         self.is_quant = True
         self.quant_type = quant_type
         #self.dummy_tensor = nn.Parameter(torch.zeros(1))
-        self.weight.data, self.qstate= rwkv_quantize(self.quant_type, (self.weight.data).to(target_gpu))
-    @torch.jit.ignore
+        #self.weight.data, self.qstate= rwkv_quantize(self.quant_type, (self.weight.data).to(target_gpu))
+        self.Qweight, self.qstate= rwkv_quantize(self.quant_type, (self.weight).to(device=target_gpu))
+        self.weight = None # Because Latest Pytorch-lightning forced to BF16 type. thats why delete
+    #@torch.jit.ignore
     def forward(self, x):
 
         if self.is_quant:
-            return F.linear(x, rwkv_dequantize(self.quant_type, self.weight.data, self.qstate))
+            if self.quant_type == 'fp8':
+                return fp8_matmul(x,self.Qweight)
+            return F.linear(x, rwkv_dequantize(self.quant_type, self.Qweight, self.qstate))
         else:
             return F.linear(x, self.weight)
         

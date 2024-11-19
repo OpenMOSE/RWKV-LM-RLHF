@@ -996,13 +996,15 @@ class RWKV(pl.LightningModule):
             for i, (block, block_state) in enumerate(zip(self.blocks,
                 BlockStateList(last_shift_states, last_wkv_states))):
                 # x = x.to(block.device)
-                if args.grad_cp == 1 and i > 0:  # and i < len(self.blocks)-1
+                if args.grad_cp == 1 and i > 0:# and i < len(self.blocks)-1 :
                     x, new_block_state = torch_checkpoint(block, x, block_state, x_emb, use_reentrant=False)
+                    #x, new_block_state = block(x, block_state, x_emb)
 
                 else:
                     #x, new_block_state = torch_checkpoint(block, x, block_state, x_emb, use_reentrant=False)
-                    #x, new_block_state = deepspeed.checkpointing.checkpoint(block, x,block_state, x_emb)
-                    x, new_block_state = block(x, block_state, x_emb)
+                    x, new_block_state = deepspeed.checkpointing.checkpoint(block, x,block_state, x_emb)
+                    #x, new_block_state = block(x, block_state, x_emb)
+                    #x, new_block_state = torch_checkpoint(block, x, block_state, x_emb, use_reentrant=False)
                     #x, new_block_state = deepspeed.checkpointing.checkpoint
                 new_states[i] = new_block_state#.clone().detach()
 
@@ -1465,8 +1467,8 @@ class RWKV(pl.LightningModule):
                         attention_mask[:, chunk_start:chunk_end],
                         total_loss,
                         smooth_loss,
-                        states.shift_states,#.clone().detach(),
-                        states.wkv_states,#.clone().detach(),
+                        states.shift_states.clone().detach(),
+                        states.wkv_states.clone().detach(),
                         token_amount,
                         use_reentrant=False
                     )
