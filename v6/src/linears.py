@@ -652,7 +652,7 @@ class QuantLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :)
 
         if self.is_quant:
             if self.quant_type == 'fp8':
-                return fp8_matmul(x,self.Qweight)
+                return fp8_matmul(x,self.Qweight.t())
             return F.linear(x, rwkv_dequantize(self.quant_type, self.Qweight, self.qstate))
         else:
             return F.linear(x, self.weight)
