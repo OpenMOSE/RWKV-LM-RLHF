@@ -405,80 +405,6 @@ class HeadLoraLinear(nn.Module):
     def forward(self, x):
         return LinearForward(self,x)
 
-        #x = torch.clamp(x, min=-448.0, max=448.0) # for avoid NaN
-
-        # if self.is_quant:
-        #     if self.pissa:
-        #         if self.quant_type == 'fp8': #native
-        #             return (
-        #             fp8_matmul(x,self.Qweight.t()) + 
-        #             F.linear(F.linear(x, self.lora_A), self.lora_B))
-        #         elif self.quant_type == 'fp16': #FP16 PISSA
-        #             return (
-        #                 fp16_matmul(x,self.Qweight.t()) + 
-        #                 F.linear(F.linear(x, self.lora_A), self.lora_B))
-        #         elif self.quant_type == 'fp6ao': #FP6 TorchAO
-        #             return (
-        #                 fp6ao_matmul(x,self.Qweight,self.qstate) + 
-        #                 F.linear(F.linear(x, self.lora_A), self.lora_B))
-        #         else: #Bitsandbytes NF4 INT8, FP16
-        #             temporal_weight = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
-        #             if temporal_weight.dtype == torch.float16:
-        #                 return (
-        #                     fp16_matmul(x,temporal_weight.t()) + 
-        #                     F.linear(F.linear(x, self.lora_A), self.lora_B))
-        #             return (
-        #                 F.linear(x, temporal_weight) + 
-        #                 F.linear(F.linear(x, self.lora_A), self.lora_B))
-            
-        #     elif self.bonemode: # Covered All quantize method. currently slow implementation
-        #         temporal_weight = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
-        #         w = rearrange(temporal_weight, '(a r1) (b r2) -> a b r1 r2', r1 = self.r, r2 = self.r)@self.bone+self.bone
-        #         w = rearrange(w, 'a b r1 r2 ->(a r1) (b r2) ')
-        #         #w = w + temporal_weight
-        #         return x @ (w + temporal_weight).t()
-            
-        #     else: #LoRA
-        #         if self.quant_type == 'fp8': #native
-        #             return (fp8_matmul(x,self.Qweight.t()) + self.scaling *
-        #                 F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)
-        #             )
-                
-        #         elif self.quant_type == 'fp16': #FP16 LoRA
-        #             return (fp16_matmul(x,self.Qweight.t()) + self.scaling *
-        #                 F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)
-        #             )
-                
-        #         elif self.quant_type == 'fp6ao': #FP6 TorchAO
-        #             return (fp6ao_matmul(x,self.Qweight.t(),self.qstate) + self.scaling *
-        #                 F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)
-        #             )
-        #         else:
-        #             w = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
-        #             #print(f'lora mode dtype = {w.dtype}')
-        #             if w.dtype == torch.float16:
-        #                 return (fp16_matmul(x,w.t()) + self.scaling *
-        #                         F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)
-        #                 )
-        #             return ( 
-        #                     F.linear(x, w) + self.scaling *
-        #                     F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)) 
-                
-        # else: # Non Quant mode
-        #     if self.pissa:
-        #         return (
-        #             F.linear(x, self.weight) + 
-        #             F.linear(F.linear(x, self.lora_A), self.lora_B))
-        #     elif self.bonemode:
-        #         w = rearrange(self.weight, '(a r1) (b r2) -> a b r1 r2', r1 = self.r, r2 = self.r)@self.bone+self.bone
-        #         w = rearrange(w, 'a b r1 r2 ->(a r1) (b r2) ')
-        #         return F.linear(x,self.weight+w)
-        #     return (
-        #         F.linear(x, self.weight) + self.scaling *
-        #         F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)) 
-
-  
-
         
 @torch.jit.ignore
 class LoraEmbedding(nn.Module): #Not working well. please help
@@ -560,76 +486,6 @@ class LoraLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :) Chaos Modified
     #@torch.jit.ignore
     def forward(self, x):
         return LinearForward(self,x)
-
-        # if self.is_quant:
-        #     if self.pissa:
-        #         if self.quant_type == 'fp8': #native
-        #             return (
-        #             fp8_matmul(x,self.Qweight.t()) + 
-        #             F.linear(F.linear(x, self.lora_A), self.lora_B))
-        #         elif self.quant_type == 'fp16': #FP16 PISSA
-        #             return (
-        #                 fp16_matmul(x,self.Qweight.t()) + 
-        #                 F.linear(F.linear(x, self.lora_A), self.lora_B))
-        #         elif self.quant_type == 'fp6ao': #FP6 TorchAO
-        #             return (
-        #                 fp6ao_matmul(x,self.Qweight,self.qstate) + 
-        #                 F.linear(F.linear(x, self.lora_A), self.lora_B))
-        #         else: #Bitsandbytes NF4 INT8, FP16
-        #             temporal_weight = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
-        #             if temporal_weight.dtype == torch.float16:
-        #                 return (
-        #                     fp16_matmul(x,temporal_weight.t()) + 
-        #                     F.linear(F.linear(x, self.lora_A), self.lora_B))
-        #             return (
-        #                 F.linear(x, temporal_weight) + 
-        #                 F.linear(F.linear(x, self.lora_A), self.lora_B))
-            
-        #     elif self.bonemode: # Covered All quantize method. currently slow implementation
-        #         temporal_weight = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
-        #         w = rearrange(temporal_weight, '(a r1) (b r2) -> a b r1 r2', r1 = self.r, r2 = self.r)@self.bone+self.bone
-        #         w = rearrange(w, 'a b r1 r2 ->(a r1) (b r2) ')
-        #         #w = w + temporal_weight
-        #         return x @ (w + temporal_weight).t()
-            
-        #     else: #LoRA
-        #         if self.quant_type == 'fp8': #native
-        #             return (fp8_matmul(x,self.Qweight.t()) + self.scaling *
-        #                 F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)
-        #             )
-                
-        #         elif self.quant_type == 'fp16': #FP16 LoRA
-        #             return (fp16_matmul(x,self.Qweight.t()) + self.scaling *
-        #                 F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)
-        #             )
-                
-        #         elif self.quant_type == 'fp6ao': #FP6 TorchAO
-        #             return (fp6ao_matmul(x,self.Qweight.t(),self.qstate) + self.scaling *
-        #                 F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)
-        #             )
-        #         else:
-        #             w = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
-        #             #print(f'lora mode dtype = {w.dtype}')
-        #             if w.dtype == torch.float16:
-        #                 return (fp16_matmul(x,w.t()) + self.scaling *
-        #                         F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)
-        #                 )
-        #             return ( 
-        #                     F.linear(x, w) + self.scaling *
-        #                     F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)) 
-                
-        # else: # Non Quant mode
-        #     if self.pissa:
-        #         return (
-        #             F.linear(x, self.weight) + 
-        #             F.linear(F.linear(x, self.lora_A), self.lora_B))
-        #     elif self.bonemode:
-        #         w = rearrange(self.weight, '(a r1) (b r2) -> a b r1 r2', r1 = self.r, r2 = self.r)@self.bone+self.bone
-        #         w = rearrange(w, 'a b r1 r2 ->(a r1) (b r2) ')
-        #         return F.linear(x,self.weight+w)
-        #     return (
-        #         F.linear(x, self.weight) + self.scaling *
-        #         F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)) 
     
 
 class QuantLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :)
@@ -643,8 +499,6 @@ class QuantLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :)
     def quant(self, quant_type,target_gpu):
         self.is_quant = True
         self.quant_type = quant_type
-        #self.dummy_tensor = nn.Parameter(torch.zeros(1))
-        #self.weight.data, self.qstate= rwkv_quantize(self.quant_type, (self.weight.data).to(target_gpu))
         self.Qweight, self.qstate= rwkv_quantize(self.quant_type, (self.weight).to(device=target_gpu))
         self.weight = None # Because Latest Pytorch-lightning forced to BF16 type. thats why delete
     #@torch.jit.ignore
@@ -653,6 +507,8 @@ class QuantLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :)
         if self.is_quant:
             if self.quant_type == 'fp8':
                 return fp8_matmul(x,self.Qweight.t())
+            elif self.quant_type == 'fp6ao':
+                return fp6ao_matmul(x,self.Qweight.t(),self.qstate)
             return F.linear(x, rwkv_dequantize(self.quant_type, self.Qweight, self.qstate))
         else:
             return F.linear(x, self.weight)
