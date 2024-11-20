@@ -1,7 +1,7 @@
 ########################################################################################################
 # The RWKV Language Model - https://github.com/BlinkDL/RWKV-LM
 ########################################################################################################
-
+from .adopt import ADOPT
 import functools
 import os, math, gc, importlib
 import torch
@@ -953,6 +953,7 @@ class RWKV(pl.LightningModule):
              
             if self.deepspeed_offload:
                 return DeepSpeedCPUAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=True, amsgrad=False)
+           
             #if args.optim=='lion':
             #    return Lion(optim_groups, lr=self.args.lr_init, betas=self.args.betas, weight_decay=0, use_triton=True)
             return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
@@ -962,6 +963,9 @@ class RWKV(pl.LightningModule):
              
             if self.deepspeed_offload:
                 return DeepSpeedCPUAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=False, weight_decay=0, amsgrad=False)
+            if args.optim == 'adopt':
+                print('Adopt Mode')
+                return ADOPT(optim_groups,lr=self.args.lr_init)
             #if args.optim=='lion':
             #   return Lion(optim_groups, lr=self.args.lr_init, betas=self.args.betas, weight_decay=0, use_triton=True)
             return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=False, weight_decay=0, amsgrad=False)
