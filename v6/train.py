@@ -343,7 +343,7 @@ if __name__ == "__main__":
 
     #args.vocab_size = train_data.vocab_size
     
-    from src.model import RWKV , LoraLinear
+    from src.model import RWKV #, LoraLinear
     
 
     

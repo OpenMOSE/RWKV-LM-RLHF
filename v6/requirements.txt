@@ -10,3 +10,4 @@ transformers
 einops
 h5py
 rwkv-fla
+torchao

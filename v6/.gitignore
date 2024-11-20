@@ -24,3 +24,5 @@ states/
 loras/
 dataset_box/
 myfolder/
+amdsmi/
+src/__pycache__/
