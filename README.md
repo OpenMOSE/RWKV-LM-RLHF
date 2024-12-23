@@ -10,7 +10,7 @@ A repository exploring the possibilities for deeper fine-tuning of RWKV.
 
 ## Key Features
 
-- **RLHF Training with ORPO(Odds Ratio Preference Optimization)**: 
+- **RLHF Training with ORPO(Odds Ratio Preference Optimization) v6,v7**: 
 
   ORPO is that it allows for simultaneous SFT and aligning. By adjusting the orpo_alpha value, you can control the ratio between SFT and aligning.
    - Uses odds ratios instead of probability ratios to measure policy changes
@@ -19,7 +19,7 @@ A repository exploring the possibilities for deeper fine-tuning of RWKV.
 
    - Designed to mitigate common issues in RLHF like reward hacking and overoptimization
 
-- **RLHF Training with DPO(Direct Preference Optimization)**: 
+- **RLHF Training with DPO(Direct Preference Optimization) v6,v7**: 
 
   Direct Preference Optimization (DPO) is an advanced training method for Large Language Models that aims to align model outputs with human preferences more effectively than traditional methods.
    - Directly optimizes for human preferences without the need for a separate reward model
@@ -28,13 +28,13 @@ A repository exploring the possibilities for deeper fine-tuning of RWKV.
 
    - More stable training process compared to RL-based methods
 
-- **Infinite Context Compression Distillation Training**:
+- **Infinite Context Compression Distillation Training v6,v7(not infctx)**:
   - This approach involves simultaneously training a student model using compressed logits data pre-acquired from a larger parameter model (for example, 14B) as soft labels, and the dataset as hard labels.
 
   - Soft label learning can significantly reduce the risk of overfitting.
 
   - It allows for efficient transfer of specific tasks to smaller models.
-- **Infinite Context Masked SFT with Smoothing Loss**:
+- **Infinite Context Masked SFT with Smoothing Loss v6,v7(not infctx)**:
   - By incorporating smoothing into the loss calculation, the transfer probability can be increased.
 
   - Dynamic masking allows for efficient loss reduction during multi-batch processing.

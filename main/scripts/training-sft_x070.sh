@@ -8,15 +8,15 @@ python train.py --load_model "myfolder/models/rwkv-x070-2b9-world-v3-8%trained-2
  --accelerator gpu --devices 1 --precision 'bf16' \
  --grad_cp 1 --my_testing "x070" \
  --strategy deepspeed_stage_1 \
- --layer_profile 'layerprofile/32_TEST.csv' \
+ --layer_profile 'layerprofile/32_TEST_bone_max.csv' \
  --quant 0 \
  --quant_mode 'fp8'\
  --gpu_arch 'cuda' \
  --limited_lora 0 \
  --sft 1 \
- --smoothing 0.01 \
+ --smoothing 0.005 \
  --random_mode 1 \
- --infctx_dataset_multiplier 8 \
+ --infctx_dataset_multiplier 16 \
  --optim '' \
  --train_data_file 'myfolder/datasets/General-dataset.h5' \
  --accumulate_grad_batches 1

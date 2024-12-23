@@ -10,7 +10,7 @@ if __name__ == "__main__":
     from pytorch_lightning import Trainer
     from pytorch_lightning.utilities import rank_zero_info, rank_zero_only
     import pytorch_lightning as pl
-    from src.layerprofiler import LayerProfiler
+    from src.layerprofiler import LayerProfiler,v7_additional_parameters
     #from lightning.pytorch.strategies import SingleDeviceStrategy, FSDPStrategy, DDPStrategy, DeepSpeedStrategy
     #from lightning.pytorch.accelerators.accelerator import Accelerator
 
@@ -403,21 +403,7 @@ if __name__ == "__main__":
 
 
     for name, module in model.named_modules():
-        # if len(args.load_model) == 0:
-        #     if any(n.startswith("emb.") for n, _ in module.named_parameters()) and LAYER_CONFIG['emb']['mode']=='full':
-        #         for pname, param in module.named_parameters():
-        #             if 'emb.weight'==pname:
-        #                 print(f'  EMB additionally training module {pname}')
-        #                 param.requires_grad = True
-        #     if any(n.startswith("head.") for n, _ in module.named_parameters()) and LAYER_CONFIG['head']['mode']=='full':
-        #         for pname, param in module.named_parameters():
-        #             if 'head.weight'==pname:
-        #                 print(f'  head additionally training module {pname}')
-        #                 param.requires_grad = True
-        #     if 'ln' in name:
-        #         print(f'  LoRA additionally training module {name}')
-        #         for param in module.parameters():
-        #             param.requires_grad = True
+        
         if any(n.startswith("emb.") for n, _ in module.named_parameters()) and LAYER_CONFIG['emb']['mode']=='full':
             for pname, param in module.named_parameters():
                 if 'emb.weight'==pname:
@@ -455,6 +441,16 @@ if __name__ == "__main__":
                 if pname.startswith("time"):
                     print(f'  LoRA additionally training parameter {pname}')
                     param.requires_grad = True
+        
+        if 'x070' in os.environ["RWKV_MY_TESTING"] and args.limited_lora == 0:
+            #print('x070 Additional Parameters')
+            for pname, param in module.named_parameters():
+                for targetname in v7_additional_parameters:
+                    if targetname in pname and targetname != '' and pname != '':
+                        print(f'x070 Additional Parameters {pname}')
+                        param.requires_grad = True
+                        break
+
                     
 
         for i in range(args.n_layer):
