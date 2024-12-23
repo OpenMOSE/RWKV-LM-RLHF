@@ -69,11 +69,11 @@ A repository exploring the possibilities for deeper fine-tuning of RWKV.
    - some case need (conda install libstdcxx -c conda-forge --override-channels) for building cuda kernel
 
 ## How to Use
-   - [Odds Ratio Preference Optimization document](v6/example/ORPO/readme.md)
-   - [Direct Preference Optimization document](v6/example/DPO/readme.md)
-   - [Distillation document](v6/example/Distillation/readme.md)
-   - [SFT document](v6/example/SFT/readme.md)
-   - [Layer Profile](v6/layerprofile/readme.md)
+   - [Odds Ratio Preference Optimization document](main/example/ORPO/readme.md)
+   - [Direct Preference Optimization document](main/example/DPO/readme.md)
+   - [Distillation document](main/example/Distillation/readme.md)
+   - [SFT document](main/example/SFT/readme.md)
+   - [Layer Profile](main/layerprofile/readme.md)
 
 
 ## Orpo Usages

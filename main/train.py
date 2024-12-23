@@ -35,7 +35,7 @@ if __name__ == "__main__":
     parser.add_argument("--vocab_size", default=0, type=int)  # vocab_size = 0 means auto (for char-level LM and .txt data)
 
     parser.add_argument("--ctx_len", default=2048, type=int) #maximum context size
-    parser.add_argument("--infctx", default=1, type=int) #from RWKV-PEFT :)
+    parser.add_argument("--infctx", default=0, type=int) #from RWKV-PEFT :)
     parser.add_argument("--infctx_dataset_multiplier", default=100, type=int) #from RWKV-PEFT :)
     parser.add_argument("--chunk_ctx", default=512, type=int)
 
@@ -67,25 +67,17 @@ if __name__ == "__main__":
     parser.add_argument("--weight_decay", default=0, type=float) # try 0.1 / 0.01 / 0.001
     parser.add_argument("--weight_decay_final", default=-1, type=float)
 
-    #parser.add_argument("--my_pile_version", default=1, type=int)  # my special pile version
-    #parser.add_argument("--my_pile_stage", default=0, type=int)  # my special pile mode
-    #parser.add_argument("--my_pile_shift", default=-1, type=int)  # my special pile mode - text shift
+
     parser.add_argument("--my_pile_edecay", default=0, type=int)
     parser.add_argument("--layerwise_lr", default=1, type=int)  # layerwise lr for faster convergence (but slower it/s)
     parser.add_argument("--ds_bucket_mb", default=64, type=int)  # deepspeed bucket size in MB. 200 seems enough
-    # parser.add_argument("--cuda_cleanup", default=0, type=int)  # extra cuda cleanup (sometimes helpful)
 
-    #parser.add_argument("--my_sample_len", default=0, type=int)
-    #parser.add_argument("--my_ffn_shift", default=1, type=int)
-    #parser.add_argument("--my_att_shift", default=1, type=int)
     parser.add_argument("--head_size_a", default=64, type=int) # can try larger values for larger models
     parser.add_argument("--head_size_divisor", default=8, type=int)
-    #parser.add_argument("--my_pos_emb", default=0, type=int)
-    #parser.add_argument("--load_partial", default=0, type=int)
+
     parser.add_argument("--magic_prime", default=0, type=int)
-    #parser.add_argument("--my_qa_mask", default=0, type=int)
     parser.add_argument("--my_random_steps", default=0, type=int)
-    parser.add_argument("--my_testing", default='x060', type=str)
+    parser.add_argument("--my_testing", default='x060', type=str) # if RWKV x070, set 'x070'
     parser.add_argument("--my_exit", default=99999999, type=int)
     parser.add_argument("--my_exit_tokens", default=0, type=int)
 
