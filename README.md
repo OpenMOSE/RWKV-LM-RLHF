@@ -34,7 +34,7 @@ A repository exploring the possibilities for deeper fine-tuning of RWKV.
   - Soft label learning can significantly reduce the risk of overfitting.
 
   - It allows for efficient transfer of specific tasks to smaller models.
-- **Infinite Context Masked SFT with Smoothing Loss v6,v7(not infctx)**:
+- **Infinite Context Masked SFT with Smoothing Loss** v6,v7(not infctx):
   - By incorporating smoothing into the loss calculation, the transfer probability can be increased.
 
   - Dynamic masking allows for efficient loss reduction during multi-batch processing.
@@ -54,6 +54,8 @@ A repository exploring the possibilities for deeper fine-tuning of RWKV.
    - Updates to large weight matrices are approximated by products of low-rank matrices.
 - **Quantization**:
    - FP8: Fastest. Native matmul. Only works with NVIDIA H100, RTX4090.
+   - FP6: by TorchAO Matmul slightly faster than bitsandbytes
+   - FP5: coming
    - Int8: 8-bit quantization with Bitsandbytes. 16-bit Matmul
    - NF4: 4-bit quantization with Bitsandbytes. 16-bit Matmul
 
@@ -139,7 +141,8 @@ python merge.py --base_model $base_model \
    - 4. Re-engineering LISA+ - Cancelled
    - 5. support FLA backend(help me...) - Test implemented.
    - 6. Compression Distillation - Test implemented.
-   - 7. infctx Orpo
+   - 7. Hybrid Quantization(ex. ATT 8bit, FFN 4bit)
+   - 8. "Adapter" LISA will back
 
 
 # And Thanks to:
