@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 from pytorch_lightning.utilities import rank_zero_info, rank_zero_only
 from .model import LAYER_CONFIG
+from .layerprofiler import v7_additional_parameters
 import gc
 
 def my_save(args, trainer, dd, ff):
@@ -247,6 +248,12 @@ class train_callback(pl.Callback):
                                 lora_dict[name] = state
                         if '.bone' in name or '.lora_' in name or '.time' in name or '.ln' in name:
                             lora_dict[name] = state
+                        elif args.limited_lora == 0:
+                            for targetname in v7_additional_parameters:
+                                if targetname in name and targetname != '' and name != '':
+                                    lora_dict[name] = state
+                                    #print(f'{name} {state.shape}')
+                                    break
 
 
 
