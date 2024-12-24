@@ -3,15 +3,15 @@ python train.py --load_model "myfolder/models/rwkv-x070-2b9-world-v3-8%trained-2
  --infctx 0 \
  --vocab_size 65536 --ctx_len 4096 \
  --epoch_steps 200 --epoch_count 200 --epoch_begin 0 --epoch_save 1 \
- --micro_bsz 1 --n_layer 32 --n_embd 2560 \
+ --micro_bsz 2 --n_layer 32 --n_embd 2560 \
  --lr_init 1e-4 --lr_final 1e-6 \
  --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
  --accelerator gpu --devices 1 --precision bf16 \
  --grad_cp 1 --my_testing "x070" \
  --strategy deepspeed_stage_1 \
  --layer_profile 'layerprofile/32_TEST.csv' \
- --quant 0 \
- --quant_mode 'fp8'\
+ --quant 1 \
+ --quant_mode 'int8'\
  --gpu_arch 'cuda' \
  --limited_lora 0 \
  --distillation 1 \
