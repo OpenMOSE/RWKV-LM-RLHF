@@ -1,0 +1,21 @@
+python train.py --load_model 'myfolder/models/RWKV-x060-World-3B-v2.1-20240417-ctx4096.pth' \
+ --wandb "RWKV-LM-RLHF x060 3b state+weight" --proj_dir "myfolder/Outputs/3b-x060-state-test"\
+ --infctx 0 \
+ --vocab_size 65536 --ctx_len 1024 \
+ --epoch_steps 100 --epoch_count 1000 --epoch_begin 0 --epoch_save 1 \
+ --micro_bsz 1 --n_layer 32 --n_embd 2560 \
+ --lr_init 5e-6 --lr_final 1e-7 \
+ --lr_advanced 1 \
+ --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
+ --accelerator gpu --devices 1 --precision bf16 \
+ --grad_cp 1 --my_testing "x060" \
+ --strategy deepspeed_stage_2 \
+ --layer_profile 'layerprofile/32_TEST_State.csv' \
+ --quant 1 \
+ --quant_mode 'nf4'\
+ --gpu_arch 'cuda' \
+ --state 1 \
+ --orpo 1 \
+ --orpo_alpha 0.01 \
+ --rlhf_train_file 'example/ORPO/output_save/rlhf_example_dataset.save' \
+ --rlhf_max_corpus_len 512

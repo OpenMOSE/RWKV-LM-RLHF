@@ -1,18 +1,19 @@
-python train.py --load_model "myfolder/models/rwkv-x070-2b9-world-v3-14%trained-20241223-ctx4k.pth" \
- --wandb "RWKV-LM-RLHF x070 SFT" --proj_dir "myfolder/Outputs/x0702b9-sft2" \
+python train.py --load_model "myfolder/models/RWKV-x060-World-3B-v2.1-20240417-ctx4096.pth" \
+ --wandb "RWKV-LM-RLHF x060 SFT 3B wstate" --proj_dir "myfolder/Outputs/x0603b-sft-state" \
  --vocab_size 65536 --ctx_len 4096 \
  --epoch_steps 1000 --epoch_count 200 --epoch_begin 0 --epoch_save 1 \
  --micro_bsz 2 --n_layer 32 --n_embd 2560 \
  --lr_init 1e-4 --lr_final 1e-6 \
  --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
  --accelerator gpu --devices 1 --precision 'bf16' \
- --grad_cp 1 --my_testing "x070" \
+ --grad_cp 1 --my_testing "x060" \
  --strategy deepspeed_stage_2 \
- --layer_profile 'layerprofile/32_TEST_bone_max.csv' \
+ --layer_profile 'layerprofile/32_TEST_State.csv' \
  --quant 1 \
  --quant_mode 'fp8'\
  --gpu_arch 'cuda' \
  --limited_lora 0 \
+ --state 1 \
  --sft 1 \
  --smoothing 0.005 \
  --random_mode 1 \

@@ -24,9 +24,12 @@ class LayerProfiler:
                       'Mode':row['Mode'],
                       'Rank':row['Rank'],
                       'Alpha':row['Alpha'],
-                      'LISAProb':row['LISAProb'],
-                      'LoRAProb':row['LoRAProb'],
-                      'LRScale':row['LRScale'],              
+                      'Weight_lr_init':row['Weight_lr_init'],
+                      'Weight_lr_final':row['Weight_lr_final'],
+                      'State_lr_init':row['State_lr_init'],   
+                      'State_lr_final':row['State_lr_final'],   
+                      'Weight_decay':row['Weight_decay'],
+                      'RejectParts':row['RejectParts'].split(','),              
                       }
                 return Rt
         return None
@@ -35,40 +38,39 @@ class LayerProfiler:
         for i in range(nlayer):
             Found = False
             for row in self.array_data:
-                
                 if row['Layer'] == str(i):
                     Found = True
                     if row['Mode'] == 'full':
-                        CONFIG[f'{str(i)}']={'mode':'full'}
+                        CONFIG[f'{str(i)}']={'mode':'full','lr_init':row['Weight_lr_init'],'lr_final':row['Weight_lr_final'],'lr_init_state':row['State_lr_init'],'lr_final_state':row['State_lr_final'],'RejectParts':row['RejectParts'].split(','),'weight_decay':row['Weight_decay']}
                     elif row['Mode'] == 'freeze':
-                        CONFIG[f'{str(i)}']={'mode':'freeze', 'quant':quant }
+                        CONFIG[f'{str(i)}']={'mode':'freeze','quant':quant,'lr_init':row['Weight_lr_init'],'lr_final':row['Weight_lr_final'],'lr_init_state':row['State_lr_init'],'lr_final_state':row['State_lr_final'],'RejectParts':row['RejectParts'].split(','),'weight_decay':row['Weight_decay']}
                     elif row['Mode'] == 'lora':
-                        CONFIG[f'{str(i)}']={'mode':'lora','quant':quant,'rank':row['Rank'],'alpha':row['Alpha'],'dropout':row['Dropout'],'parts':{"att", "ln", "time", "ffn"} }
+                        CONFIG[f'{str(i)}']={'mode':'lora','quant':quant,'rank':row['Rank'],'alpha':row['Alpha'],'dropout':row['Dropout'],'lr_init':row['Weight_lr_init'],'lr_final':row['Weight_lr_final'],'lr_init_state':row['State_lr_init'],'lr_final_state':row['State_lr_final'],'RejectParts':row['RejectParts'].split(','),'weight_decay':row['Weight_decay']}
                     elif row['Mode'] == 'bone': # test implement
-                        CONFIG[f'{str(i)}']={'mode':'bone','quant':quant,'rank':row['Rank'],'parts':{"att", "ln", "time", "ffn"} }
+                        CONFIG[f'{str(i)}']={'mode':'bone','quant':quant,'rank':row['Rank'],'lr_init':row['Weight_lr_init'],'lr_final':row['Weight_lr_final'],'lr_init_state':row['State_lr_init'],'lr_final_state':row['State_lr_final'],'RejectParts':row['RejectParts'].split(','),'weight_decay':row['Weight_decay']}
                     elif row['Mode'] == 'pissa':
-                        CONFIG[f'{str(i)}']={'mode':'pissa','quant':quant,'rank':row['Rank'],'alpha':row['Alpha'],'dropout':row['Dropout'],'parts':{"att", "ln", "time", "ffn"} }
+                        CONFIG[f'{str(i)}']={'mode':'pissa','quant':quant,'rank':row['Rank'],'lr_init':row['Weight_lr_init'],'lr_final':row['Weight_lr_final'],'alpha':row['Alpha'],'dropout':row['Dropout'],'lr_init_state':row['State_lr_init'],'lr_final_state':row['State_lr_final'],'RejectParts':row['RejectParts'].split(','),'weight_decay':row['Weight_decay']}
             if Found == False:
                 raise "Layer Profile Data is Invalid. Please check. orz."
         
         for row in self.array_data:
             if row['Layer'] == 'emb':
                 if row['Mode'] == 'full' or row['Mode'] == 'freeze':
-                    CONFIG[f'emb']={'mode':row['Mode']}
+                    CONFIG[f'emb']={'mode':row['Mode'],'lr_init':row['Weight_lr_init'],'lr_final':row['Weight_lr_final'],'weight_decay':row['Weight_decay']}
                 elif row['Mode'] == 'lora':
-                        CONFIG[f'emb']={'mode':'lora','rank':row['Rank'],'alpha':row['Alpha'],'dropout':row['Dropout'],'parts':{"att", "ln", "time", "ffn"} }
+                        CONFIG[f'emb']={'mode':'lora','rank':row['Rank'],'alpha':row['Alpha'],'dropout':row['Dropout'],'lr_init':row['Weight_lr_init'],'lr_final':row['Weight_lr_final'] }
                 
             if row['Layer'] == 'head':
                 if row['Mode'] == 'full':
-                    CONFIG[f'head']={'mode':row['Mode']}
+                    CONFIG[f'head']={'mode':row['Mode'],'lr_init':row['Weight_lr_init'],'lr_final':row['Weight_lr_final'],'lr_init_state':row['State_lr_init'],'lr_final_state':row['State_lr_final'],'weight_decay':row['Weight_decay']}
                 elif row['Mode'] == 'freeze':
-                    CONFIG[f'head']={'mode':row['Mode'] , 'quant':quant } 
+                    CONFIG[f'head']={'mode':row['Mode'] , 'quant':quant ,'lr_init':row['Weight_lr_init'],'lr_final':row['Weight_lr_final'],'weight_decay':row['Weight_decay'] } 
                 elif row['Mode'] == 'lora':
-                        CONFIG[f'head']={'mode':'lora','rank':row['Rank'],'alpha':row['Alpha'], 'quant':quant ,'dropout':row['Dropout'],'parts':{"att", "ln", "time", "ffn"} }
+                        CONFIG[f'head']={'mode':'lora','rank':row['Rank'],'alpha':row['Alpha'], 'quant':quant ,'dropout':row['Dropout'],'lr_init':row['Weight_lr_init'],'lr_final':row['Weight_lr_final'],'weight_decay':row['Weight_decay']}
                 elif row['Mode'] == 'pissa':
-                        CONFIG[f'head']={'mode':'pissa','rank':row['Rank'],'alpha':row['Alpha'], 'quant':quant ,'dropout':row['Dropout'],'parts':{"att", "ln", "time", "ffn"} }
+                        CONFIG[f'head']={'mode':'pissa','rank':row['Rank'],'alpha':row['Alpha'], 'quant':quant ,'dropout':row['Dropout'],'lr_init':row['Weight_lr_init'],'lr_final':row['Weight_lr_final'],'weight_decay':row['Weight_decay']}
                 elif row['Mode'] == 'bone':
-                        CONFIG[f'head']={'mode':'bone','rank':row['Rank'], 'quant':quant ,'parts':{"att", "ln", "time", "ffn"} }
+                        CONFIG[f'head']={'mode':'bone','rank':row['Rank'], 'quant':quant ,'lr_init':row['Weight_lr_init'],'lr_final':row['Weight_lr_final'],'weight_decay':row['Weight_decay']}
 
 
         return CONFIG

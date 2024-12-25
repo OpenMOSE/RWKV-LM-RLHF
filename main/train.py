@@ -39,6 +39,9 @@ if __name__ == "__main__":
     parser.add_argument("--infctx_dataset_multiplier", default=100, type=int) #from RWKV-PEFT :)
     parser.add_argument("--chunk_ctx", default=512, type=int)
 
+    parser.add_argument("--state", default=0, type=int) #for state-tuning x060
+    parser.add_argument("--state_output_mode", default=1, type=int) #0: state in MainAdapter, 1: Separate MainAdapter,State 2: Separate state in MainAdapter, State
+
 
 
     parser.add_argument("--epoch_steps", default=1000, type=int)  # a mini "epoch" has [epoch_steps] steps
@@ -58,6 +61,9 @@ if __name__ == "__main__":
 
     parser.add_argument("--lr_init", default=1e-4, type=float)  # 6e-4 for L12-D768, 4e-4 for L24-D1024, 3e-4 for L24-D2048
     parser.add_argument("--lr_final", default=1e-5, type=float)
+    
+    parser.add_argument("--lr_advanced", default=1, type=int) #Schedule from CustomLR LayerProfile
+
     parser.add_argument("--warmup_steps", default=-1, type=int)  # try 50 if you load a model
     parser.add_argument("--beta1", default=0.9, type=float)
     parser.add_argument("--beta2", default=0.99, type=float)  # use 0.999 when your model is close to convergence
@@ -100,7 +106,7 @@ if __name__ == "__main__":
 
 
     parser.add_argument("--orpo", default=0, type=int) #orpo
-    parser.add_argument("--orpo_mode", default=1, type=int) #orpo
+    parser.add_argument("--orpo_mode", default=0, type=int) #orpo
     parser.add_argument("--orpo_alpha", default=0.01, type=float) #orpo
 
 
@@ -123,13 +129,6 @@ if __name__ == "__main__":
     parser.add_argument("--optim", default="", type=str)
 
     #parser.add_argument("--accelerator", default="gpu", type=str)
-
-
-
-
-
-
-
 
     
 
@@ -185,6 +184,9 @@ if __name__ == "__main__":
     if args.infctx:
         os.environ["RWKV_TRAIN_TYPE"]='infctx'
         os.environ["RWKV_CTXLEN"] = str(args.chunk_ctx)
+    if args.state:
+        os.environ["RWKV_TRAIN_TYPE"]='state'
+        print('State-tuning Mode')
     else:
         os.environ["RWKV_TRAIN_TYPE"]='normal'
 
@@ -200,48 +202,7 @@ if __name__ == "__main__":
     if not os.path.exists(args.proj_dir):
         os.makedirs(args.proj_dir)
 
-    # if args.my_pile_stage > 0:
-    #     magic_prime_bak = args.magic_prime
 
-    #     if args.my_pile_shift < 0:
-    #         args.my_pile_shift = 0
-
-    #     if magic_prime_bak > 0:
-    #         args.magic_prime = magic_prime_bak
-    #     if args.my_qa_mask == 2:
-    #         args.epoch_count = 2 * args.magic_prime // 40320
-    #     else:
-    #         args.epoch_count = args.magic_prime // 40320
-
-    #     args.epoch_steps = 40320 // args.real_bsz
-    #     assert args.epoch_steps * args.real_bsz == 40320
-    #     # if args.my_pile_stage == 2:
-    #     #     assert args.lr_final == args.lr_init
-    #     if args.my_pile_stage >= 2:  # find latest saved model
-    #         list_p = []
-    #         for p in os.listdir(args.proj_dir):
-    #             if p.startswith("rwkv") and p.endswith(".pth"):
-    #                 p = ((p.split("-"))[1].split("."))[0]
-    #                 if p != "final":
-    #                     if p == "init":
-    #                         p = -1
-    #                     else:
-    #                         p = int(p)
-    #                     list_p += [p]
-    #         list_p.sort()
-    #         max_p = list_p[-1]
-    #         if len(list_p) > 1:
-    #             args.my_pile_prev_p = list_p[-2]  # in case max_p is corrupted
-    #         if max_p == -1:
-    #             args.load_model = f"{args.proj_dir}/rwkv-init.pth"
-    #         else:
-    #             args.load_model = f"{args.proj_dir}/rwkv-{max_p}.pth"
-    #             if args.warmup_steps < 0:
-    #                 if args.my_pile_stage == 2:
-    #                     args.warmup_steps = 10
-    #                 else:
-    #                     args.warmup_steps = 30
-    #         args.epoch_begin = max_p + 1
 
     samples_per_epoch = args.epoch_steps * args.real_bsz
     tokens_per_epoch = samples_per_epoch * args.ctx_len
@@ -427,20 +388,20 @@ if __name__ == "__main__":
                 print(f'bone Parts Enabled Training :{pname}')
 
         #elif enable_ln_finetune and '.ln' in name:
-        elif '.ln_x' in name:# and args.limited_lora == 0:
-            for param in module.parameters():
-                print(f'  additionally training module {name}')
-                param.requires_grad = True
+        # elif '.ln_x' in name:
+        #     for param in module.parameters():
+        #         print(f'  additionally training module {name}')
+        #         param.requires_grad = True
         elif ('ln_in' in name or 'ln_out' in name) and args.limited_lora == 0:
             for param in module.parameters():
                 print(f'  additionally training module {name}')
                 param.requires_grad = True
-        #elif enable_time_finetune and any(n.startswith("time") for n, _ in module.named_parameters()):
-        elif (any(n.startswith("time") for n, _ in module.named_parameters())) and args.limited_lora == 0:
-            for pname, param in module.named_parameters():
-                if pname.startswith("time"):
-                    print(f'  LoRA additionally training parameter {pname}')
-                    param.requires_grad = True
+        # #elif enable_time_finetune and any(n.startswith("time") for n, _ in module.named_parameters()):
+        # elif (any(n.startswith("time") for n, _ in module.named_parameters())) and args.limited_lora == 0:
+        #     for pname, param in module.named_parameters():
+        #         if pname.startswith("time"):
+        #             print(f'  LoRA additionally training parameter {pname}')
+        #             param.requires_grad = True
         
         if 'x070' in os.environ["RWKV_MY_TESTING"] and args.limited_lora == 0:
             #print('x070 Additional Parameters')
@@ -457,32 +418,26 @@ if __name__ == "__main__":
             text = f'blocks.{str(i)}.'
             for pname, param in module.named_parameters():
                 #print(f'pname = {pname}')
-                if LAYER_CONFIG[f'{str(i)}']['mode'] == 'full' and text in name:
-                    print(f'  FullParameter additionally training parameter {name}')
+                if LAYER_CONFIG[f'{str(i)}']['mode'] == 'full' and text in pname:
+                    print(f'  FullParameter additionally training parameter {pname}')
                     param.requires_grad = True
+                elif LAYER_CONFIG[f'{str(i)}']['mode'] == 'freeze' and text in pname and 'time_state' in pname:
+                    print(f'  State-tuning additionally training parameter {pname}')
+                    param.requires_grad = True
+                elif LAYER_CONFIG[f'{str(i)}']['mode'] == 'freeze' and text in pname:
+                    print(f'frozen {pname}')
+                else:
+                    #print(len(LAYER_CONFIG[f'{str(i)}']['RejectParts']))
+                    if any(word in pname for word in LAYER_CONFIG[f'{str(i)}']['RejectParts']) and LAYER_CONFIG[f'{str(i)}']['RejectParts'][0] != "" and text in pname:
+                        print(f'{pname} train rejected')
+                    elif ('ln_x' in pname or 'ln1' in pname or 'ln2' in pname or 'time' in pname) and text in pname and args.limited_lora == 0:
+                        print(f'Additional training FullParameter {pname}')
+                        param.requires_grad = True
+
+    #exit()
+                
 
 
-    #if args.lisa:
-    #    model.requires_grad_(True)
-    #    for name, param in model.named_parameters():
-    #        if 'blocks' in name and str(args.n_layer-1) not in name:
-    #            param.requires_grad = False
-    #            print(f"Freezed: {name}")  # 凍結したパラメータの名前を表示
-    #        elif 'blocks' in name and ('ffn' in name or(('att') in name and ('receptance'in name or 'key' in name or 'value' in name) )) and str(args.n_layer-1) in name:
-    #            param.requires_grad = False
-    #            print(f"Freezed: {name}")  # 凍結したパラメータの名前を表示
-
-    
-
-    #if args.load_partial == 1:
-    #    load_keys = load_dict.keys()
-    ###    for k in model.state_dict():
-    #        if k not in load_keys:
-    #            load_dict[k] = model.state_dict()[k]
-    #if args.anarchy_mode:
-    #    model.load_state_dict(load_dict,strict=False)
-    #else:
-    #    model.load_state_dict(load_dict,strict=False)
 
     if AdapterMethod == 'pissa':
         init_dict = {}
