@@ -232,7 +232,11 @@ if 'x070' in os.environ["RWKV_MY_TESTING"]:
             assert all(i.is_contiguous() for i in [w,q,k,v,z,b])
             y = torch.empty_like(v)
             s = torch.empty(B,H,T//CHUNK_LEN,C,C, dtype=torch.float32,device=w.device)
+            #print(f's shape = {s.shape}')
+            
             sa = torch.empty(B,T,H,C, dtype=torch.float32,device=w.device)
+            #print(f'sa shape = {sa.shape}')
+            #)
             torch.ops.wind_backstepping.forward(w,q,k,v,z,b, y,s,sa)
             ctx.save_for_backward(w,q,k,v,z,b,s,sa)
             return y

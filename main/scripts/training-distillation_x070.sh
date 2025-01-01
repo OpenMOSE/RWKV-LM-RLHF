@@ -1,5 +1,5 @@
 python train.py --load_model "myfolder/models/rwkv-x070-2b9-world-v3-8%trained-20241217-ctx4k.pth" \
- --wandb "RWKV-LM-RLHF x070 2.9B Distillation" --proj_dir "myfolder/Outputs/x070-2b9-dist" \
+ --wandb "RWKV-LM-RLHF x070 2.9B Distillation from 14B" --proj_dir "myfolder/Outputs/x070-2b9-dist3" \
  --infctx 0 \
  --vocab_size 65536 --ctx_len 4096 \
  --epoch_steps 200 --epoch_count 200 --epoch_begin 0 --epoch_save 1 \
@@ -9,14 +9,15 @@ python train.py --load_model "myfolder/models/rwkv-x070-2b9-world-v3-8%trained-2
  --accelerator gpu --devices 1 --precision bf16 \
  --grad_cp 1 --my_testing "x070" \
  --strategy deepspeed_stage_1 \
- --layer_profile 'layerprofile/32_TEST.csv' \
+ --layer_profile 'layerprofile/32_TEST_bone.csv' \
  --quant 1 \
  --quant_mode 'int8'\
  --gpu_arch 'cuda' \
  --limited_lora 0 \
  --distillation 1 \
- --temperature 2 \
+ --temperature 3.0 \
  --top_k 100 \
- --alpha 0.5 \
+ --infctx_dataset_multiplier 16 \
+ --alpha 0.2 \
  --smoothing 0.005 \
  --train_data_file 'myfolder/datasets/test_jp_en.h5'

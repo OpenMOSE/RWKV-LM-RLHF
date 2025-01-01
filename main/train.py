@@ -403,14 +403,17 @@ if __name__ == "__main__":
         #             print(f'  LoRA additionally training parameter {pname}')
         #             param.requires_grad = True
         
-        if 'x070' in os.environ["RWKV_MY_TESTING"] and args.limited_lora == 0:
+        if 'x070' in os.environ["RWKV_MY_TESTING"]:# and args.limited_lora == 0:
             #print('x070 Additional Parameters')
-            for pname, param in module.named_parameters():
-                for targetname in v7_additional_parameters:
-                    if targetname in pname and targetname != '' and pname != '':
-                        print(f'x070 Additional Parameters {pname}')
-                        param.requires_grad = True
-                        break
+            for i in range(args.n_layer):
+                text = f'blocks.{str(i)}.'
+
+                for pname, param in module.named_parameters():
+                    for targetname in v7_additional_parameters:
+                        if (targetname in pname and targetname != '' and pname != '') and text in pname and (LAYER_CONFIG[f'{str(i)}']['mode'] != 'freeze' and args.limited_lora == 0):
+                            print(f'x070 Additional Parameters {pname}')
+                            param.requires_grad = True
+                            break
 
                     
 
@@ -430,7 +433,7 @@ if __name__ == "__main__":
                     #print(len(LAYER_CONFIG[f'{str(i)}']['RejectParts']))
                     if any(word in pname for word in LAYER_CONFIG[f'{str(i)}']['RejectParts']) and LAYER_CONFIG[f'{str(i)}']['RejectParts'][0] != "" and text in pname:
                         print(f'{pname} train rejected')
-                    elif ('ln_x' in pname or 'ln1' in pname or 'ln2' in pname or 'time' in pname) and text in pname and args.limited_lora == 0:
+                    elif ('ln_x' in pname or 'ln1' in pname or 'ln2' in pname or 'time' in pname) and text in pname and (LAYER_CONFIG[f'{str(i)}']['mode'] != 'freeze' or args.limited_lora == 0):
                         print(f'Additional training FullParameter {pname}')
                         param.requires_grad = True
 
