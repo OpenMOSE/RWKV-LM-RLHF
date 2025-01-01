@@ -34,6 +34,7 @@ with torch.no_grad():
         if k.endswith('.weight') or k.endswith('head'):
             prefix = k[:-len('.weight')]
             gbmm = prefix + '.bone'
+            print(f'bone merging {k}')
             
             # if gbmm in keys:  ##old
             #     w[k] = w[k].to(device=device)

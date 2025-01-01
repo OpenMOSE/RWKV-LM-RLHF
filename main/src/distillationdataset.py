@@ -2,14 +2,23 @@ import torch
 import h5py
 import numpy as np
 import random
+import copy
 from torch.utils.data import Dataset, DataLoader
 
 class HDF5TopKTensorDataset(Dataset):
-    def __init__(self,args, file_path, top_k=100, max_seq_length=4096):
+    def __init__(self,args, file_path, top_k=100, max_seq_length=4096,overlap_div=4):
         self.file_path = file_path
         self.top_k = top_k
         self.max_seq_length = max_seq_length
         self.args = args
+
+        self.tokenshift = True
+        self.CurrentExcessToken = None
+        self.CurrentExcessTopKValue = None
+        self.CurrentExcessTopKIndice = None
+        self.overlap_length = int(max_seq_length / overlap_div)
+
+        self.debug = False
         
         with h5py.File(self.file_path, 'r') as f:
             self.dataset_length = len(f['tokens'])
@@ -21,7 +30,7 @@ class HDF5TopKTensorDataset(Dataset):
     
     def __getitem__(self, idx):
 
-        N = 1
+        N = self.args.infctx_dataset_multiplier#1
 
         random_indices = [random.randint(0, self.dataset_length - 1) for _ in range(N)]
 
@@ -35,35 +44,125 @@ class HDF5TopKTensorDataset(Dataset):
         #    tokens = f['tokens'][idx][:]
         #    top_k_values = f['top_k_values'][idx][:]
         #    top_k_indices = f['top_k_indices'][idx][:]
-        with h5py.File(self.file_path, 'r') as f:
 
-            tokens_list = []
-            top_k_values_list = []
-            top_k_indices_list = []
-            #tokens = np.concatenate((f['tokens'][idx][:], f['tokens'][idx2][:]))
-            #top_k_values = np.concatenate((f['top_k_values'][idx][:], f['top_k_values'][idx2][:]))
-            #top_k_indices = np.concatenate((f['top_k_indices'][idx][:], f['top_k_indices'][idx2][:]))  
-            # 
-            # # Read data for each random index
-            for idx in random_indices:
-                tokens_list.append(f['tokens'][idx][:])
-                top_k_values_list.append(f['top_k_values'][idx][:])
-                top_k_indices_list.append(f['top_k_indices'][idx][:])
+
+        LastTokens = None
+        LastTopKValue = None
+        LastTopKIndice = None
+
+
+        #tokens = None
+        tokens = None
+        top_k_values = None
+        top_k_indices = None
+
+
+        if self.CurrentExcessToken is not None:
+            if len(self.CurrentExcessToken) > 0:
+                LastTokens = self.CurrentExcessToken
+                LastTopKValue = (self.CurrentExcessTopKValue)
+                LastTopKIndice = (self.CurrentExcessTopKIndice)
+
+        GetNewDataset = False
+
+        
+
+        if LastTokens is not None:
+            if len(LastTokens) < self.max_seq_length:
+                GetNewDataset = True
+                if self.debug: print('LastTokens is below max seq length')
+                #print(f'lasttoken = {len(LastTokens)}')
+            else:
+                GetNewDataset = False
+                #print(f'lasttoken = {len(LastTokens)}')
+        else: 
+            #if self.debug: print('LastTokens is None')
+            GetNewDataset = True
+
+        if self.tokenshift == False:
+            GetNewDataset = True
+
+
+
+        if GetNewDataset:
+            if self.debug:
+                print('GetNewDataset')
+            with h5py.File(self.file_path, 'r') as f:
+
+                tokens_list = []
+                top_k_values_list = []
+                top_k_indices_list = []
             
-            # Concatenate all data
-            tokens = np.concatenate(tokens_list)
-            top_k_values = np.concatenate(top_k_values_list)
-            top_k_indices = np.concatenate(top_k_indices_list) 
+                for idx in random_indices:
+                    tokens_list.append(f['tokens'][idx][:])
+                    top_k_values_list.append(f['top_k_values'][idx][:])
+                    top_k_indices_list.append(f['top_k_indices'][idx][:])
+                    
+                
+                # Concatenate all data
+                tokens = np.concatenate(tokens_list)
+                top_k_values = np.concatenate(top_k_values_list)
+                top_k_indices = np.concatenate(top_k_indices_list) 
 
-        #print(f'idx = {idx}')
+                top_k_values = top_k_values.reshape(len(tokens),-1)
+                top_k_indices = top_k_indices.reshape(len(tokens),-1)
+
+                #print(f'top_k_values = {top_k_values.shape}')
+
+            #print(f'idx = {idx}')
+        if self.tokenshift:
+            if LastTokens is not None and tokens is not None:
+                if self.debug:
+                    print(f'Combined with old tokens {len(LastTokens)} {len(tokens)}')
+                tokens = np.hstack((LastTokens,tokens))
+                top_k_values = np.vstack((LastTopKValue,top_k_values))
+                top_k_indices = np.vstack((LastTopKIndice,top_k_indices))
+                #print(f'top_k_values = {top_k_values.shape}')
+
+
+                #print(f'tokens = {len(tokens)} topkvalues = {len(top_k_values)} topkindices = {len(top_k_indices)}')
+            elif LastTokens is not None:
+                if self.debug:
+                    print(f'Load from old tokens {len(LastTokens)}')
+                tokens = LastTokens
+                top_k_values = LastTopKValue
+                top_k_indices = LastTopKIndice
         
         # limit sequence length
         seq_len = min(len(tokens), self.max_seq_length)
+
+        if self.tokenshift:
+            if len(tokens) > self.max_seq_length:
+                #Oversize tokens, reserve next token
+                if self.debug:
+                    print(f'tokens= {tokens}')
+                    print(f'tokens cut [{self.max_seq_length-self.overlap_length} : {len(tokens)-1}]')
+                #print(f'tokens = {len(tokens)} topkvalues = {len(top_k_values)} topkindices = {len(top_k_indices)}')
+                self.CurrentExcessToken = tokens[ self.max_seq_length-self.overlap_length : len(tokens)-1]
+                self.CurrentExcessTopKValue= top_k_values[ self.max_seq_length-self.overlap_length : len(tokens)-1]#[:]
+                self.CurrentExcessTopKIndice= top_k_indices[ self.max_seq_length-self.overlap_length : len(tokens)-1]#[:]
+                #print(f'CurrentExcessToken = {len(self.CurrentExcessToken)} CurrentExcessTopKValue = {len(self.CurrentExcessTopKValue)} CurrentExcessTopKIndice = {len(self.CurrentExcessTopKIndice)}')
+                if self.debug:
+                    print(f'Stored to ExcessToken {len(self.CurrentExcessToken)}')
+            else:
+                self.CurrentExcessToken = None
+                self.CurrentExcessTopKValue = None
+                self.CurrentExcessTopKIndice = None
+
+
+
+
+
+
         tokens = tokens[:seq_len]
+        #top_k_values = top_k_values[:seq_len][:]
+        #top_k_indices = top_k_indices[:seq_len][:]
+
+        #print(len(tokens))
         
         # Top-K値とインデックスを2次元に戻す
-        top_k_values = top_k_values[:seq_len * self.top_k].reshape(seq_len, self.top_k)
-        top_k_indices = top_k_indices[:seq_len * self.top_k].reshape(seq_len, self.top_k)
+        #top_k_values = top_k_values[:seq_len * self.top_k].reshape(seq_len, self.top_k)
+        #top_k_indices = top_k_indices[:seq_len * self.top_k].reshape(seq_len, self.top_k)
         
         # padding and mask
         # padded_tokens = np.zeros(self.max_seq_length, dtype=np.int64)

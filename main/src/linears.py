@@ -432,7 +432,7 @@ class LoraEmbedding(nn.Module): #Not working well. please help
 
 class LoraLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :) Chaos Modified
     #@torch.jit.unused
-    def __init__(self, in_features: int, out_features: int, bias: bool, n_layer: int):
+    def __init__(self, in_features: int, out_features: int, bias: bool, n_layer: int, pname=''):
         super().__init__()
 
         self.weight = nn.Parameter(torch.empty((out_features, in_features)))
@@ -489,7 +489,7 @@ class LoraLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :) Chaos Modified
     
 
 class QuantLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :)
-    def __init__(self, in_features: int, out_features: int, bias: bool, n_layer: int):
+    def __init__(self, in_features: int, out_features: int, bias: bool, n_layer: int,pname = ''):
         super().__init__()
 
         self.weight = nn.Parameter(torch.empty((out_features, in_features)))
@@ -516,24 +516,30 @@ class QuantLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :)
 @functools.wraps(LoraLinear)
 def make_linear_att(*args, **kwargs):
     layer_id = kwargs.get('n_layer')
-    if LAYER_CONFIG[f'{str(layer_id)}']['mode'] == 'freeze':
+    pname = kwargs.get('pname')
+    Reject = False
+    if any(word in pname for word in LAYER_CONFIG[f'{str(layer_id)}']['RejectParts']) and LAYER_CONFIG[f'{str(layer_id)}']['RejectParts'][0] != '':
+        Reject = True
+        print(f'reject pname {pname}')
+    if LAYER_CONFIG[f'{str(layer_id)}']['mode'] == 'freeze' or Reject == True:
         return QuantLinear(*args, **kwargs)
-    elif "att" in LAYER_CONFIG[f'{str(layer_id)}']["parts"]:
-        return LoraLinear(*args, **kwargs)
     else:
-        return nn.Linear(*args, **kwargs) # will Error
+        return LoraLinear(*args, **kwargs)
 
 
 @functools.wraps(LoraLinear)
 def make_linear_ffn(*args, **kwargs):
     layer_id = kwargs.get('n_layer')
+    pname = kwargs.get('pname')
+    Reject = False
+    if any(word in pname for word in LAYER_CONFIG[f'{str(layer_id)}']['RejectParts']) and LAYER_CONFIG[f'{str(layer_id)}']['RejectParts'][0] != '':
+        Reject = True
+        print(f'reject pname {pname}')
     #print(f'ffn layerid = {layer_id}')
-    if LAYER_CONFIG[f'{str(layer_id)}']['mode'] == 'freeze':
+    if LAYER_CONFIG[f'{str(layer_id)}']['mode'] == 'freeze' or Reject == True:
         return QuantLinear(*args, **kwargs)
-    elif "ffn" in LAYER_CONFIG[f'{str(layer_id)}']["parts"]:
-        return LoraLinear(*args, **kwargs)
     else:
-        return nn.Linear(*args, **kwargs) # will Error
+        return LoraLinear(*args, **kwargs)
     
 
 @functools.wraps(HeadLoraLinear)

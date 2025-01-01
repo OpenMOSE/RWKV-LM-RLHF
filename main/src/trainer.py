@@ -41,20 +41,7 @@ class train_callback(pl.Callback):
         	# pl_moduleに含まれるすべてのサブモジュールを指定されたデバイスに移動
             pl_module.to(pl_module.device)
 		
-		# トレーナーが管理している他のモデルも移動する場合
-        	#for model in trainer.model_connector.models:
-        #		model.to(pl_module.device)
-        	
-        #print(0)
-        #torch.cuda.empty_cache()
 
-        #np.random.seed(trainer.global_step + args.lisa_rand_seed)
-        
-        
-        
-        #print(1)
-        # if args.cuda_cleanup > 0:
-        #     torch.cuda.empty_cache()
         real_step = trainer.global_step + args.epoch_begin * args.epoch_steps
 
         # LR schedule
@@ -72,28 +59,7 @@ class train_callback(pl.Callback):
                 lr = args.lr_init + (args.lr_final - args.lr_init) * progress
             else:  # exp decay
                 lr = args.lr_init * math.exp(math.log(args.lr_final / args.lr_init) * pow(progress, 1))
-            # if trainer.is_global_zero:
-            #     print(trainer.global_step, decay_step, decay_total, w_step, progress, lr)
-        #print(3)
-        if args.my_exit_tokens != 0: # cosine decay
-            real_tokens = real_step * args.ctx_len * args.real_bsz
-            warmup_tokens = w_step * args.ctx_len * args.real_bsz
-            progress = (real_tokens - warmup_tokens) / (abs(args.my_exit_tokens) - warmup_tokens)
-            progress = max(0, min(1, progress))
-            lr_final_factor = args.lr_final / args.lr_init                
-            lr_mult = (0.5 + lr_final_factor / 2) + (0.5 - lr_final_factor / 2) * math.cos(math.pi * progress)
-            if args.my_exit_tokens > 0:
-                lr = args.lr_init * lr_mult
-            else:
-                lr = (lr + args.lr_init * lr_mult) / 2
-            if progress >= 1:
-                if (trainer.is_global_zero) or ('deepspeed_stage_3' in args.strategy):
-                    my_save(
-                        args, trainer,
-                        pl_module.state_dict(),
-                        f"{args.proj_dir}/rwkv-final.pth",
-                    )
-                    exit(0)
+
         #print(4)
         if trainer.global_step < w_step:
             lr = lr * (0.2 + 0.8 * trainer.global_step / w_step)
@@ -103,14 +69,28 @@ class train_callback(pl.Callback):
         else:
             wd_now = args.weight_decay
         #print(6)
-        for param_group in trainer.optimizers[0].param_groups:
-            if param_group["weight_decay"] > 0:
-                param_group["weight_decay"] = wd_now
-            if args.layerwise_lr > 0:
-                param_group["lr"] = lr * param_group["my_lr_scale"]
-                # print(param_group["lr"], param_group["my_lr_scale"])
-            else:
-                param_group["lr"] = lr
+
+
+        if args.lr_advanced:
+            for param_group in trainer.optimizers[0].param_groups:
+                #pname = param_group["pname"]
+                param_lr_init = param_group["lr_init"]
+                param_lr_final = param_group["lr_final"]
+                
+                if trainer.global_step < w_step:
+                    param_group["lr"] = param_lr_init * (0.2 + 0.8 * trainer.global_step / w_step)
+                else:
+                    param_group["lr"] = param_lr_init * math.exp(math.log(param_lr_final / param_lr_init) * pow(progress, 1))
+
+                #print(f'Setting {pname} LR_init {param_lr_init} LR_final {param_lr_final} LR_Now {param_group["lr"]}')
+        else:
+            for param_group in trainer.optimizers[0].param_groups:
+                if param_group["weight_decay"] > 0:
+                    param_group["weight_decay"] = wd_now
+                if args.layerwise_lr > 0:
+                    param_group["lr"] = lr * param_group["my_lr_scale"]
+                else:
+                    param_group["lr"] = lr
 
         trainer.my_lr = lr
         trainer.my_wd = wd_now
@@ -226,18 +206,16 @@ class train_callback(pl.Callback):
         torch.cuda.empty_cache()
         if (trainer.is_global_zero) or ('deepspeed_stage_3' in args.strategy):  # save pth
             if (args.epoch_save > 0 and trainer.current_epoch % args.epoch_save == 0) or (trainer.current_epoch == args.epoch_count - 1):
-                # if args.data_type == 'wds_img':
-                #     raw_dict = pl_module.state_dict()
-                #     for k in raw_dict:
-                #         if k.startswith('encoder.') or k.startswith('decoder.'):
-                #             to_save_dict[k] = raw_dict[k]
-                # else:
-                    to_save_dict = pl_module.state_dict()
+                to_save_dict = pl_module.state_dict()
 
-                    lora_dict = {}
+                lora_dict = {}
+                state_dict = {}
 
-                    #if LAYER_CONFIG['emb']['mode']=='full':
-                    for name, state in to_save_dict.items():
+                param_dict = {n: p for n, p in pl_module.named_parameters()}
+
+                for name, state in to_save_dict.items():
+                    #print(f'{name} {param_dict[name].requires_grad}')
+                    if param_dict[name].requires_grad:
                         if LAYER_CONFIG['emb']['mode']=='full' and 'emb' in name:
                             lora_dict[name] = state
                         if LAYER_CONFIG['head']['mode']=='full' and 'head' in name:
@@ -246,25 +224,36 @@ class train_callback(pl.Callback):
                             text = f'blocks.{str(i)}'
                             if LAYER_CONFIG[f'{str(i)}']['mode']=='full' and text in name:
                                 lora_dict[name] = state
-                        if '.bone' in name or '.lora_' in name or '.time' in name or '.ln' in name:
+                                break
+                        if '.time_state' in name and args.state_output_mode == 0:
+                                lora_dict[name] = state
+                        elif '.time_state' in name:
+                                lora_dict[name] = state
+                                state_dict[name] = state
+                        elif ('.bone' in name or '.lora_' in name or '.time' in name or '.ln' in name):
                             lora_dict[name] = state
                         elif args.limited_lora == 0:
                             for targetname in v7_additional_parameters:
                                 if targetname in name and targetname != '' and name != '':
                                     lora_dict[name] = state
-                                    #print(f'{name} {state.shape}')
                                     break
 
 
 
-                    try:
+                try:
+                    my_save(
+                        args, trainer,
+                        lora_dict,
+                        f"{args.proj_dir}/rwkv-{args.epoch_begin + trainer.current_epoch}.pth",
+                    )
+                    if args.state and args.state_output_mode != 0:
                         my_save(
-                            args, trainer,
-                            lora_dict,
-                            f"{args.proj_dir}/rwkv-{args.epoch_begin + trainer.current_epoch}.pth",
+                        args, trainer,
+                        state_dict,
+                        f"{args.proj_dir}/rwkv-{args.epoch_begin + trainer.current_epoch}-state.pth",
                         )
-                    except Exception as e:
-                        print('Error\n\n', e, '\n\n')
+                except Exception as e:
+                    print('Error\n\n', e, '\n\n')
 
         if trainer.is_global_zero:  # logging
             trainer.my_log.write(f"{args.epoch_begin + trainer.current_epoch} {trainer.my_epoch_loss:.6f} {(trainer.my_epoch_loss):.6f} {trainer.my_lr:.8f} {datetime.datetime.now()} {trainer.current_epoch}\n")
