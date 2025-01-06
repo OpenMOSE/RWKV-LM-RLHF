@@ -34,8 +34,8 @@ def csv_to_jsonl(input_csv, output_jsonl):
             jsonl_file.write('\n')
 
 # 使用例
-input_csv_file = 'myfolder/datasets/JPEN_SFT_Base.csv'
-output_jsonl_file = 'myfolder/dataset_box/JPEN_SFT_Base.jsonl'
+input_csv_file = 'myfolder/datasets/tweets01.csv'
+output_jsonl_file = 'myfolder/datasets/tweets01.csv.jsonl'
 
 csv_to_jsonl(input_csv_file, output_jsonl_file)
 print(f"変換が完了しました。結果は {output_jsonl_file} に保存されています。")

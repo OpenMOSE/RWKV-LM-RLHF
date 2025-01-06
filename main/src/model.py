@@ -224,29 +224,49 @@ if 'x070' in os.environ["RWKV_MY_TESTING"]:
 
     class WindBackstepping(torch.autograd.Function):
         @staticmethod
-        def forward(ctx, w,q,k,v,z,b):
+        def forward(ctx, w,q,k,v,z,b,fp32mode=False):
             B,T,H,C = w.shape 
             #print(f'T = {T} CHUNK_LEN = {CHUNK_LEN}')
             assert T%CHUNK_LEN == 0
+            if fp32mode:
+                w=w.to(dtype=torch.bfloat16)
+                q=q.to(dtype=torch.bfloat16)
+                k=k.to(dtype=torch.bfloat16)
+                v=v.to(dtype=torch.bfloat16)
+                z=z.to(dtype=torch.bfloat16)
+                b=b.to(dtype=torch.bfloat16)
+                fpmode = torch.tensor(32)
+            else:
+                fpmode = torch.tensor(16)
+
             assert all(i.dtype==torch.bfloat16 for i in [w,q,k,v,z,b])
             assert all(i.is_contiguous() for i in [w,q,k,v,z,b])
             y = torch.empty_like(v)
             s = torch.empty(B,H,T//CHUNK_LEN,C,C, dtype=torch.float32,device=w.device)
-            #print(f's shape = {s.shape}')
             
             sa = torch.empty(B,T,H,C, dtype=torch.float32,device=w.device)
-            #print(f'sa shape = {sa.shape}')
-            #)
+
             torch.ops.wind_backstepping.forward(w,q,k,v,z,b, y,s,sa)
-            ctx.save_for_backward(w,q,k,v,z,b,s,sa)
+            ctx.save_for_backward(w,q,k,v,z,b,s,sa,fpmode)
+            if fpmode == torch.tensor(32):
+                return y.float()
             return y
         @staticmethod
         def backward(ctx, dy):
-            assert all(i.dtype==torch.bfloat16 for i in [dy])
+            
             assert all(i.is_contiguous() for i in [dy])
-            w,q,k,v,z,b,s,sa = ctx.saved_tensors
+            w,q,k,v,z,b,s,sa,fpmode = ctx.saved_tensors
+            if fpmode == torch.tensor(16):
+                assert all(i.dtype==torch.bfloat16 for i in [dy])
+            else:
+                dy = [i.to(torch.bfloat16) if i.is_contiguous() else i.contiguous().to(torch.bfloat16) for i in dy]
+                if isinstance(dy, list):
+                    dy = torch.cat(dy, dim=0)
+
             dw,dq,dk,dv,dz,db = [torch.empty_like(x) for x in [w,q,k,v,z,b]]
             torch.ops.wind_backstepping.backward(w,q,k,v,z,b, dy,s,sa, dw,dq,dk,dv,dz,db)
+            if fpmode == torch.tensor(32):
+                return dw.float(),dq.float(),dk.float(),dv.float(),dz.float(),db.float()
             return dw,dq,dk,dv,dz,db
 
     def RUN_CUDA_RWKV7g(q,w,k,v,a,b):
@@ -301,6 +321,8 @@ class RWKV_Tmix_x070(nn.Module):
             D_DECAY_LORA = 64
             if C == 2560:
                 D_DECAY_LORA = 96
+            elif C == 4096 and 'x070Upgraded' in args.my_testing:
+                D_DECAY_LORA = D_DECAY_LORA * 2
             # D_DECAY_LORA = max(32, int(round(  (1.8*(C**0.5))  /32)*32)) # suggestion
             self.w1 = nn.Parameter(torch.zeros(C, D_DECAY_LORA))
             self.w2 = nn.Parameter(ortho_init(torch.zeros(D_DECAY_LORA, C), 0.1))
@@ -312,6 +334,9 @@ class RWKV_Tmix_x070(nn.Module):
             D_AAA_LORA = 64
             if C == 2560:
                 D_AAA_LORA = 96
+            elif C == 4096 and 'x070Upgraded' in args.my_testing:
+                print('openmose mytesting mode')
+                D_AAA_LORA = D_AAA_LORA * 2
             # D_AAA_LORA = max(32, int(round(  (1.8*(C**0.5))  /32)*32)) # suggestion
             self.a1 = nn.Parameter(torch.zeros(C, D_AAA_LORA))
             self.a2 = nn.Parameter(ortho_init(torch.zeros(D_AAA_LORA, C), 0.1))
@@ -320,6 +345,8 @@ class RWKV_Tmix_x070(nn.Module):
             D_MV_LORA = 32
             if C == 2560:
                 D_MV_LORA = 64
+            elif C == 4096 and 'x070Upgraded' in args.my_testing:
+                D_MV_LORA = D_MV_LORA * 4
             # D_MV_LORA = max(32, int(round(  (1.3*(C**0.5))  /32)*32)) # suggestion
             self.v1 = nn.Parameter(torch.zeros(C, D_MV_LORA))
             self.v2 = nn.Parameter(ortho_init(torch.zeros(D_MV_LORA, C), 0.1))
@@ -328,6 +355,8 @@ class RWKV_Tmix_x070(nn.Module):
             D_GATE_LORA = 128
             if C == 2560:
                 D_GATE_LORA = 320
+            elif C == 4096 and 'x070Upgraded' in args.my_testing:
+                D_GATE_LORA = D_GATE_LORA * 4
             # D_GATE_LORA = max(32, int(round(  (0.6*(C**0.8))  /32)*32)) # suggestion
             # Note: for some data, you can reduce D_GATE_LORA or even remove this gate
             self.g1 = nn.Parameter(torch.zeros(C, D_GATE_LORA))
@@ -403,6 +432,7 @@ class RWKV_Tmix_x070(nn.Module):
         k = k * (1 + (a-1) * self.k_a)
 
         x = RUN_CUDA_RWKV7g(r, w, k, v, -kk, kk*a)
+
         x = self.ln_x(x.view(B * T, C)).view(B, T, C)
 
         x = x + ((r.view(B,T,H,-1)*k.view(B,T,H,-1)*self.r_k).sum(dim=-1, keepdim=True) * v.view(B,T,H,-1)).view(B,T,C)
@@ -440,11 +470,11 @@ class RWKV_CMix_x070(nn.Module):
             LinearMode = 1
 
         if LinearMode == 0:
-            self.key = nn.Linear(args.n_embd, args.n_embd * 4, bias=False)
-            self.value = nn.Linear(args.n_embd * 4, args.n_embd, bias=False)
+            self.key = nn.Linear(args.n_embd, args.dim_ffn, bias=False)
+            self.value = nn.Linear(args.dim_ffn, args.n_embd, bias=False)
         else:
-            self.key = make_linear_ffn(args.n_embd, args.n_embd * 4, bias=False,n_layer=self.layer_id,pname='ffn.key')
-            self.value = make_linear_ffn(args.n_embd * 4, args.n_embd, bias=False,n_layer=self.layer_id,pname='ffn.value')
+            self.key = make_linear_ffn(args.n_embd, args.dim_ffn, bias=False,n_layer=self.layer_id,pname='ffn.key')
+            self.value = make_linear_ffn(args.dim_ffn, args.n_embd, bias=False,n_layer=self.layer_id,pname='ffn.value')
 
         # !!! initialize if you are using RWKV_Tmix_x070 in your code !!!
         # self.key.weight.data.uniform_(-0.5/(args.n_embd**0.5), 0.5/(args.n_embd**0.5))
@@ -1361,7 +1391,7 @@ class RWKV(pl.LightningModule):
 
             for n, p in self.named_parameters():
                 print(f'LR Check {n}')
-                if ('emb' in n  or 'ln_in' in n):# and LAYER_CONFIG['emb']['mode'] == 'full':
+                if ('emb' in n  or 'ln0' in n):# and LAYER_CONFIG['emb']['mode'] == 'full':
                     if p.requires_grad:
                         optim_groups.append({"params":[param_dict[n]],
                                             'lr_init':float(LAYER_CONFIG['emb']['lr_init']), 
@@ -1377,6 +1407,7 @@ class RWKV(pl.LightningModule):
                                             'lr_final':float(LAYER_CONFIG['head']['lr_final']),
                                             'weight_decay':float(LAYER_CONFIG['head']['weight_decay']) ,
                                             'pname':'head'})
+                        print(optim_groups)
                 else:
                     print('Layer Check')
                     Found = False

@@ -139,7 +139,7 @@ class train_callback(pl.Callback):
                 pass
             trainer.my_time_ns = t_now
             if pl.__version__[0]=='2':
-                trainer.my_loss = outputs["loss"]
+                trainer.my_loss = outputs["loss"]*trainer.accumulate_grad_batches
             else:
                 trainer.my_loss = trainer.my_loss_all.float().mean().item()
             trainer.my_loss_sum += trainer.my_loss
@@ -230,7 +230,7 @@ class train_callback(pl.Callback):
                         elif '.time_state' in name:
                                 lora_dict[name] = state
                                 state_dict[name] = state
-                        elif ('.bone' in name or '.lora_' in name or '.time' in name or '.ln' in name):
+                        elif ('.bone' in name or '.lora_' in name or '.time' in name or 'ln' in name):
                             lora_dict[name] = state
                         elif args.limited_lora == 0:
                             for targetname in v7_additional_parameters:

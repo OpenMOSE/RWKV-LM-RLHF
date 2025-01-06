@@ -196,6 +196,8 @@ if __name__ == "__main__":
         args.dim_att = args.n_embd
     if args.dim_ffn <= 0:
         args.dim_ffn = int((args.n_embd * 3.5) // 32 * 32) # default = 3.5x emb size
+        if 'x070' in args.my_testing:
+            args.dim_ffn = int((args.n_embd * 4.0))
 
      
     args.run_name = f"{args.vocab_size} ctx{args.ctx_len} L{args.n_layer} D{args.n_embd}"
@@ -392,7 +394,7 @@ if __name__ == "__main__":
         #     for param in module.parameters():
         #         print(f'  additionally training module {name}')
         #         param.requires_grad = True
-        elif ('ln_in' in name or 'ln_out' in name) and args.limited_lora == 0:
+        elif ('ln0' in name or 'ln_out' in name) and args.limited_lora == 0:
             for param in module.parameters():
                 print(f'  additionally training module {name}')
                 param.requires_grad = True
@@ -433,7 +435,7 @@ if __name__ == "__main__":
                     #print(len(LAYER_CONFIG[f'{str(i)}']['RejectParts']))
                     if any(word in pname for word in LAYER_CONFIG[f'{str(i)}']['RejectParts']) and LAYER_CONFIG[f'{str(i)}']['RejectParts'][0] != "" and text in pname:
                         print(f'{pname} train rejected')
-                    elif ('ln_x' in pname or 'ln1' in pname or 'ln2' in pname or 'time' in pname) and text in pname and (LAYER_CONFIG[f'{str(i)}']['mode'] != 'freeze' or args.limited_lora == 0):
+                    elif ('ln_x' in pname or 'ln1' in pname or 'ln2' in pname or 'time' in pname or (i == 0 and 'ln' in pname)) and text in pname and (LAYER_CONFIG[f'{str(i)}']['mode'] != 'freeze' or args.limited_lora == 0):
                         print(f'Additional training FullParameter {pname}')
                         param.requires_grad = True
 
@@ -502,6 +504,13 @@ if __name__ == "__main__":
         trainer.strategy.config["zero_optimization"]["allgather_bucket_size"] = args.ds_bucket_mb * 1000 * 1000
         trainer.strategy.config["zero_optimization"]["reduce_bucket_size"] = args.ds_bucket_mb * 1000 * 1000
         trainer.strategy.config["zero_optimization"]["overlap_comm"] = False
+
+    if args.precision == 32:
+        print('fp32 mode')
+        for pname, param in model.named_modules():
+                print(f'{pname} is changed to fp32')
+                param = param.to(dtype=torch.float32)
+
 
     # must set shuffle=False, persistent_workers=False (because worker is in another thread)
     if args.orpo or args.dpo:

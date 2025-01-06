@@ -61,6 +61,22 @@ with torch.no_grad():
             #     del w[gbmm]
             #     continue
 
+            if quant=='4bit':
+                w[k] = w[k].to(device=device)
+                qw,qs = bnb.functional.quantize_4bit(w[k])
+                w[k] = (bnb.functional.dequantize_4bit(qw,quant_state=qs)).to(dtype=torch.bfloat16)
+            elif quant=='nf4':
+                qw,qs = bnb.functional.quantize_nf4(w[k])
+                w[k] = (bnb.functional.dequantize_nf4(qw,quant_state=qs)).to(dtype=torch.bfloat16)
+            elif quant=='fp4':
+                qw,qs = bnb.functional.quantize_fp4(w[k])
+                w[k] = (bnb.functional.dequantize_fp4(qw,quant_state=qs)).to(dtype=torch.bfloat16)
+            elif quant=='int8':
+                if 'receptance.weight' in k or 'key.weight' in k or 'value.weight' in k or 'output.weight' in k or 'gate.weight' in k:
+                    w[k] = w[k].to(device='cuda',dtype=torch.bfloat16)
+                    qw,qs = bnb.functional.quantize(w[k].data)
+                    w[k] = (bnb.functional.dequantize(qw.data,state=qs)).to(dtype=torch.bfloat16)
+
             if gbmm in keys: ### row
                 w[k] = w[k].to(device=device)
                 w[gbmm] = w[gbmm].to(device=device)
@@ -72,6 +88,8 @@ with torch.no_grad():
                 del w[k]
                 del w[gbmm]
                 continue
+            else:
+             	output_w[k] = w[k].clone()
 
         if 'bone' not in k:
             print(f'retaining {k}')
