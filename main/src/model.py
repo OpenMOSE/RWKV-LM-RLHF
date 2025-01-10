@@ -95,6 +95,7 @@ if 'x060' in os.environ["RWKV_MY_TESTING"]:
                     if FLAMODE:
                         @torch.jit.ignore
                         def RUN_CUDA_RWKV6_STATE(B, T, C, H, r, k, v, w, u, s):
+                            #print('fla')
                             r = rearrange(r, 'b l (h d) -> b h l d', h = H)
                             k = rearrange(k, 'b l (h d) -> b h l d', h = H)
                             v = rearrange(v, 'b l (h d) -> b h l d', h = H)
@@ -1545,10 +1546,11 @@ class RWKV(pl.LightningModule):
                 # x = x.to(block.device)
                 if args.grad_cp == 1 and i > 0:# and i < len(self.blocks)-1 :
                     x, new_block_state = torch_checkpoint(block, x, block_state, x_emb, use_reentrant=False)
+                    #x, new_block_state = deepspeed.checkpointing.checkpoint(block, x,block_state, x_emb)
                     #x, new_block_state = block(x, block_state, x_emb)
 
                 else:
-                    #x, new_block_state = torch_checkpoint(block, x, block_state, x_emb, use_reentrant=False)
+                    #x, new_block_state = torch_checkpoint(block, x, block_state,x_emb, use_reentrant=False)
                     x, new_block_state = deepspeed.checkpointing.checkpoint(block, x,block_state, x_emb)
                     #x, new_block_state = block(x, block_state, x_emb)
                     #x, new_block_state = torch_checkpoint(block, x, block_state, x_emb, use_reentrant=False)
