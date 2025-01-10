@@ -1,15 +1,15 @@
-python train.py --load_model "myfolder/models/rwkv-x070-2b9-world-v3-25%trained-20250103-ctx4k.pth" \
+python train.py --load_model "myfolder/models/rwkv-x070-450m-world-v2.9-65%trained-20241223-ctx4k.pth" \
  --wandb "RWKV-LM-RLHF x070 2.9B SFT CoT" --proj_dir "myfolder/Outputs/x070-cot-25p" \
- --vocab_size 65536 --ctx_len 8192 \
+ --vocab_size 65536 --ctx_len 2048 \
  --epoch_steps 1000 --epoch_count 200 --epoch_begin 0 --epoch_save 1 \
- --micro_bsz 1 --n_layer 32 --n_embd 2560 \
+ --micro_bsz 1 --n_layer 24 --n_embd 1024 \
  --lr_init 1e-4 --lr_final 1e-6 \
  --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
  --accelerator gpu --devices 1 --precision 'bf16' \
- --grad_cp 1 --my_testing "x070" \
- --strategy deepspeed_stage_2 \
- --layer_profile 'layerprofile/32_TEST_bone_mytest.csv' \
- --quant 1 \
+ --grad_cp 0 --my_testing "x070" \
+ --strategy deepspeed \
+ --layer_profile 'layerprofile/24_TEST_full.csv' \
+ --quant 0 \
  --quant_mode 'int8'\
  --gpu_arch 'cuda' \
  --limited_lora 0 \
@@ -19,4 +19,4 @@ python train.py --load_model "myfolder/models/rwkv-x070-2b9-world-v3-25%trained-
  --infctx_dataset_multiplier 16 \
  --optim '' \
  --train_data_file 'myfolder/2024_dataset/General-dataset.h5' \
- --accumulate_grad_batches 8
+ --accumulate_grad_batches 1
