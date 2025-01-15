@@ -7,8 +7,7 @@ import os, math, gc, importlib
 import torch
 import time
 from torch.nn.utils.rnn import pad_sequence
-# torch._C._jit_set_profiling_executor(True)
-# torch._C._jit_set_profiling_mode(True)
+
 import torch.nn as nn
 from torch.utils.checkpoint import checkpoint as torch_checkpoint
 from torch.nn import functional as F
@@ -27,6 +26,8 @@ from fla.ops.rwkv6 import chunk_rwkv6, fused_recurrent_rwkv6
 from einops._torch_specific import allow_ops_in_compiled_graph  # requires einops>=0.6.1
 from einops import rearrange
 allow_ops_in_compiled_graph()
+
+from bitsandbytes.optim import Adam8bit,AdamW8bit
 
 from .config import LAYER_CONFIG
 
@@ -1651,7 +1652,14 @@ class RWKV(pl.LightningModule):
 
             if self.deepspeed_offload:
                 return DeepSpeedCPUAdam(optim_groups, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=True, amsgrad=False)
-            return FusedAdam(optim_groups,  betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
+            if args.optim == 'Adam8bit':
+                print('Bitsandbytes Adam8bit Mode')
+                return Adam8bit(optim_groups,  betas=self.args.betas, eps=self.args.adam_eps)
+            elif args.optim == 'AdamW8bit':
+                print('Bitsandbytes AdamW8bit Mode')
+                return AdamW8bit(optim_groups,  betas=self.args.betas, eps=self.args.adam_eps)
+            else:
+                return FusedAdam(optim_groups,  betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
 
 
         else:
