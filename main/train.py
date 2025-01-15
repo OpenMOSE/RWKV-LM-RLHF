@@ -42,7 +42,7 @@ if __name__ == "__main__":
     parser.add_argument("--state", default=0, type=int) #for state-tuning x060
     parser.add_argument("--state_output_mode", default=1, type=int) #0: state in MainAdapter, 1: Separate MainAdapter,State 2: Separate state in MainAdapter, State
 
-
+    parser.add_argument("--fla", default=1, type=int)
 
     parser.add_argument("--epoch_steps", default=1000, type=int)  # a mini "epoch" has [epoch_steps] steps
     parser.add_argument("--epoch_count", default=500, type=int)  # train for this many "epochs". will continue afterwards with lr = lr_final
@@ -190,6 +190,10 @@ if __name__ == "__main__":
     else:
         os.environ["RWKV_TRAIN_TYPE"]='normal'
 
+    if args.fla:
+        os.environ["FLA_MODE"] = "1"
+    else:
+        os.environ["FLA_MODE"] = "0"
 
 
     if args.dim_att <= 0:
