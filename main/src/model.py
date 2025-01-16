@@ -15,6 +15,8 @@ import pytorch_lightning as pl
 from pytorch_lightning.utilities import rank_zero_info, rank_zero_only
 from pytorch_lightning.strategies import DeepSpeedStrategy
 
+from einops import rearrange
+
 if importlib.util.find_spec('deepspeed'):
     import deepspeed
     from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
@@ -164,7 +166,7 @@ if 'x060' in os.environ["RWKV_MY_TESTING"]:
 
 
 class RWKV(pl.LightningModule):
-    def __init__(self, args,load_dict=None,realtime_quant=False):
+    def __init__(self, args,load_dict=None,cold_adapter_dict=None,realtime_quant=False):
         super().__init__()
 
         device = self.device
@@ -202,9 +204,106 @@ class RWKV(pl.LightningModule):
         assert args.dim_att % 32 == 0
         assert args.dim_ffn % 32 == 0
 
-        self.emb = make_emb(args.vocab_size, args.n_embd)
+        if cold_adapter_dict is not None:
+            cold_adapter_keys = list(cold_adapter_dict.keys())
+            mode = 'none'
+            for ckeys in cold_adapter_keys:
+                if 'lora' in ckeys:
+                    mode = 'lora'
+                elif 'bone' in ckeys:
+                    mode = 'bone'
+                load_dict[ckeys] = cold_adapter_dict[ckeys]
 
+            def Attach_Adapter(keyname,weight,adapter,mode,scaling=2.0,device='cuda'): #from JL-er lora merge inspired
+                beforeDevice = str(weight.device)
+                if beforeDevice == 'cpu':
+                    weight = weight.to(device=device)      
         
+                print(f'AttachAdapter = {keyname}')
+                if keyname.endswith('.weight') or keyname.endswith('head'):
+                    adapterkeys = list(adapter.keys())
+
+                    if mode == 'lora':
+                        print(f'scaling = {scaling}')
+                        prefix = keyname[:-len('.weight')]
+                        lora_A = prefix + '.lora_A'
+                        lora_B = prefix + '.lora_B'
+                        if lora_A in adapterkeys:
+                            w=adapter
+                            assert lora_B in adapterkeys
+                            print(f'lora merging {lora_A} and {lora_B} into {keyname}')
+                            
+                            assert w[lora_B].shape[1] == w[lora_A].shape[0]
+                            
+                            lora_r = w[lora_B].shape[1]
+
+                            w[lora_A] = w[lora_A].to(device=device)
+                            
+                            w[lora_B] = w[lora_B].to(device=device)
+                            
+                            weight = weight + w[lora_B] @ w[lora_A] * scaling
+                            del w[lora_A]
+                            del w[lora_B]
+                            if beforeDevice == 'cpu':
+                                weight = weight.to(device='cpu')
+                            return weight
+                        for key in adapterkeys:
+                            if key == keyname:
+                                weight = adapter[key].to(dtype=torch.bfloat16,device=device)
+                                print(f'key = {key} is swapped from Adapter')
+                        if beforeDevice == 'cpu':
+                                weight = weight.to(device='cpu')
+                        return weight
+                    elif mode == 'bone':
+                        prefix = keyname[:-len('.weight')]
+                        gbmm = prefix + '.bone'
+                        print(f'gbmm target = {gbmm}')
+                        if gbmm in adapterkeys:
+                            w=adapter
+                            print(f'bone merging {gbmm} into {keyname}')
+                            w[gbmm] = w[gbmm].to(device=device)
+                            b,r,_ = w[gbmm].shape
+                            bone = rearrange(weight, '(a r1) (b r2) -> a b r1 r2', r1 = r, r2 = r)@w[gbmm]+w[gbmm]
+                            weight += rearrange(bone, 'a b r1 r2 ->(a r1) (b r2) ')
+                            print(weight)
+                            del w[gbmm]
+                            if beforeDevice == 'cpu':
+                                weight = weight.to(device='cpu')
+                            return weight
+                        #adapterkeys = list(adapter.keys())
+                        for key in adapterkeys:
+                            if key == keyname:
+                                weight = adapter[key].to(dtype=torch.bfloat16,device=device)
+                                print(f'key = {key} is swapped from Adapter')
+                        if beforeDevice == 'cpu':
+                                weight = weight.to(device='cpu')
+                        return weight
+                    else:
+                        if beforeDevice == 'cpu':
+                                weight = weight.to(device='cpu')
+                        return weight
+                else:
+                    adapterkeys = list(adapter.keys())
+                    for key in adapterkeys:
+                        if key == keyname:
+                            weight = adapter[key].to(dtype=torch.bfloat16,device=device)
+                            print(f'key = {key} is swapped from Adapter')
+                    #print('no target bone merge')
+                    if beforeDevice == 'cpu':
+                                weight = weight.to(device='cpu')
+                    return weight
+            if mode == 'lora' or mode == 'bone':
+                print('Cold Adapter Merging Mode')
+                load_dict_keys = list(load_dict.keys())
+                for key in load_dict_keys:
+                    load_dict[key] = Attach_Adapter(key,load_dict[key],cold_adapter_dict,mode)
+
+            if mode != 'none':
+                del cold_adapter_dict
+
+
+
+        self.emb = make_emb(args.vocab_size, args.n_embd)
 
         self.ln_out = nn.LayerNorm(args.n_embd)
         self.head = make_linear_head(args.n_embd, args.vocab_size, bias=False)

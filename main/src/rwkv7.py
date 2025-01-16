@@ -45,6 +45,15 @@ if 'x070' in ModelGeneration:
             H = HC//C
             w=-torch.exp(w)
             r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
+            s=s.unsqueeze(0).repeat(B, 1, 1, 1)
+            o, state = chunk_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=s, output_final_state=True, head_first=False)
+            return o, state
+        def RUN_RWKV7_INFCTX(r, k, v, w, a, b, s, HEAD_SIZE=64): # for State-tuning, infctx
+            B,T,HC = w.shape
+            C = HEAD_SIZE
+            H = HC//C
+            w=-torch.exp(w)
+            r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
             o, state = chunk_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=s, output_final_state=True, head_first=False)
             return o, state
         @torch.jit.ignore
@@ -55,6 +64,8 @@ if 'x070' in ModelGeneration:
             w=-torch.exp(w)
             r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
             o, state = chunk_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=None, output_final_state=False, head_first=False)
+            #print(state.shape)
+            #exit()
             return o
     else:
         if 'cuda' in RunningDevice:
