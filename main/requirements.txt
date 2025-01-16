@@ -9,5 +9,5 @@ triton
 transformers
 einops
 h5py
-rwkv-fla
 torchao
+git+https://github.com/fla-org/flash-linear-attention
