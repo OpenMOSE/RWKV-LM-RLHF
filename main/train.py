@@ -25,6 +25,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--load_model", default="", type=str)  # full path, with .pth
     parser.add_argument("--load_adapter", default="", type=str)  # full path, with .pth
+    parser.add_argument("--load_cold_adapter", default="", type=str)  # full path, with .pth
     parser.add_argument("--load_adapter_pissa_init", default="", type=str)  # full path, with .pth
     parser.add_argument("--wandb", default="", type=str)  # wandb project name. if "" then don't use wandb
     parser.add_argument("--proj_dir", default="out", type=str)
@@ -356,9 +357,14 @@ if __name__ == "__main__":
         time.sleep(0.5)
 
     FirstProcess()
+
+    ColdAdapter = None
+    if os.path.isfile(args.load_cold_adapter):
+        print('Found ColdAdapter')
+        ColdAdapter = torch.load(args.load_cold_adapter, map_location="cpu")
     
 
-    model = RWKV(args,load_dict,realtime_quant=Realtime_Quant)
+    model = RWKV(args,load_dict,ColdAdapter,realtime_quant=Realtime_Quant)
     #model = RWKV(args,load_dict=None,realtime_quant=Realtime_Quant)
 
     #exit()
