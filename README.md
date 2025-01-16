@@ -61,6 +61,10 @@ A repository exploring the possibilities for deeper fine-tuning of RWKV.
 
 > Rank can be set variably for each layer. see layer_profile
 
+## Support models
+   - v6(Chunk(CUDA,FLA),Infctx,State(CUDA,FLA))
+   - v7(Chunk(CUDA,Triton,FLA),State(FLA))
+
 ## System Requirements
    - CPU RAM >= 32GB
    - Cuda or Rocm GPU.(NVIDIA RTX3090,4090, AMD MI100)
