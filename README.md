@@ -6,7 +6,9 @@
 <div align="center"> 
 A repository exploring the possibilities for deeper fine-tuning of RWKV.
 </div>
-
+<div align="center"> 
+Finally, I started writing the Wiki🙂
+</div>
 <div align="center">
 (https://github.com/OpenMOSE/RWKV-LM-RLHF/wiki)
 </div>
