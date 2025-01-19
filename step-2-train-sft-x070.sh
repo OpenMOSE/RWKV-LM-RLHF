@@ -1,0 +1,25 @@
+python train.py --load_model "myfolder/models/rwkv-x070-2b9-world-v3-40_trained-20250113-ctx4k.pth" \
+ --wandb "RWKV-LM-RLHF x070-2b9 General JPENCN v3" \
+ --proj_dir "myfolder/Outputs/x070GeneralJPENCNv3" \
+ --state 0 \
+ --infctx 0 \
+ --vocab_size 65536 --ctx_len 5120 \
+ --epoch_steps 2000 --epoch_count 200 --epoch_begin 0 --epoch_save 1 \
+ --micro_bsz 3 --n_layer 32 --n_embd 2560 \
+ --lr_init 1e-5 --lr_final 1e-6 \
+ --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
+ --accelerator gpu --devices 2 --precision 'bf16' \
+ --grad_cp 1 --my_testing "x070" \
+ --strategy deepspeed_stage_2_offload \
+ --layer_profile 'layerprofile/32_TEST_bone_2b9_mytest.csv' \
+ --quant 0 \
+ --quant_mode 'nf4'\
+ --gpu_arch 'rocm' \
+ --limited_lora 0 \
+ --sft 1 \
+ --smoothing 0.001 \
+ --random_mode 1 \
+ --optim '' \
+ --train_data_file 'myfolder/datasets/General-jpencnv3.h5' \
+ --infctx_dataset_multiplier 8 \
+ --accumulate_grad_batches 16

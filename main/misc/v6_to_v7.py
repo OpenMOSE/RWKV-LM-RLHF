@@ -2,7 +2,7 @@ import torch
 import numpy as np
 np.set_printoptions(precision=2, suppress=True, linewidth=200)
 
-ppp = 'myfolder/models/RWKV-x060-Jpn-7B-20240816-ctx4096.pth'
+ppp = 'myfolder/models/RWKV-x060-Jpn-14B-20240819-ctx4096.pth'
 dim = 4096
 GATE_DIM = 512
 
@@ -11,7 +11,7 @@ W_LORA_DIM = 128
 
 EMB_DIV = 2
 LINEAR_DIV = 2
-FFN_DIV = 3.5
+FFN_DIV = 4
 GATE_DIV = 2
 LN_BIAS_DIV = 2
 LN_POWER = 0.5
@@ -172,6 +172,6 @@ keys = list(ss.keys())
 for k in keys:
     print(str(list(ss[k].shape)).ljust(15), k.ljust(35))
 
-torch.save(ss, 'myfolder/converted/x060-upgraded.pth')
+torch.save(ss, 'myfolder/converted/RWKV-x070-Jpn-14B-20240819-ctx4096-pruned.pth')
 
 exit(0)
