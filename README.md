@@ -171,4 +171,4 @@ same with RWKV-LM
 Apache 2.0
 
 
-@ 2025 OpenMOSE
+@ 2024 OpenMOSE
