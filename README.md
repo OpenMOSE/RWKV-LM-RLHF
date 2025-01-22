@@ -53,9 +53,6 @@ Finally, I started writing the Wiki🙂
    - New training method proposed by @Jl-er
    - Achieve faster convergence and better fit to data.
    - No complex initialization is required, and fast convergence and better fit to data can be achieved.
-- **PiSSA（Principal Singular values and Singular vectors Adaptation）**: 
-   - Optimize essential singular values ​​and vectors, and freeze the "noise" parts.
-   - Compared to LoRA, it converges much faster and has better final performance.
 - **LoRA**: 
    - Updates to large weight matrices are approximated by products of low-rank matrices.
 - **Quantization**:

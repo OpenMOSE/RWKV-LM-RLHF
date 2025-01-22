@@ -555,7 +555,7 @@ if 'x060' in ModelGeneration:
                 else:
                     LinearMode = 1
             else:
-                LinearMode = 1
+                LinearMode = 1 
             
             if LinearMode == 0:
                 self.receptance = nn.Linear(args.n_embd, args.dim_att, bias=False)

@@ -30,7 +30,7 @@ from bitsandbytes.optim import Adam8bit,AdamW8bit
 
 
 if 'x070' in os.environ["RWKV_MY_TESTING"]:
-    from .rwkv7 import LAYER_CONFIG,RWKV_Tmix_x070,RWKV_Tmix_x070_state,RWKV_CMix_x070,make_linear_head,make_emb
+    from .rwkv7 import LAYER_CONFIG,RWKV_Tmix_x070,RWKV_Tmix_x070_state,RWKV_Tmix_x070_infctx,RWKV_CMix_x070,RWKV_CMix_x070_infctx,make_linear_head,make_emb
 elif 'x060' in os.environ["RWKV_MY_TESTING"]:
     from .rwkv6 import LAYER_CONFIG,RWKV_Tmix_x060,RWKV_Tmix_x060_state,RWKV_Tmix_x060_infctx,RWKV_CMix_x060,RWKV_CMix_x060_infctx,make_linear_head,make_emb
 else:
@@ -64,20 +64,39 @@ if 'x070' in os.environ["RWKV_MY_TESTING"]:
 
             if os.environ["RWKV_TRAIN_TYPE"] == 'state':
                 self.att = RWKV_Tmix_x070_state(args, layer_id) 
+            elif os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
+                self.att = RWKV_Tmix_x070_infctx(args, layer_id) 
             else:
                 self.att = RWKV_Tmix_x070(args, layer_id)  
-            self.ffn = RWKV_CMix_x070(args, layer_id)
+
+            if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
+                self.ffn = RWKV_CMix_x070_infctx(args, layer_id)
+            else:
+                self.ffn = RWKV_CMix_x070(args, layer_id)
 
 
-        def forward(self, x, v_first):
-            if self.layer_id == 0:
-                x = self.ln0(x)
+        if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
+            def forward(self, x, v_first,last_state: BlockState, x_emb=None):
+                if self.layer_id == 0:
+                    x = self.ln0(x)
 
-            x_attn, v_first = self.att(self.ln1(x), v_first)
-            x = x + x_attn
+                x_attn, v_first, att_state = self.att(self.ln1(x), v_first, last_state.time_mix_state)
+                x = x + x_attn
 
-            x = x + self.ffn(self.ln2(x))
-            return x, v_first
+                ffn_out ,ffn_state = self.ffn(self.ln2(x), last_state.channel_mix_state)
+
+                x = x + ffn_out
+                return x, v_first ,BlockState(att_state, ffn_state)
+        else:
+            def forward(self, x, v_first):
+                if self.layer_id == 0:
+                    x = self.ln0(x)
+
+                x_attn, v_first = self.att(self.ln1(x), v_first)
+                x = x + x_attn
+
+                x = x + self.ffn(self.ln2(x))
+                return x, v_first
 if 'x060' in os.environ["RWKV_MY_TESTING"]:
     class Block(nn.Module):
         def __init__(self, args, layer_id):
@@ -99,14 +118,12 @@ if 'x060' in os.environ["RWKV_MY_TESTING"]:
                 else:
                     self.att = RWKV_Tmix_x060(args, layer_id)
 
-            if 'g' in os.environ["RWKV_MY_TESTING"]:
-                self.ffn = MishGLU(args, layer_id)
-            else:
-                if 'x060' in os.environ["RWKV_MY_TESTING"]:
-                    if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
-                        self.ffn = RWKV_CMix_x060_infctx(args, layer_id)
-                    else:
-                        self.ffn = RWKV_CMix_x060(args, layer_id)
+
+            if 'x060' in os.environ["RWKV_MY_TESTING"]:
+                if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
+                    self.ffn = RWKV_CMix_x060_infctx(args, layer_id)
+                else:
+                    self.ffn = RWKV_CMix_x060(args, layer_id)
     
 
             if args.dropout > 0:
@@ -550,40 +567,34 @@ class RWKV(pl.LightningModule):
             if args.dropout > 0:
                 x = self.drop0(x)
 
-            for i, (block, block_state) in enumerate(zip(self.blocks,
-                BlockStateList(last_shift_states, last_wkv_states))):
-                # x = x.to(block.device)
-                if args.grad_cp == 1 and i > 0:# and i < len(self.blocks)-1 :
-                    x, new_block_state = torch_checkpoint(block, x, block_state, x_emb, use_reentrant=False)
-                    #x, new_block_state = deepspeed.checkpointing.checkpoint(block, x,block_state, x_emb)
-                    #x, new_block_state = block(x, block_state, x_emb)
-
-                else:
-                    #x, new_block_state = torch_checkpoint(block, x, block_state,x_emb, use_reentrant=False)
-                    x, new_block_state = deepspeed.checkpointing.checkpoint(block, x,block_state, x_emb)
-                    #x, new_block_state = block(x, block_state, x_emb)
-                    #x, new_block_state = torch_checkpoint(block, x, block_state, x_emb, use_reentrant=False)
-                    #x, new_block_state = deepspeed.checkpointing.checkpoint
-                new_states[i] = new_block_state#.clone().detach()
+            if 'x070' in os.environ["RWKV_MY_TESTING"]:
+                v_first = torch.empty_like(x)
+                
+                for i, (block, block_state) in enumerate(zip(self.blocks,
+                    BlockStateList(last_shift_states, last_wkv_states))):
+                    if args.grad_cp == 1 and i > 0:# and i < len(self.blocks)-1 :
+                        x, v_first, new_block_state = torch_checkpoint(block, x, v_first, block_state, x_emb, use_reentrant=False)
+    
+                    else:
+                        #x, new_block_state = torch_checkpoint(block, x, block_state,x_emb, use_reentrant=False)
+                        x, v_first, new_block_state = deepspeed.checkpointing.checkpoint(block, x,v_first,block_state, x_emb)
+            
+                    new_states[i] = new_block_state 
+            else:
+                for i, (block, block_state) in enumerate(zip(self.blocks,
+                    BlockStateList(last_shift_states, last_wkv_states))):
+                    if args.grad_cp == 1 and i > 0:# and i < len(self.blocks)-1 :
+                        x, new_block_state = torch_checkpoint(block, x, block_state, x_emb, use_reentrant=False)
+    
+                    else:
+                        #x, new_block_state = torch_checkpoint(block, x, block_state,x_emb, use_reentrant=False)
+                        x, new_block_state = deepspeed.checkpointing.checkpoint(block, x,block_state, x_emb)
+            
+                    new_states[i] = new_block_state 
 
             x = self.ln_out(x)
 
-            if args.head_qk > 0:
-                q = self.head_q(x)[:, :T, :]
-                k = self.head_k(x)[:, :T, :]
-                c = (q @ k.transpose(-2, -1)) * (1.0 / args.head_qk)
-                c = c.masked_fill(self.copy_mask[:T, :T] == 0, 0)
-
-                if "32" in os.environ["RWKV_FLOAT_MODE"]:
-                    c = c @ F.one_hot(idx, num_classes=args.vocab_size)
-                elif os.environ["RWKV_FLOAT_MODE"] == "fp16":
-                    c = c @ F.one_hot(idx, num_classes=args.vocab_size).half()
-                elif os.environ["RWKV_FLOAT_MODE"] == "bf16":
-                    c = c @ F.one_hot(idx, num_classes=args.vocab_size).bfloat16()
-
-                x = self.head(x) + c
-            else:
-                x = self.head(x)
+            x = self.head(x)
 
             return x, new_states.shift_states, new_states.wkv_states
         
@@ -1176,22 +1187,8 @@ class RWKV(pl.LightningModule):
 
             x = self.ln_out(x)
 
-            if args.head_qk > 0:
-                q = self.head_q(x)[:, :T, :]
-                k = self.head_k(x)[:, :T, :]
-                c = (q @ k.transpose(-2, -1)) * (1.0 / args.head_qk)
-                c = c.masked_fill(self.copy_mask[:T, :T] == 0, 0)
 
-                if "32" in os.environ["RWKV_FLOAT_MODE"]:
-                    c = c @ F.one_hot(idx, num_classes=args.vocab_size)
-                elif os.environ["RWKV_FLOAT_MODE"] == "fp16":
-                    c = c @ F.one_hot(idx, num_classes=args.vocab_size).half()
-                elif os.environ["RWKV_FLOAT_MODE"] == "bf16":
-                    c = c @ F.one_hot(idx, num_classes=args.vocab_size).bfloat16()
-
-                x = self.head(x) + c
-            else:
-                x = self.head(x)
+            x = self.head(x)
 
             return x
     
