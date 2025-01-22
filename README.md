@@ -34,13 +34,13 @@ Finally, I started writing the Wiki🙂
 
    - More stable training process compared to RL-based methods
 
-- **Infinite Context Compression Distillation Training v6,v7(not infctx)**:
+- **Infinite Context Compression Distillation Training v6,v7**:
   - This approach involves simultaneously training a student model using compressed logits data pre-acquired from a larger parameter model (for example, 14B) as soft labels, and the dataset as hard labels.
 
   - Soft label learning can significantly reduce the risk of overfitting.
 
   - It allows for efficient transfer of specific tasks to smaller models.
-- **Infinite Context Masked SFT with Smoothing Loss** v6,v7(not infctx):
+- **Infinite Context Masked SFT with Smoothing Loss v6,v7**:
   - By incorporating smoothing into the loss calculation, the transfer probability can be increased.
 
   - Dynamic masking allows for efficient loss reduction during multi-batch processing.
