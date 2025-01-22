@@ -45,6 +45,7 @@ class BlockStateList:
             ChannelMixState(self.shift_states[layer, 1]))
 
     def __setitem__(self, layer: int, state: BlockState):
+        #print(f'self.shift_states.shape = {self.shift_states.shape} state.time_mix_state.shift_state.shape = {state.time_mix_state.shift_state.shape}')
         self.shift_states[layer, 0] = state.time_mix_state.shift_state
         self.wkv_states[layer] = state.time_mix_state.wkv_state
         self.shift_states[layer, 1] = state.channel_mix_state.shift_state

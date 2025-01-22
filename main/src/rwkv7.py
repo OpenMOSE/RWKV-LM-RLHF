@@ -19,6 +19,9 @@ allow_ops_in_compiled_graph()
 # about FLA
 from fla.ops.rwkv7 import chunk_rwkv7
 
+# for infctx
+from .infctx_module import *
+
 #global
 HEAD_SIZE = int(os.environ["RWKV_HEAD_SIZE_A"])
 KernelMode = int(os.environ["FLA_MODE"])
@@ -655,6 +658,184 @@ if 'x070' in ModelGeneration:
             x = self.output(x * g)
             return x, v_first
         
+
+    class RWKV_Tmix_x070_infctx(nn.Module):
+        def __init__(self, args, layer_id):
+            super().__init__()
+            self.args = args
+            self.layer_id = layer_id
+            self.my_testing = args.my_testing
+
+            self.head_size = args.head_size_a
+            self.n_head = args.dim_att // self.head_size
+            assert args.dim_att % self.n_head == 0
+            H = self.n_head
+            N = self.head_size
+            C = args.n_embd
+
+            with torch.no_grad():
+                ratio_0_to_1 = layer_id / (args.n_layer - 1)  # 0 to 1
+                ratio_1_to_almost0 = 1.0 - (layer_id / args.n_layer)  # 1 to ~0
+                ddd = torch.ones(1, 1, C)
+                for i in range(C):
+                    ddd[0, 0, i] = i / C
+
+                self.x_r = nn.Parameter(1.0 - torch.pow(ddd, 0.2 * ratio_1_to_almost0))
+                self.x_w = nn.Parameter(1.0 - torch.pow(ddd, 0.9 * ratio_1_to_almost0))
+                self.x_k = nn.Parameter(1.0 - (torch.pow(ddd, 0.9 * ratio_1_to_almost0) + 0.4 * ratio_0_to_1))
+                self.x_v = nn.Parameter(1.0 - (torch.pow(ddd, 0.4 * ratio_1_to_almost0) + 0.6 * ratio_0_to_1))
+                self.x_a = nn.Parameter(1.0 - torch.pow(ddd, 0.9 * ratio_1_to_almost0))
+                self.x_g = nn.Parameter(1.0 - torch.pow(ddd, 0.2 * ratio_1_to_almost0))
+
+                def ortho_init(x, scale):
+                    with torch.no_grad():
+                        shape = x.shape
+                        if len(shape) == 2:
+                            gain = math.sqrt(shape[0] / shape[1]) if shape[0] > shape[1] else 1
+                            nn.init.orthogonal_(x, gain=gain * scale)
+                        elif len(shape) == 3:
+                            gain = math.sqrt(shape[1] / shape[2]) if shape[1] > shape[2] else 1
+                            for i in range(shape[0]):
+                                nn.init.orthogonal_(x[i], gain=gain * scale)
+                        else:
+                            assert False
+                        return x
+
+                D_DECAY_LORA = 64
+                if C == 2560 or C == 2048:
+                    D_DECAY_LORA = 96
+                elif C == 4096 and 'x070Upgraded' in args.my_testing:
+                    D_DECAY_LORA = D_DECAY_LORA * 2
+                # D_DECAY_LORA = max(32, int(round(  (1.8*(C**0.5))  /32)*32)) # suggestion
+                self.w1 = nn.Parameter(torch.zeros(C, D_DECAY_LORA))
+                self.w2 = nn.Parameter(ortho_init(torch.zeros(D_DECAY_LORA, C), 0.1))
+                decay_speed = torch.ones(C)
+                for n in range(C):
+                    decay_speed[n] = -7 + 5 * (n / (C - 1)) ** (0.85 + 1.0 * ratio_0_to_1 ** 0.5)
+                self.w0 = nn.Parameter(decay_speed.reshape(1,1,C) + 0.5) # !!! 0.5 comes from F.softplus !!!
+
+                D_AAA_LORA = 64
+                if C == 2560 or C == 2048:
+                    D_AAA_LORA = 96
+                elif C == 4096 and 'x070Upgraded' in args.my_testing:
+                    print('openmose mytesting mode')
+                    D_AAA_LORA = D_AAA_LORA * 2
+                # D_AAA_LORA = max(32, int(round(  (1.8*(C**0.5))  /32)*32)) # suggestion
+                self.a1 = nn.Parameter(torch.zeros(C, D_AAA_LORA))
+                self.a2 = nn.Parameter(ortho_init(torch.zeros(D_AAA_LORA, C), 0.1))
+                self.a0 = nn.Parameter(torch.zeros(1,1,C))
+
+                D_MV_LORA = 32
+                if C == 2560 or C == 2048:
+                    D_MV_LORA = 64
+                elif C == 4096 and 'x070Upgraded' in args.my_testing:
+                    D_MV_LORA = D_MV_LORA * 4
+                # D_MV_LORA = max(32, int(round(  (1.3*(C**0.5))  /32)*32)) # suggestion
+                self.v1 = nn.Parameter(torch.zeros(C, D_MV_LORA))
+                self.v2 = nn.Parameter(ortho_init(torch.zeros(D_MV_LORA, C), 0.1))
+                self.v0 = nn.Parameter(torch.zeros(1,1,C)+1.0)
+
+                D_GATE_LORA = 128
+                if C == 2560:
+                    D_GATE_LORA = 320
+                elif C == 2048:
+                    D_GATE_LORA = 256
+                elif C == 4096 and 'x070Upgraded' in args.my_testing:
+                    D_GATE_LORA = D_GATE_LORA * 4
+                # D_GATE_LORA = max(32, int(round(  (0.6*(C**0.8))  /32)*32)) # suggestion
+                # Note: for some data, you can reduce D_GATE_LORA or even remove this gate
+                self.g1 = nn.Parameter(torch.zeros(C, D_GATE_LORA))
+                self.g2 = nn.Parameter(ortho_init(torch.zeros(D_GATE_LORA, C), 0.1))
+
+                self.k_k = nn.Parameter(torch.ones(1,1,C)*0.85)
+                self.k_a = nn.Parameter(torch.ones(1,1,C))
+                self.r_k = nn.Parameter(torch.zeros(H,N))
+
+                self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
+
+                #for State-tuning
+                #self.time_state = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
+
+                Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
+
+                LinearMode = 0
+
+                if Processing_Mode == 'full':
+                    LinearMode = 0
+
+                elif Processing_Mode == 'freeze':
+                    Quant_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['quant']
+                    if Quant_Mode == 'none':
+                        LinearMode = 0
+                    else:
+                        LinearMode = 1
+                else:
+                    LinearMode = 1
+
+                if LinearMode == 0:
+                    self.receptance = nn.Linear(C, C, bias=False)
+                    self.key = nn.Linear(C, C, bias=False)
+                    self.value = nn.Linear(C, C, bias=False)
+                    self.output = nn.Linear(C, C, bias=False)
+                else:
+                    self.receptance = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.receptance')
+                    self.key = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.key')
+                    self.value = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.value')
+                    self.output = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.output')
+
+
+                self.ln_x = nn.GroupNorm(H, C, eps=(1e-5)*(args.head_size_divisor**2)) # !!! notice eps value !!!
+
+
+
+        def forward(self, x, v_first, last_state: TimeMixState):
+            B, T, C = x.size()
+            H = self.n_head
+            #xx = self.time_shift(x) - x
+            
+            shift_state = last_state.shift_state
+            wkv_state = last_state.wkv_state.clone().contiguous() 
+
+            xx = torch.concat((shift_state.unsqueeze(1), x[:, :-1]), dim=1) - x
+
+
+            xr = x + xx * self.x_r
+            xw = x + xx * self.x_w
+            xk = x + xx * self.x_k
+            xv = x + xx * self.x_v
+            xa = x + xx * self.x_a
+            xg = x + xx * self.x_g
+
+            #print(f'x shape = {x.shape}')
+
+            shift_state = x[:,-1,:]
+
+            r = self.receptance(xr)
+            w = -F.softplus(-(self.w0 + torch.tanh(xw @ self.w1) @ self.w2)) - 0.5 # soft-clamp to (-inf, -0.5)
+            k = self.key(xk)
+            v = self.value(xv)
+            if self.layer_id == 0:
+                v_first = v # store the v of the first layer
+            else:
+                v = v + (v_first - v) * torch.sigmoid(self.v0 + (xv @ self.v1) @ self.v2) # add value residual
+            a = torch.sigmoid(self.a0 + (xa @ self.a1) @ self.a2) # a is "in-context learning rate"
+            g = torch.sigmoid(xg @ self.g1) @ self.g2
+
+            kk = k * self.k_k
+            kk = F.normalize(kk.view(B,T,H,-1), dim=-1, p=2.0).view(B,T,C)
+            k = k * (1 + (a-1) * self.k_a)
+
+            x , wkv_state = RUN_RWKV7_INFCTX(r,k,v,w,-kk, kk*a,wkv_state)
+
+            x = self.ln_x(x.view(B * T, C)).view(B, T, C)
+
+            x = x + ((r.view(B,T,H,-1)*k.view(B,T,H,-1)*self.r_k).sum(dim=-1, keepdim=True) * v.view(B,T,H,-1)).view(B,T,C)
+            x = self.output(x * g)
+            
+            return x, v_first,TimeMixState(shift_state,wkv_state)
+
+    
+        
     class RWKV_CMix_x070(nn.Module):
         def __init__(self, args, layer_id):
             super().__init__()
@@ -698,11 +879,64 @@ if 'x070' in ModelGeneration:
 
         def forward(self, x):
             xx = self.time_shift(x) - x
+            #xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]), dim=1) - x
+            
             
             k = x + xx * self.x_k
             k = torch.relu(self.key(k)) ** 2
 
-            return self.value(k)
+            return self.value(k)#,ChannelMixState(x[:, -1])
+        
+    class RWKV_CMix_x070_infctx(nn.Module):
+        def __init__(self, args, layer_id):
+            super().__init__()
+            self.args = args
+            self.layer_id = layer_id
+            self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
+
+            with torch.no_grad():
+                ratio_1_to_almost0 = 1.0 - (layer_id / args.n_layer)  # 1 to ~0
+                ddd = torch.ones(1, 1, args.n_embd)
+                for i in range(args.n_embd):
+                    ddd[0, 0, i] = i / args.n_embd
+                self.x_k = nn.Parameter(1.0 - torch.pow(ddd, ratio_1_to_almost0**4))
+
+            Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
+
+            LinearMode = 0
+
+            if Processing_Mode == 'full':
+                LinearMode = 0
+
+            elif Processing_Mode == 'freeze':
+                Quant_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['quant']
+                if Quant_Mode == 'none':
+                    LinearMode = 0
+                else:
+                    LinearMode = 1
+            else:
+                LinearMode = 1
+
+            if LinearMode == 0:
+                self.key = nn.Linear(args.n_embd, args.dim_ffn, bias=False)
+                self.value = nn.Linear(args.dim_ffn, args.n_embd, bias=False)
+            else:
+                self.key = make_linear_ffn(args.n_embd, args.dim_ffn, bias=False,n_layer=self.layer_id,pname='ffn.key')
+                self.value = make_linear_ffn(args.dim_ffn, args.n_embd, bias=False,n_layer=self.layer_id,pname='ffn.value')
+
+            # !!! initialize if you are using RWKV_Tmix_x070 in your code !!!
+            # self.key.weight.data.uniform_(-0.5/(args.n_embd**0.5), 0.5/(args.n_embd**0.5))
+            # self.value.weight.data.zero_()
+
+        def forward(self, x,last_state: ChannelMixState):
+            #xx = self.time_shift(x) - x
+            xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]), dim=1) - x
+            
+            
+            k = x + xx * self.x_k
+            k = torch.relu(self.key(k)) ** 2
+
+            return self.value(k),ChannelMixState(x[:, -1])
 
 
 
