@@ -124,6 +124,28 @@ else:
             gy = torch.zeros_like(y)
             gy.scatter_(-1, ids, maxx * factor)
             return (grad_output, gy)
+    class L2Wrap2(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, loss, y, y2):
+            ctx.save_for_backward(y,y2)
+            #ctx.save_for_backward(y2)
+            return loss
+
+        @staticmethod
+        def backward(ctx, grad_output):
+            y,y2 = ctx.saved_tensors
+            #y2 = ctx.saved_tensors[1]
+            # to encourage the logits to be close to 0
+            factor = 1e-4 / (y.shape[0] * y.shape[1])
+            maxx, ids = torch.max(y, -1, keepdim=True)
+            gy = torch.zeros_like(y)
+            gy.scatter_(-1, ids, maxx * factor)
+
+            factor2 = 1e-4 / (y2.shape[0] * y2.shape[1])
+            maxx2, ids2 = torch.max(y2, -1, keepdim=True)
+            gy2 = torch.zeros_like(y2)
+            gy2.scatter_(-1, ids2, maxx2 * factor2)
+            return (grad_output, gy, gy2)
         
 
 

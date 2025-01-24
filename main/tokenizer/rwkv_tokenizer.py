@@ -99,5 +99,5 @@ class TRIE_TOKENIZER():
                 s = s.decode('utf-8')
             except:
                 pass
-            print(f'{repr(s)}{i}', end=' ')
+            print(f'{repr(s)}', end=' ')
         print()

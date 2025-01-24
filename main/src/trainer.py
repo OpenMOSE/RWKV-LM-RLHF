@@ -161,7 +161,7 @@ class train_callback(pl.Callback):
                     try:
                         lll |= {"smooth_loss": trainer.smooth_loss, "active_ctx":trainer.realproceedtokens}
                     except: pass
-                if args.dpo:
+                if args.dpo or args.simpo or args.wpo:
                     try:
                         lll |= {"pref_percentage": trainer.pref_match_percentage, "loss_1": trainer.loss_1_general_or_sft, "loss_2_dpo": trainer.loss_2_dpo}
                     except: pass
@@ -188,7 +188,7 @@ class train_callback(pl.Callback):
             dataset = trainer.train_dataloader.dataset
         else:
             dataset = trainer.train_dataloader.dataset.datasets
-        assert "DPODataset" in str(dataset) or 'HDF5TopKTensorDataset' in str(dataset)
+        assert "DPODataset" in str(dataset) or 'HDF5TopKTensorDataset' in str(dataset) or 'RLHFDataset' in str(dataset)
         if args.dpo or args.orpo:
             dataset.global_rank = trainer.global_rank
             dataset.real_epoch = int(args.epoch_begin + trainer.current_epoch)

@@ -103,12 +103,18 @@ if __name__ == "__main__":
     parser.add_argument("--dpo_alpha", default=0.1, type=float) 
     parser.add_argument("--dpo_beta", default=0.01, type=float)
 
-
-
-
     parser.add_argument("--orpo", default=0, type=int) #orpo
     parser.add_argument("--orpo_mode", default=0, type=int) #orpo
     parser.add_argument("--orpo_alpha", default=0.01, type=float) #orpo
+
+    parser.add_argument("--simpo", default=0, type=int)
+    parser.add_argument("--simpo_alpha", default=0.3, type=float) 
+    parser.add_argument("--simpo_beta", default=0.01, type=float)
+    parser.add_argument("--simpo_gamma", default=0.00, type=float)
+
+    parser.add_argument("--wpo", default=0, type=int)
+    parser.add_argument("--wpo_alpha", default=0.3, type=float) 
+    parser.add_argument("--wpo_beta", default=0.01, type=float)
 
 
     parser.add_argument("--rlhf_max_corpus_len", default=1024, type=int) #limit maximum dpo dataset token per dpo item. if avoid OoM decrease this value
@@ -283,9 +289,17 @@ if __name__ == "__main__":
     from src.dataset import MyDataset
     
     
-    if args.dpo or args.orpo:
-        from src.dpodataset import DPODataset
-        dpo_train_data = DPODataset(args)
+    if args.dpo or args.orpo or args.simpo or args.wpo:
+        
+        if '.save' in args.rlhf_train_file:
+            from src.dpodataset import DPODataset
+            dpo_train_data = DPODataset(args)
+            os.environ["H5_MODE"] = "0"
+        else:
+            print('h5 RLHF file mode')
+            os.environ["H5_MODE"] = "1"
+            from src.rlhfdataset import RLHFDataset
+            dpo_train_data = RLHFDataset(args,args.rlhf_train_file,args.ctx_len)
 
     
 
@@ -525,13 +539,14 @@ if __name__ == "__main__":
 
 
     # must set shuffle=False, persistent_workers=False (because worker is in another thread)
-    if args.orpo or args.dpo:
+    if args.orpo or args.dpo or args.simpo or args.wpo:
        # if args.dpo == 1:
        #     args.dpo = 0
         print("RLHF Mode") 
         #from pytorch_lightning.trainer.supporters import CombinedLoader
         #data_loader = DataLoader(train_data, shuffle=False, pin_memory=True, batch_size=args.micro_bsz, num_workers=1, persistent_workers=False, drop_last=True)
         dpo_loader = DataLoader(dpo_train_data, shuffle=False, pin_memory=True, batch_size=args.micro_bsz, num_workers=1, persistent_workers=False, drop_last=True, collate_fn=lambda x:x)
+
         #combined_loader = CombinedLoader([data_loader, dpo_loader], "min_size")
         trainer.fit(model, dpo_loader)
     if args.distillation:
