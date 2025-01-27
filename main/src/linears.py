@@ -346,6 +346,57 @@ def LinearForward(self,x):
         return (
             F.linear(x, self.weight) + self.scaling *
             F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)) 
+    
+
+def LinearForward_Experts(self,adapter,x):
+    if self.is_quant:
+            if adapter.bonemode: # Covered All quantize method. currently slow implementation
+                temporal_weight = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
+                bone = getattr(adapter,adapter.prefix)
+                w = rearrange(temporal_weight, '(a r1) (b r2) -> a b r1 r2', r1 = adapter.r, r2 = adapter.r)@bone+bone
+                w = rearrange(w, 'a b r1 r2 ->(a r1) (b r2) ')
+                return x @ (w + temporal_weight).t()
+            
+            else: #LoRA
+                lora_A = getattr(adapter,adapter.prefix_A)
+                lora_B = getattr(adapter,adapter.prefix_B)
+                if self.quant_type == 'fp8': #native
+                    return (fp8_matmul(x,self.Qweight.t()) + adapter.scaling *
+                        F.linear(F.linear(adapter.lora_dropout(x), lora_A), lora_B)
+                    )
+                
+                elif self.quant_type == 'fp16': #FP16 LoRA
+                    return (fp16_matmul(x,self.Qweight.t()) + adapter.scaling *
+                        F.linear(F.linear(adapter.lora_dropout(x), lora_A), lora_B)
+                    )
+                
+                elif self.quant_type == 'fp6ao': #FP6 TorchAO
+                    return (fp6ao_matmul(x,self.Qweight.t(),self.qstate) + adapter.scaling *
+                        F.linear(F.linear(adapter.lora_dropout(x), lora_A), lora_B)
+                    )
+                else:
+                    w = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
+                    #print(f'lora mode dtype = {w.dtype}')
+                    if w.dtype == torch.float16:
+                        return (fp16_matmul(x,w.t()) + adapter.scaling *
+                                F.linear(F.linear(adapter.lora_dropout(x), lora_A), lora_B)
+                        )
+                    return ( 
+                            F.linear(x, w) + adapter.scaling *
+                            F.linear(F.linear(adapter.lora_dropout(x), lora_A), lora_B)) 
+                
+    else: # Non Quant mode
+        if adapter.bonemode:
+            bone = getattr(adapter,adapter.prefix)
+            w = rearrange(self.weight, '(a r1) (b r2) -> a b r1 r2', r1 = adapter.r, r2 = adapter.r)@bone+bone
+            w = rearrange(w, 'a b r1 r2 ->(a r1) (b r2) ')
+            return F.linear(x,self.weight+w)
+        
+        lora_A = getattr(adapter,adapter.prefix_A)
+        lora_B = getattr(adapter,adapter.prefix_B)
+        return (
+            F.linear(x, self.weight) + adapter.scaling *
+            F.linear(F.linear(adapter.lora_dropout(x), lora_A), lora_B)) 
 
 class HeadLoraLinear(nn.Module):
     def __init__(self, in_features: int, out_features: int, bias: bool):
@@ -487,6 +538,48 @@ class LoraLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :) Chaos Modified
     def forward(self, x):
         return LinearForward(self,x)
     
+class Shared_LoraLinear(nn.Module): # for Mixture of LoRA Experts
+
+    def __init__(self,in_features: int, out_features: int, shared_weight, bias: bool, n_layer: int, ExpertNo: int, pname = '' ):
+        super().__init__()
+
+        self.ExpertNo = ExpertNo
+
+        self.weight = shared_weight
+        assert bias == False, "Biased LoraLinear not supported"
+
+        if LAYER_CONFIG[f'{str(n_layer)}']['mode'] == 'bone':
+            print('bone mode')
+            r = int(LAYER_CONFIG[f'{str(n_layer)}']['rank'])
+            self.r = r
+            self.prefix = f"bone_expert_{ExpertNo}"
+            setattr(self, self.prefix, nn.Parameter(torch.zeros(in_features//self.r, self.r, self.r)))
+            self.bonemode = True
+        else:
+            r = int(LAYER_CONFIG[f'{str(n_layer)}']['rank'])
+            alpha = int(LAYER_CONFIG[f'{str(n_layer)}']['alpha'])
+            d = LAYER_CONFIG[f'{str(n_layer)}']
+            dropout = float(LAYER_CONFIG[f'{str(n_layer)}']['dropout'])
+
+            self.prefix_A = f"lora_A_expert_{ExpertNo}"
+            self.prefix_B = f"lora_B_expert_{ExpertNo}"
+
+            setattr(self, self.prefix_A, nn.Parameter(torch.empty(r, in_features)))
+            setattr(self, self.prefix_B, nn.Parameter(torch.empty(out_features, r)))
+
+            self.lora_dropout = nn.Dropout(dropout)
+            self.scaling = alpha / r
+            self.r = r
+
+            nn.init.kaiming_uniform_(getattr(self,self.prefix_A), a=math.sqrt(5))
+            nn.init.zeros_(getattr(self,self.prefix_B))
+            self.bonemode = False
+        self.pissa = False
+        self.is_quant = False
+
+    def forward(self, x):
+        return LinearForward_Experts(self.weight,self,x)
+    
 
 class QuantLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :)
     def __init__(self, in_features: int, out_features: int, bias: bool, n_layer: int,pname = ''):
@@ -540,6 +633,20 @@ def make_linear_ffn(*args, **kwargs):
         return QuantLinear(*args, **kwargs)
     else:
         return LoraLinear(*args, **kwargs)
+    
+@functools.wraps(Shared_LoraLinear)
+def make_linear_ffn_experts(*args, **kwargs):
+    layer_id = kwargs.get('n_layer')
+    pname = kwargs.get('pname')
+    Reject = False
+    if any(word in pname for word in LAYER_CONFIG[f'{str(layer_id)}']['RejectParts']) and LAYER_CONFIG[f'{str(layer_id)}']['RejectParts'][0] != '':
+        Reject = True
+        print(f'reject pname {pname}')
+    #print(f'ffn layerid = {layer_id}')
+    if LAYER_CONFIG[f'{str(layer_id)}']['mode'] == 'freeze' or Reject == True:
+        return QuantLinear(*args, **kwargs)
+    else:
+        return Shared_LoraLinear(*args, **kwargs)
     
 
 @functools.wraps(HeadLoraLinear)

@@ -45,6 +45,10 @@ if __name__ == "__main__":
 
     parser.add_argument("--fla", default=0, type=int)
 
+    parser.add_argument("--moe", default=0, type=int)
+    parser.add_argument("--moe_experts", default=4, type=int)
+    parser.add_argument("--moe_balance_alpha", default=0.01, type=float)
+
     parser.add_argument("--epoch_steps", default=1000, type=int)  # a mini "epoch" has [epoch_steps] steps
     parser.add_argument("--epoch_count", default=500, type=int)  # train for this many "epochs". will continue afterwards with lr = lr_final
     parser.add_argument("--epoch_begin", default=0, type=int)  # if you load a model trained for x "epochs", set epoch_begin = x
@@ -202,6 +206,11 @@ if __name__ == "__main__":
     else:
         os.environ["FLA_MODE"] = "0"
 
+    if args.moe:
+        os.environ["CustomModel"] = "MoE"
+    else:
+        os.environ["CustomModel"] = ""
+
 
     if args.dim_att <= 0:
         args.dim_att = args.n_embd
@@ -308,7 +317,12 @@ if __name__ == "__main__":
         distillation_data = HDF5TopKTensorDataset(args,args.train_data_file,args.top_k,args.ctx_len)
     elif args.sft:
         from src.sftdataset import HDF5TopKTensorDataset,collate_fn
-        sft_data = HDF5TopKTensorDataset(args,args.train_data_file,args.ctx_len)
+        filename = ''
+        if os.path.isfile(args.train_data_file):
+            filename = args.train_data_file
+        elif os.path.isfile(args.rlhf_train_file) and '.h5' in args.rlhf_train_file:
+            filename = args.rlhf_train_file
+        sft_data = HDF5TopKTensorDataset(args,filename,args.ctx_len)
     #else:
     #    train_data = MyDataset(args)
 

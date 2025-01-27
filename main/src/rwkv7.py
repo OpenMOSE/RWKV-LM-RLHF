@@ -1,7 +1,7 @@
 #RWKV v7 Wind(CUDA,Triton),Flash-Linear-Attention(Triton)
 
 from .config import LAYER_CONFIG
-from .linears import make_linear_att,make_linear_ffn,make_linear_head,make_emb
+from .linears import make_linear_att,make_linear_ffn,make_linear_head,make_emb,make_linear_ffn_experts,QuantLinear
 
 import functools
 import os, math, gc, importlib
@@ -39,7 +39,7 @@ MyFunction = __nop
 
 if 'x070' in ModelGeneration:
     print('RWKV v7 Mode')
-    if 'infctx' in TrainingType or 'state' in TrainingType or KernelMode == 1: #infctx or FLA Mode
+    if 'flatriton' in RunningDevice or 'infctx' in TrainingType or ('state' in TrainingType and KernelMode == 1): #infctx or FLA Mode
         print('x070 Flash-Linear-Attention Kernel Mode')
         @torch.jit.ignore
         def RUN_RWKV7_STATE(r, k, v, w, a, b, s, HEAD_SIZE=64): # for State-tuning, infctx
@@ -48,8 +48,10 @@ if 'x070' in ModelGeneration:
             H = HC//C
             w=-torch.exp(w)
             r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
-            s=s.unsqueeze(0).repeat(B, 1, 1, 1)
+            #s=s.unsqueeze(0).repeat(B, 1, 1, 1)
+            #s = s.permute(0,1,3,2).contiguous()
             o, state = chunk_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=s, output_final_state=True, head_first=False)
+            #state = state.permute(0,1,3,2).contiguous()
             return o, state
         def RUN_RWKV7_INFCTX(r, k, v, w, a, b, s, HEAD_SIZE=64): # for State-tuning, infctx
             B,T,HC = w.shape
@@ -64,11 +66,10 @@ if 'x070' in ModelGeneration:
             B,T,HC = w.shape
             C = HEAD_SIZE
             H = HC//C
-            w=-torch.exp(w)
+            #w=-torch.exp(w)
             r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
-            o, state = chunk_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=None, output_final_state=False, head_first=False)
-            #print(state.shape)
-            #exit()
+            w = -w.float().exp().to(r)
+            o, _ = chunk_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=None, output_final_state=False, head_first=False)
             return o
     else:
         if 'cuda' in RunningDevice:
@@ -328,8 +329,13 @@ if 'x070' in ModelGeneration:
                 r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
                 s0 = th.zeros(B,H,C,C, dtype=th.bfloat16,device=w.device)
                 return TritonRWKV7.apply(w,r,k,v,a,b,s0,dot_prec)[0].view(B,T,HC)
-            def RUN_RWKV7_STATE(r, k, v, w, a, b, s):
-                assert "Triton Wind kernel currently not supported state. please set --fla 1 :)"
+            def RUN_RWKV7_STATE(r, k, v, w, a, b, s, HEAD_SIZE=64, dot_prec = 'fp32'):
+                B,T,HC = w.shape
+                C = HEAD_SIZE
+                H = HC//C
+                r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
+                s0 = s
+                return TritonRWKV7.apply(w,r,k,v,a,b,s0,dot_prec)[0].view(B,T,HC), None
 
 
     
@@ -486,7 +492,7 @@ if 'x070' in ModelGeneration:
             kk = F.normalize(kk.view(B,T,H,-1), dim=-1, p=2.0).view(B,T,C)
             k = k * (1 + (a-1) * self.k_a)
 
-            x = RUN_CUDA_RWKV7g(r, w, k, v, -kk, kk*a)
+            x = RUN_CUDA_RWKV7g(r, w, k, v, -kk, kk*a,HEAD_SIZE=self.head_size)
 
             x = self.ln_x(x.view(B * T, C)).view(B, T, C)
 
@@ -937,6 +943,206 @@ if 'x070' in ModelGeneration:
             k = torch.relu(self.key(k)) ** 2
 
             return self.value(k),ChannelMixState(x[:, -1])
+        
+    #---------------------------------------------------------
+    # Router層の定義：hiddenベクトルから各Expertへのスコアを出す
+    #---------------------------------------------------------
+    class Router(nn.Module):
+        def __init__(self, input_dim, num_experts):
+            super().__init__()
+            self.linear = nn.Linear(input_dim, num_experts, bias=False)
+            nn.init.kaiming_uniform_(getattr(self,'linear').weight, a=math.sqrt(5))
+
+        def forward(self, x):
+            # x: (batch*seq, input_dim)
+            # 出力: (batch*seq, num_experts)
+            return self.linear(x)
+        
+    class RWKV_CMix_x070_Experts(nn.Module):
+        def __init__(self, args, layer_id, Shared_key,Shared_value,ExpertNo=0):
+            # 最初にsuper().__init__()を呼び出す
+            super().__init__()
+            self.layer_id = layer_id
+            self.key = make_linear_ffn_experts(args.n_embd, args.dim_ffn, shared_weight = Shared_key,bias=False,n_layer=self.layer_id,pname='ffn.key',ExpertNo = ExpertNo)
+            self.value = make_linear_ffn_experts(args.dim_ffn, args.n_embd, shared_weight = Shared_value, bias=False,n_layer=self.layer_id,pname='ffn.value',ExpertNo=ExpertNo)
+        def forward(self, hidden):
+            k = torch.relu(self.key(hidden)) ** 2
+            return self.value(k)
+
+    class RWKV_CMix_x070_MoE(nn.Module):
+        def __init__(self, args, layer_id, num_experts=4):
+            super().__init__()
+            self.args = args
+            self.layer_id = layer_id
+            self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
+
+            self.num_experts = num_experts
+
+            self.shared_expert = True
+
+            with torch.no_grad():
+                ratio_1_to_almost0 = 1.0 - (layer_id / args.n_layer)  # 1 to ~0
+                ddd = torch.ones(1, 1, args.n_embd)
+                for i in range(args.n_embd):
+                    ddd[0, 0, i] = i / args.n_embd
+                self.x_k = nn.Parameter(1.0 - torch.pow(ddd, ratio_1_to_almost0**4))
+
+            Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
+
+            # LinearMode = 0
+
+            # if Processing_Mode == 'full':
+            #     LinearMode = 0
+
+            # elif Processing_Mode == 'freeze':
+            #     Quant_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['quant']
+            #     if Quant_Mode == 'none':
+            #         LinearMode = 0
+            #     else:
+            #         LinearMode = 1
+            # else:
+            #     LinearMode = 1
+
+            # if LinearMode == 0:
+            #     self.key = nn.Linear(args.n_embd, args.dim_ffn, bias=False)
+            #     self.value = nn.Linear(args.dim_ffn, args.n_embd, bias=False)
+            # else:
+            #     self.key = make_linear_ffn(args.n_embd, args.dim_ffn, bias=False,n_layer=self.layer_id,pname='ffn.key')
+            #     self.value = make_linear_ffn(args.dim_ffn, args.n_embd, bias=False,n_layer=self.layer_id,pname='ffn.value')
+
+            #QuantLinear
+            self.key = QuantLinear(args.n_embd, args.dim_ffn, bias=False,n_layer=self.layer_id)
+            self.value = QuantLinear(args.dim_ffn, args.n_embd, bias=False,n_layer=self.layer_id)
+
+            for i in range(self.num_experts):
+                setattr(self, f"expert_{i}", RWKV_CMix_x070_Experts(self.args,self.layer_id,self.key,self.value))
+
+            #primes = [5099, 5101, 5107, 5113, 5119, 5147, 5153, 5167, 5171, 5179, 5189, 5197, 5209, 5227, 5231, 5233, 5237, 5261, 5273, 5279, 5281, 5297, 5303, 5309, 5323, 5333, 5347, 5351, 5381, 5387, 5393, 5399, 5407, 5413, 5417, 5419, 5431, 5437, 5441, 5443]
+            #self.hash_prime = primes[layer_id]
+             # ★ここでRouter層を定義（HashではなくTop-kのため）
+            self.router = Router(args.n_embd, self.num_experts)
+
+        # def forward(self, hidden , input_ids):
+        #     shifted = self.time_shift(hidden)# - x
+
+        #     if len(shifted.size()) == 2:
+        #         shifted = shifted.unsqueeze(1)
+
+        #     delta_hidden_to_shifted = shifted - hidden
+        #     hidden_with_tokenshift = hidden + delta_hidden_to_shifted * self.x_k
+
+        #     # flatten batch and sequence dimensions of input_ids and hidden_with_tokenshift
+        #     flat_input_ids = input_ids.flatten()
+        #     flat_hidden_with_tokenshift = hidden_with_tokenshift.reshape(-1, hidden_with_tokenshift.size(-1))
+
+        #     if self.shared_expert is not None:
+        #         #flat_value = self.shared_expert(flat_hidden_with_tokenshift)
+        #         flat_value = torch.relu(self.key(flat_hidden_with_tokenshift)) ** 2
+        #         flat_value = self.value(flat_value)
+
+        #     else:
+        #         flat_value = torch.zeros_like(flat_hidden_with_tokenshift)
+
+        #     # find the expert index for each flat index (flattened batchseq index)
+        #     expert_by_flat_idx = (flat_input_ids * self.hash_prime) % self.num_experts
+        #     # one hot mask of expert choices by flat batchseq index
+        #     expert_mask = torch.nn.functional.one_hot(expert_by_flat_idx, num_classes=self.num_experts).mT # expert_idx, flat_idx
+        #     # go through each expert and add in their contributions
+
+        #     for expert_idx in range(self.num_experts):
+        #         expert = getattr(self,f"expert_{expert_idx}")#self.experts[expert_idx]
+        #         # get a list of flat batchseq indices for the current expert
+        #         flat_indices_for_expert = expert_mask[expert_idx].nonzero().flatten()
+        #         if flat_indices_for_expert.size(-1) > 0:
+        #             # select out the inputs from this expert's flat batchseq locations into a compact tensor
+        #             expert_hidden_with_tokenshift = flat_hidden_with_tokenshift[flat_indices_for_expert]
+        #             #print(f'MoE:{expert_idx} {flat_indices_for_expert} ')
+        #             # run the compact tensor through the expert
+        #             compact_expert_output = expert(expert_hidden_with_tokenshift)
+        #             # add the expert's results to the appropriate original locations
+        #             flat_value.index_add_(dim=0, index=flat_indices_for_expert, source=compact_expert_output)
+
+
+        #     kv = flat_value.view(hidden.size(0), hidden.size(1), hidden.size(2))
+
+        #     return kv
+
+
+        def forward(self, hidden, input_ids):
+            # time-shift 処理
+            shifted = self.time_shift(hidden)
+            if len(shifted.size()) == 2:
+                shifted = shifted.unsqueeze(1)
+            delta_hidden_to_shifted = shifted - hidden
+            hidden_with_tokenshift = hidden + delta_hidden_to_shifted * self.x_k
+
+            # (batch, seq, dim) -> (batch*seq, dim)
+            flat_hidden = hidden_with_tokenshift.reshape(-1, hidden_with_tokenshift.size(-1))
+
+            #---------------------------------------------
+            # Router層で [batch*seq, num_experts] のスコアを取得
+            #---------------------------------------------
+            router_scores = self.router(flat_hidden)
+            # (batch*seq, num_experts)
+
+            #---------------------------------------------
+            # Top-k=2 をとり、その2つの Expert を選択
+            #---------------------------------------------
+            topk_values, topk_experts = torch.topk(router_scores, k=2, dim=-1)
+            # topk_values: (batch*seq, 2)
+            # topk_experts: (batch*seq, 2) -> どのExpertを選んだかのインデックス
+
+            # ゲーティングをソフトマックス (上位2つに対してのみ正規化)
+            gating = F.softmax(topk_values, dim=-1)  # (batch*seq, 2)
+
+            # Expert処理後の出力を溜めるためのテンソル
+            flat_value = torch.zeros_like(flat_hidden)
+
+
+            #---------------------------------------------
+            # ロードバランス損失を計算
+            #---------------------------------------------
+            # 「どのexpertにどの程度の確率が割り振られたか」分布
+            # (B*S, num_experts) の行列を作る
+            gating_full = torch.zeros_like(router_scores)  # (B*S, E)
+            # topk_experts[:, j] に、gating[:, j] を scatter_ で配置
+            gating_full.scatter_(dim=1, index=topk_experts, src=gating)
+
+            # Expertごとの使用率を算出
+            usage = gating_full.mean(dim=0)  # -> (num_experts,)
+            # 各Expertの使用確率が (1/num_experts) に近いほど良い
+            load_balance_loss = ((usage - (1.0 / self.num_experts))**2).sum()
+
+            #print(f' moe loadbalance loss = {load_balance_loss}')
+
+            #---------------------------------------------
+            # 上位2 Experts に対して、各Expertごとに集約
+            #---------------------------------------------
+            for e in range(self.num_experts):
+                # topk_experts[:, 0] == e の箇所を探す
+                mask0 = (topk_experts[:, 0] == e).nonzero(as_tuple=True)[0]
+                # topk_experts[:, 1] == e の箇所を探す
+                mask1 = (topk_experts[:, 1] == e).nonzero(as_tuple=True)[0]
+
+                if mask0.numel() > 0:
+                    input_0 = flat_hidden[mask0]
+                    out_0 = getattr(self, f"expert_{e}")(input_0)
+                    # ゲーティング重みをかける
+                    out_0 = out_0 * gating[mask0, 0].unsqueeze(-1)
+                    # 対応する位置に加算
+                    flat_value.index_add_(0, mask0, out_0)
+
+                if mask1.numel() > 0:
+                    input_1 = flat_hidden[mask1]
+                    out_1 = getattr(self, f"expert_{e}")(input_1)
+                    # ゲーティング重みをかける
+                    out_1 = out_1 * gating[mask1, 1].unsqueeze(-1)
+                    # 対応する位置に加算
+                    flat_value.index_add_(0, mask1, out_1)
+
+            # 元の (batch, seq, dim) にreshape
+            kv = flat_value.view(hidden.size(0), hidden.size(1), hidden.size(2))
+            return kv, load_balance_loss
 
 
 

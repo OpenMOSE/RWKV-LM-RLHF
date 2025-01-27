@@ -30,7 +30,7 @@ from bitsandbytes.optim import Adam8bit,AdamW8bit
 
 
 if 'x070' in os.environ["RWKV_MY_TESTING"]:
-    from .rwkv7 import LAYER_CONFIG,RWKV_Tmix_x070,RWKV_Tmix_x070_state,RWKV_Tmix_x070_infctx,RWKV_CMix_x070,RWKV_CMix_x070_infctx,make_linear_head,make_emb
+    from .rwkv7 import LAYER_CONFIG,RWKV_Tmix_x070,RWKV_Tmix_x070_state,RWKV_Tmix_x070_infctx,RWKV_CMix_x070,RWKV_CMix_x070_MoE,RWKV_CMix_x070_infctx,make_linear_head,make_emb
 elif 'x060' in os.environ["RWKV_MY_TESTING"]:
     from .rwkv6 import LAYER_CONFIG,RWKV_Tmix_x060,RWKV_Tmix_x060_state,RWKV_Tmix_x060_infctx,RWKV_CMix_x060,RWKV_CMix_x060_infctx,make_linear_head,make_emb
 else:
@@ -72,7 +72,10 @@ if 'x070' in os.environ["RWKV_MY_TESTING"]:
             if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
                 self.ffn = RWKV_CMix_x070_infctx(args, layer_id)
             else:
-                self.ffn = RWKV_CMix_x070(args, layer_id)
+                if os.environ["CustomModel"] == 'MoE':
+                    self.ffn = RWKV_CMix_x070_MoE(args,layer_id,self.args.moe_experts)
+                else:
+                    self.ffn = RWKV_CMix_x070(args, layer_id)
 
 
         if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
@@ -87,6 +90,18 @@ if 'x070' in os.environ["RWKV_MY_TESTING"]:
 
                 x = x + ffn_out
                 return x, v_first ,BlockState(att_state, ffn_state)
+        elif os.environ["CustomModel"] == 'MoE':
+            def forward(self, x, v_first,input_ids):
+                if self.layer_id == 0:
+                    x = self.ln0(x)
+
+                x_attn, v_first = self.att(self.ln1(x), v_first)
+                x = x + x_attn
+
+                ffn_out ,moe_router_loss = self.ffn(self.ln2(x),input_ids)
+
+                x  = x + ffn_out
+                return x, v_first,moe_router_loss
         else:
             def forward(self, x, v_first):
                 if self.layer_id == 0:
@@ -1141,7 +1156,7 @@ class RWKV(pl.LightningModule):
                 states = BlockStateList(new_shift_states, new_wkv_states)
 
             
-            print()
+            #print()
             return total_loss
         
 
@@ -1160,17 +1175,30 @@ class RWKV(pl.LightningModule):
                 x = self.drop0(x)
             if 'x070' in os.environ["RWKV_MY_TESTING"]:
                     v_first = torch.empty_like(x)
+                    moe_total_loss = 0
                     for block in self.blocks:
                         if args.grad_cp == 1:
                             layer_mode = LAYER_CONFIG[f'{str(block.layer_id)}']['mode']
                             if layer_mode == 'full' or layer_mode == 'freeze':
                                 #x, v_first = deepspeed.checkpointing.checkpoint(block, x, v_first)
-                                x, v_first = torch_checkpoint(block, x, v_first,use_reentrant=False)
+                                if os.environ["CustomModel"] == 'MoE':
+                                    x, v_first,moe_router_loss = torch_checkpoint(block, x, v_first, idx, use_reentrant=False)
+                                    moe_total_loss += (moe_router_loss+0.001) / float(args.n_layer)
+                                else:
+                                    x, v_first = torch_checkpoint(block, x, v_first,use_reentrant=False)
                             else:
-                                x, v_first = torch_checkpoint(block, x, v_first ,use_reentrant=False)
+                                if os.environ["CustomModel"] == 'MoE':
+                                    x, v_first ,moe_router_loss = torch_checkpoint(block, x, v_first,idx,use_reentrant=False)
+                                    moe_total_loss += (moe_router_loss+0.001) / float(args.n_layer)
+                                else:
+                                    x, v_first = torch_checkpoint(block, x, v_first ,use_reentrant=False)
                                 #x, v_first = deepspeed.checkpointing.checkpoint(block, x, v_first )
                         else:
-                            x, v_first = block(x, v_first)
+                            if os.environ["CustomModel"] == 'MoE':
+                                x, v_first,moe_router_loss = block(x, v_first,idx)
+                                moe_total_loss += (moe_router_loss+0.001) / float(args.n_layer)
+                            else:
+                                x, v_first = block(x, v_first)
             else:
                 for block in self.blocks:
                     if args.grad_cp == 1:
@@ -1190,7 +1218,10 @@ class RWKV(pl.LightningModule):
 
             x = self.head(x)
 
-            return x
+            if os.environ["CustomModel"] == 'MoE':
+                #print(f'Moe Router_loss = {moe_router_loss}')
+                return x, moe_router_loss
+            return x, 0.0
     
         def compute_logps_simple_mask(self, chosen_inputs, logits, attention_mask=None):
 
@@ -1250,7 +1281,7 @@ class RWKV(pl.LightningModule):
                     attention_mask = attention_mask[:, :max_len]
 
                 # Forward: input_ids[:, :-1]を使用
-                student_logits = self(input_ids)
+                student_logits,moe_loss = self(input_ids)
 
                 # 評価: input_ids[:, 1:]を使用
                 #targets = input_ids[:, 1:].contiguous().view(-1) #
@@ -1313,13 +1344,29 @@ class RWKV(pl.LightningModule):
                 #max_len = int(input_ids.shape[1])#int(attention_mask.sum(dim=1).max().item())
 
                 max_len = int(attention_mask.sum(dim=1).max().item())
+
+                def find_next_128_multiple(n):
+                    remainder = n % 128
+                    if remainder == 0:
+                        return n
+                    return n + (128 - remainder)
+
+                if 'x070' in os.environ["RWKV_MY_TESTING"]:
+                    max_len = find_next_128_multiple(max_len)
+                    input_ids = input_ids[:, :max_len]
+                    target = target[:, :max_len]
+                    attention_mask = attention_mask[:, :max_len]
+
+
+
+
                 if 'x060' in os.environ["RWKV_MY_TESTING"]:
                     input_ids = input_ids[:, :max_len]
                     target = target[:, :max_len]
                     attention_mask = attention_mask[:, :max_len]
 
                 # Forward: input_ids[:, :-1]を使用
-                student_logits = self(input_ids)
+                student_logits,moe_loss = self(input_ids)
 
                 # 評価: input_ids[:, 1:]を使用
                 #targets = input_ids[:, 1:].contiguous().view(-1) #
@@ -1350,6 +1397,9 @@ class RWKV(pl.LightningModule):
                     #kl_loss = torch.sum(kl_loss.view(-1) * mask) / sum_mask
                     loss = smooth_loss# + (1 - alpha) * kl_loss
 
+                if os.environ["CustomModel"] == "MoE":
+                    loss = loss + args.moe_balance_alpha
+
                 self.trainer.smooth_loss = float(smooth_loss.mean())
                 #self.trainer.kl_loss = float(kl_loss.mean())
                 self.trainer.realproceedtokens =float(max_len)
@@ -1374,7 +1424,7 @@ class RWKV(pl.LightningModule):
                 try:
                     self.trainer.pref_match_percentage
                 except (NameError, AttributeError):
-                    self.trainer.pref_match_percentage = 0.5
+                    self.trainer.pref_match_percentage = 0.0
                 pref_matches = 0
 
                 bsz = len(batch_orpo)
@@ -1420,7 +1470,7 @@ class RWKV(pl.LightningModule):
 
                     # 選択応答(chosen)と却下応答(reject)をまとめてバッチ化してモデルに通す
                     SFT_idx = torch.cat([chosen_input.unsqueeze(0), reject_input.unsqueeze(0)], dim=0)
-                    RT = self(SFT_idx)
+                    RT ,moe_loss= self(SFT_idx)
                     outputs_pos = RT[0].unsqueeze(0)  # chosen応答用
                     outputs_neg = RT[1].unsqueeze(0)  # reject応答用
                     del SFT_idx
@@ -1490,7 +1540,7 @@ class RWKV(pl.LightningModule):
                 try:
                     self.trainer.pref_match_percentage
                 except (NameError, AttributeError):
-                    self.trainer.pref_match_percentage = 0.5
+                    self.trainer.pref_match_percentage = 0.0
 
                 pref_matches = 0
                 bsz = len(batch_wpo)
@@ -1537,7 +1587,7 @@ class RWKV(pl.LightningModule):
                     # 一度にまとめて推論: chosenとrejectをバッチで入れる
                     SFT_idx = torch.stack([chosen_input, reject_input], dim=0)  # shape [2, max_len]
                     # ログits計算 [2, max_len, vocab_size]
-                    RT = self(SFT_idx)
+                    RT ,moe_loss= self(SFT_idx)
 
                     outputs_pos = RT[0].unsqueeze(0)  # chosen
                     outputs_neg = RT[1].unsqueeze(0)  # reject
@@ -1693,7 +1743,7 @@ class RWKV(pl.LightningModule):
                     SFT_idx = []
                     SFT_idx = torch.cat([chosen_input.unsqueeze(0), reject_input.unsqueeze(0)], dim=0) # make batch with Chosen and Reject  
 
-                    RT = self(SFT_idx)
+                    RT ,moe_loss= self(SFT_idx)
 
 
                     #print(RT)
@@ -1820,7 +1870,7 @@ class RWKV(pl.LightningModule):
                     SFT_idx = []
                     SFT_idx = torch.cat([chosen_input.unsqueeze(0), reject_input.unsqueeze(0)], dim=0) # make batch with Chosen and Reject  
 
-                    RT = self(SFT_idx)
+                    RT ,moe_loss= self(SFT_idx)
 
 
                     #print(RT)
@@ -1927,7 +1977,7 @@ class RWKV(pl.LightningModule):
                     SFT_idx = []
                     SFT_idx = torch.cat([chosen_input.unsqueeze(0), reject_input.unsqueeze(0)], dim=0) # make batch with Chosen and Reject  
 
-                    RT = self(SFT_idx)
+                    RT ,moe_loss= self(SFT_idx)
 
 
                     #print(RT)

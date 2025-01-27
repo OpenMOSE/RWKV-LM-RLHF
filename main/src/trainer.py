@@ -215,28 +215,33 @@ class train_callback(pl.Callback):
 
                 for name, state in to_save_dict.items():
                     #print(f'{name} {param_dict[name].requires_grad}')
-                    if param_dict[name].requires_grad:
-                        if LAYER_CONFIG['emb']['mode']=='full' and 'emb' in name:
-                            lora_dict[name] = state
-                        if LAYER_CONFIG['head']['mode']=='full' and 'head' in name:
-                            lora_dict[name] = state
-                        for i in range(args.n_layer):
-                            text = f'blocks.{str(i)}'
-                            if LAYER_CONFIG[f'{str(i)}']['mode']=='full' and text in name:
+                    try:
+                        if param_dict[name].requires_grad:
+                            if LAYER_CONFIG['emb']['mode']=='full' and 'emb' in name:
                                 lora_dict[name] = state
-                                break
-                        if '.time_state' in name and args.state_output_mode == 0:
+                            if LAYER_CONFIG['head']['mode']=='full' and 'head' in name:
                                 lora_dict[name] = state
-                        elif '.time_state' in name:
-                                lora_dict[name] = state
-                                state_dict[name] = state
-                        elif ('.bone' in name or '.lora_' in name or '.time' in name or 'ln' in name):
-                            lora_dict[name] = state
-                        elif args.limited_lora == 0:
-                            for targetname in v7_additional_parameters:
-                                if targetname in name and targetname != '' and name != '':
+                            for i in range(args.n_layer):
+                                text = f'blocks.{str(i)}'
+                                if LAYER_CONFIG[f'{str(i)}']['mode']=='full' and text in name:
                                     lora_dict[name] = state
                                     break
+                            if '.time_state' in name and args.state_output_mode == 0:
+                                    lora_dict[name] = state
+                            elif '.time_state' in name:
+                                    lora_dict[name] = state
+                                    state_dict[name] = state
+                            elif ('.bone' in name or '.lora_' in name or '.time' in name or 'ln' in name):
+                                lora_dict[name] = state
+                            elif args.limited_lora == 0:
+                                for targetname in v7_additional_parameters:
+                                    if targetname in name and targetname != '' and name != '':
+                                        lora_dict[name] = state
+                                        break
+                    except (KeyError, AttributeError):
+                        # キーが存在しない場合や、requires_gradプロパティがない場合の処理
+                        #print(f'{name} not found')
+                        pass
 
 
 

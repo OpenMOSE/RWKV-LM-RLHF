@@ -25,10 +25,10 @@ pipeline = PIPELINE(mode='world')
 
 parser = ArgumentParser()
 
-parser.add_argument("--load_model", default="myfolder/models/x070-1b5-cje-17.pth", type=str)
-parser.add_argument("--model_strategy", default="bf16", type=str)
-parser.add_argument("--rlhf_input_folder", default="myfolder/RLHF/RLHF", type=str)
-parser.add_argument("--rlhf_output_h5", default="myfolder/RLHF/qwqtest.h5", type=str)
+parser.add_argument("--load_model", default="myfolder/Outputs/rwkv-x070-2b9-cje-instruct-1.pth", type=str)
+parser.add_argument("--model_strategy", default="fp8", type=str)
+parser.add_argument("--rlhf_input_folder", default="myfolder/RLHF/BANCHO", type=str)
+parser.add_argument("--rlhf_output_h5", default="myfolder/RLHF/bancho.h5", type=str)
 parser.add_argument("--endtoken", default="\n\n\x17", type=str)
 #\x17
 args2 = parser.parse_args()

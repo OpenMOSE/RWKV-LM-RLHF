@@ -20,7 +20,7 @@ def generate_reject(prompt: str) -> str:
     LLMに問い合わせて reject 文字列を生成する。
     """
     payload = {
-        "model": "RWKV-x070-1B5-CJE-e12.pth",  # 必要に応じてモデル名を変更
+        "model": "RWKV x070 2B9 CJE Instruct-1",  # 必要に応じてモデル名を変更
         "messages": [
             {"role": "user", "content": prompt}
         ],
@@ -216,19 +216,19 @@ def parse_args():
     parser.add_argument(
         "-i", "--input_file",
         type=str,
-        default="myfolder/RLHF/qwq.jsonl",
+        default="myfolder/RLHF/bancho.jsonl",
         help="入力 JSONL ファイルパス (デフォルト: input.jsonl)"
     )
     parser.add_argument(
         "-o", "--output_file",
         type=str,
-        default="myfolder/RLHF/qwq_reject.jsonl",
+        default="myfolder/RLHF/bancho_reject.jsonl",
         help="出力 JSONL ファイルパス (デフォルト: output.jsonl)"
     )
     parser.add_argument(
         "-n", "--num_processes",
         type=int,
-        default=48,
+        default=32,
         help="並列処理数 (デフォルト: 4)"
     )
     parser.add_argument(
