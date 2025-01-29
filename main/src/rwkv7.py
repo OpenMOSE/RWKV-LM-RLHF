@@ -978,6 +978,8 @@ if 'x070' in ModelGeneration:
             self.layer_id = layer_id
             self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
 
+            self.ActiveExperts = args.moe_active
+
             self.num_experts = num_experts
 
             self.shared_expert = True
@@ -1017,7 +1019,7 @@ if 'x070' in ModelGeneration:
 
 
             # Top-k=2 をとり、その2つの Expert を選択
-            topk_values, topk_experts = torch.topk(router_scores, k=2, dim=-1)
+            topk_values, topk_experts = torch.topk(router_scores, k=self.ActiveExperts, dim=-1)
             # topk_values: (batch*seq, 2)
             # topk_experts: (batch*seq, 2) -> どのExpertを選んだかのインデックス
 
@@ -1042,21 +1044,35 @@ if 'x070' in ModelGeneration:
 
 
             # 上位2 Experts に対して、各Expertごとに集約
+            # for e in range(self.num_experts):
+            #     mask0 = (topk_experts[:, 0] == e).nonzero(as_tuple=True)[0]
+            #     mask1 = (topk_experts[:, 1] == e).nonzero(as_tuple=True)[0]
+
+            #     if mask0.numel() > 0:
+            #         input_0 = flat_hidden[mask0]
+            #         out_0 = getattr(self, f"expert_{e}")(input_0)
+            #         out_0 = out_0 * gating[mask0, 0].unsqueeze(-1)
+            #         flat_value.index_add_(0, mask0, out_0)
+
+            #     if mask1.numel() > 0:
+            #         input_1 = flat_hidden[mask1]
+            #         out_1 = getattr(self, f"expert_{e}")(input_1)
+            #         out_1 = out_1 * gating[mask1, 1].unsqueeze(-1)
+            #         flat_value.index_add_(0, mask1, out_1)
+
             for e in range(self.num_experts):
-                mask0 = (topk_experts[:, 0] == e).nonzero(as_tuple=True)[0]
-                mask1 = (topk_experts[:, 1] == e).nonzero(as_tuple=True)[0]
+                mask = []
+                for i in range(self.ActiveExperts):
+                    #mask.append((topk_experts[:, i] == e).nonzero(as_tuple=True)[0])
+                    indices = (topk_experts[:, i] == e).nonzero()
+                    mask.append(indices[:, 0])  # 最初の次元のインデックスを取得
+                    if mask[-1].numel() > 0:
+                        input_0 = flat_hidden[mask[-1]]
 
-                if mask0.numel() > 0:
-                    input_0 = flat_hidden[mask0]
-                    out_0 = getattr(self, f"expert_{e}")(input_0)
-                    out_0 = out_0 * gating[mask0, 0].unsqueeze(-1)
-                    flat_value.index_add_(0, mask0, out_0)
-
-                if mask1.numel() > 0:
-                    input_1 = flat_hidden[mask1]
-                    out_1 = getattr(self, f"expert_{e}")(input_1)
-                    out_1 = out_1 * gating[mask1, 1].unsqueeze(-1)
-                    flat_value.index_add_(0, mask1, out_1)
+                        #input_0 = flat_hidden[mask0]
+                        out_0 = getattr(self, f"expert_{e}")(input_0)
+                        out_0 = out_0 * gating[mask[-1], 0].unsqueeze(-1)
+                        flat_value.index_add_(0, mask[-1], out_0)
 
             # 元の (batch, seq, dim) にreshape
             kv = flat_value.view(hidden.size(0), hidden.size(1), hidden.size(2))

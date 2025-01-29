@@ -46,7 +46,8 @@ if __name__ == "__main__":
     parser.add_argument("--fla", default=0, type=int)
 
     parser.add_argument("--moe", default=0, type=int)
-    parser.add_argument("--moe_experts", default=4, type=int)
+    parser.add_argument("--moe_experts", default=8, type=int)
+    parser.add_argument("--moe_active", default=2, type=int)
     parser.add_argument("--moe_balance_alpha", default=0.01, type=float)
 
     parser.add_argument("--epoch_steps", default=1000, type=int)  # a mini "epoch" has [epoch_steps] steps
