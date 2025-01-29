@@ -1,7 +1,7 @@
 #2024 OpenMOSE
 import csv
 
-v7_additional_parameters = ['x_r','x_w','x_k','x_v','x_a','x_g','att.w1','att.w2','att.w0','att.a1','att.a2','att.a0','att.v1','att.v2','att.v0','att.g1','att.g2','att.k_k','att.k_a','att.r_k']
+v7_additional_parameters = ['router','x_r','x_w','x_k','x_v','x_a','x_g','att.w1','att.w2','att.w0','att.a1','att.a2','att.a0','att.v1','att.v2','att.v0','att.g1','att.g2','att.k_k','att.k_a','att.r_k']
 
 class LayerProfiler:
     def __init__(self,filename_profile):

@@ -109,7 +109,7 @@ class train_callback(pl.Callback):
                     pass
                 trainer.my_log.flush()
                 if len(args.wandb) > 0:
-                    print("Login to wandb...")
+                    #print("Login to wandb...")
                     import wandb
                     wandb.init(
                         project=args.wandb,
@@ -160,6 +160,9 @@ class train_callback(pl.Callback):
                 if args.sft:
                     try:
                         lll |= {"smooth_loss": trainer.smooth_loss, "active_ctx":trainer.realproceedtokens}
+                        if args.moe:
+                            #moe_router_loss
+                            lll |= {"moe_router_loss": trainer.moe_router_loss}
                     except: pass
                 if args.dpo or args.simpo or args.wpo:
                     try:
@@ -231,7 +234,7 @@ class train_callback(pl.Callback):
                             elif '.time_state' in name:
                                     lora_dict[name] = state
                                     state_dict[name] = state
-                            elif ('.bone' in name or '.lora_' in name or '.time' in name or 'ln' in name):
+                            elif ('.bone' in name or '.lora_' in name or '.time' in name or 'ln' in name or 'router' in name):
                                 lora_dict[name] = state
                             elif args.limited_lora == 0:
                                 for targetname in v7_additional_parameters:

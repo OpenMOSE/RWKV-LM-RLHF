@@ -1398,9 +1398,11 @@ class RWKV(pl.LightningModule):
                     loss = smooth_loss# + (1 - alpha) * kl_loss
 
                 if os.environ["CustomModel"] == "MoE":
-                    loss = loss + args.moe_balance_alpha
+                    loss = loss + args.moe_balance_alpha * moe_loss
+                    self.trainer.moe_router_loss = moe_loss
 
                 self.trainer.smooth_loss = float(smooth_loss.mean())
+
                 #self.trainer.kl_loss = float(kl_loss.mean())
                 self.trainer.realproceedtokens =float(max_len)
 

@@ -89,21 +89,39 @@ def fp8_hybrid_matmul(a,b): # shape3 @ shape2 only
     with torch.no_grad():
         if b.dtype == torch.float8_e4m3fn:
                 xg = a
-                S0=xg.shape[0]
-                S1=xg.shape[1]
-                if xg.dtype != torch.float8_e4m3fn:
-                    xg = torch.clamp(xg, min=-448.0, max=448.0) # for avoid NaN
-                #in torch2.5+ deleted absmax 
-                x = torch._scaled_mm(
-                    xg.view(S0*S1,xg.shape[2]).to(torch.float8_e4m3fn).contiguous(),
-                    b,
-                    bias=None,
-                    out_dtype=a.dtype,
-                    scale_a=torch.tensor(1.0, device='cuda'),
-                    scale_b=torch.tensor(1.0, device='cuda')
-                )
-                #x.requires_grad = False
-                return x.view(S0, S1, -1)
+                #print(f'xg shape = {xg.shape}')
+
+                if len(xg.shape) == 2:
+                    S0=xg.shape[0]
+                    if xg.dtype != torch.float8_e4m3fn:
+                        xg = torch.clamp(xg, min=-448.0, max=448.0) # for avoid NaN
+                    #in torch2.5+ deleted absmax 
+                    x = torch._scaled_mm(
+                        xg.view(S0,xg.shape[1]).to(torch.float8_e4m3fn).contiguous(),
+                        b,
+                        bias=None,
+                        out_dtype=a.dtype,
+                        scale_a=torch.tensor(1.0, device='cuda'),
+                        scale_b=torch.tensor(1.0, device='cuda')
+                    )
+                    #x.requires_grad = False
+                    return x.view(S0, -1)
+                else:
+                    S0=xg.shape[0]
+                    S1=xg.shape[1]
+                    if xg.dtype != torch.float8_e4m3fn:
+                        xg = torch.clamp(xg, min=-448.0, max=448.0) # for avoid NaN
+                    #in torch2.5+ deleted absmax 
+                    x = torch._scaled_mm(
+                        xg.view(S0*S1,xg.shape[2]).to(torch.float8_e4m3fn).contiguous(),
+                        b,
+                        bias=None,
+                        out_dtype=a.dtype,
+                        scale_a=torch.tensor(1.0, device='cuda'),
+                        scale_b=torch.tensor(1.0, device='cuda')
+                    )
+                    #x.requires_grad = False
+                    return x.view(S0, S1, -1)
         else:
                 return a.to(dtype=b.dtype) @ b
         
