@@ -48,6 +48,7 @@ if __name__ == "__main__":
     parser.add_argument("--moe", default=0, type=int)
     parser.add_argument("--moe_experts", default=8, type=int)
     parser.add_argument("--moe_active", default=2, type=int)
+    parser.add_argument("--moe_shared", default=1, type=int)
     parser.add_argument("--moe_balance_alpha", default=0.01, type=float)
 
     parser.add_argument("--epoch_steps", default=1000, type=int)  # a mini "epoch" has [epoch_steps] steps
@@ -539,11 +540,14 @@ if __name__ == "__main__":
             else:
                 print(f"{str(shape[0]).ljust(5)}       {n}")
 
+    print(trainer.strategy.config)
+    #exit()
+
     if "deepspeed" in args.strategy:
         trainer.strategy.config["zero_optimization"]["allgather_bucket_size"] = args.ds_bucket_mb * 1000 * 1000
         trainer.strategy.config["zero_optimization"]["reduce_bucket_size"] = args.ds_bucket_mb * 1000 * 1000
         trainer.strategy.config["zero_optimization"]["overlap_comm"] = False
-
+        trainer.strategy.config["zero_force_ds_cpu_optimizer"] = False
     # if args.precision == 32:
     #     print('fp32 mode')
     #     for pname, param in model.named_modules():

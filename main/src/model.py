@@ -20,9 +20,12 @@ from einops import rearrange
 if importlib.util.find_spec('deepspeed'):
     import deepspeed
     from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
+    from deepspeed.ops.lion import DeepSpeedCPULion, FusedLion
 
 from .infctx_module import *
 from .trainutils import *
+
+from .adam_mini import Adam_mini
 
 
 from bitsandbytes.optim import Adam8bit,AdamW8bit
@@ -485,13 +488,20 @@ class RWKV(pl.LightningModule):
                         #exit()
 
             if self.deepspeed_offload:
-                return DeepSpeedCPUAdam(optim_groups, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=True, amsgrad=False)
+                if args.optim == 'lion':
+                    print('Deepspeed CPULion Mode')
+                    return DeepSpeedCPULion(optim_groups, betas=self.args.betas)
+                else:
+                    return DeepSpeedCPUAdam(optim_groups, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=True, amsgrad=False)
             if args.optim == 'Adam8bit':
                 print('Bitsandbytes Adam8bit Mode')
                 return Adam8bit(optim_groups,  betas=self.args.betas, eps=self.args.adam_eps)
             elif args.optim == 'AdamW8bit':
                 print('Bitsandbytes AdamW8bit Mode')
                 return AdamW8bit(optim_groups,  betas=self.args.betas, eps=self.args.adam_eps)
+            elif args.optim == 'lion':
+                print('Deepspeed Lion Mode')
+                return FusedLion(optim_groups, betas=self.args.betas)
             else:
                 return FusedAdam(optim_groups,  betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
 
@@ -1384,7 +1394,8 @@ class RWKV(pl.LightningModule):
                     return torch.tensor([0.0], requires_grad=True)
 
                 # Label Smoothing Loss
-                label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+                #label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+                label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
                 student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
                 smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
 
