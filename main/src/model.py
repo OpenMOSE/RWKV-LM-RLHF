@@ -27,6 +27,8 @@ from .trainutils import *
 
 from .adam_mini import Adam_mini
 
+from .zerocot import *
+
 
 from bitsandbytes.optim import Adam8bit,AdamW8bit
 
@@ -106,15 +108,27 @@ if 'x070' in os.environ["RWKV_MY_TESTING"]:
                 x  = x + ffn_out
                 return x, v_first,moe_router_loss
         else:
-            def forward(self, x, v_first):
+            def forward(self, x, v_first,passthrough = False):
                 if self.layer_id == 0:
                     x = self.ln0(x)
 
-                x_attn, v_first = self.att(self.ln1(x), v_first)
+                x_attn, v_first = self.att(self.ln1(x), v_first, passthrough)
                 x = x + x_attn
 
-                x = x + self.ffn(self.ln2(x))
+                x = x + self.ffn(self.ln2(x),passthrough)
                 return x, v_first
+            @torch.no_grad()
+            def forward_rnn(self, x, v_first,last_state: BlockState,passthrough=False):
+                if self.layer_id == 0:
+                    x = self.ln0(x)
+
+                x_attn, v_first, att_state = self.att.forward_rnn(self.ln1(x), v_first, last_state.time_mix_state,passthrough)
+                x = x + x_attn
+
+                ffn_out ,ffn_state = self.ffn.forward_rnn(self.ln2(x), last_state.channel_mix_state,passthrough)
+
+                x = x + ffn_out
+                return x, v_first ,BlockState(att_state, ffn_state)
 if 'x060' in os.environ["RWKV_MY_TESTING"]:
     class Block(nn.Module):
         def __init__(self, args, layer_id):
@@ -342,6 +356,10 @@ class RWKV(pl.LightningModule):
 
         self.ln_out = nn.LayerNorm(args.n_embd)
         self.head = make_linear_head(args.n_embd, args.vocab_size, bias=False)
+
+        if args.zerocot:
+            self.clitic_head = nn.Linear(args.n_embd, 1, bias=False)
+
         if args.dropout > 0:
             self.drop0 = nn.Dropout(p = args.dropout)
         print('Make Blocks')
@@ -379,6 +397,9 @@ class RWKV(pl.LightningModule):
         self.CurrentCudaNo = NowCurrentlyGPUNo
 
         print('finish blocks')
+
+        if args.zerocot:
+            zerocot_init(self)
     def setup(self, stage):
 
         if self.device.type == 'cuda':
@@ -1173,7 +1194,45 @@ class RWKV(pl.LightningModule):
     
     else: #Normal Trianing Mode = have limit context size 
 
-        def forward(self, idx):
+
+        def forward_rnn(self, idx,  last_shift_states: torch.Tensor,
+                last_wkv_states: torch.Tensor,passthrough=False):
+            args = self.args
+            B, T = idx.size()
+            #assert T <= args.chunk_ctx, "Cannot forward, model ctx_len is exhausted."  
+            #Autoregressive
+            C = args.n_embd
+            H =  args.dim_att // args.head_size_a
+            assert C==H*args.head_size_a
+            
+            x = self.emb(idx)
+            x_emb = x
+            new_states = BlockStateList.empty(args.n_layer, B, args.n_embd, H,
+                                            x.device, x.dtype)
+            if args.dropout > 0:
+                x = self.drop0(x)
+
+            if 'x070' in os.environ["RWKV_MY_TESTING"]:
+                v_first = torch.empty_like(x)
+                
+                for i, (block, block_state) in enumerate(zip(self.blocks,
+                    BlockStateList(last_shift_states, last_wkv_states))):
+                  
+                    x, v_first, new_block_state = block.forward_rnn(x,v_first, block_state,passthrough)
+            
+                    new_states[i] = new_block_state 
+            else:
+                assert "currently only supported v7"
+
+            x = self.ln_out(x)
+
+            x = self.head(x,passthrough)
+
+            return x, new_states.shift_states, new_states.wkv_states
+        
+
+
+        def forward(self, idx,passthrough=False,frozen=False,clitic=False):
             args = self.args
             B, T = idx.size()
             assert T <= args.ctx_len, "Cannot forward, model ctx_len is exhausted."
@@ -1187,6 +1246,9 @@ class RWKV(pl.LightningModule):
                     v_first = torch.empty_like(x)
                     moe_total_loss = 0
                     for block in self.blocks:
+                        if frozen:
+                            x, v_first = block(x, v_first,passthrough)
+
                         if args.grad_cp == 1:
                             layer_mode = LAYER_CONFIG[f'{str(block.layer_id)}']['mode']
                             if layer_mode == 'full' or layer_mode == 'freeze':
@@ -1195,13 +1257,13 @@ class RWKV(pl.LightningModule):
                                     x, v_first,moe_router_loss = torch_checkpoint(block, x, v_first, idx, use_reentrant=False)
                                     moe_total_loss += (moe_router_loss+0.001) / float(args.n_layer)
                                 else:
-                                    x, v_first = torch_checkpoint(block, x, v_first,use_reentrant=False)
+                                    x, v_first = torch_checkpoint(block, x, v_first,passthrough,use_reentrant=False)
                             else:
                                 if os.environ["CustomModel"] == 'MoE':
                                     x, v_first ,moe_router_loss = torch_checkpoint(block, x, v_first,idx,use_reentrant=False)
                                     moe_total_loss += (moe_router_loss+0.001) / float(args.n_layer)
                                 else:
-                                    x, v_first = torch_checkpoint(block, x, v_first ,use_reentrant=False)
+                                    x, v_first = torch_checkpoint(block, x, v_first,passthrough, use_reentrant=False)
                                 #x, v_first = deepspeed.checkpointing.checkpoint(block, x, v_first )
                         else:
                             if os.environ["CustomModel"] == 'MoE':
@@ -1225,12 +1287,37 @@ class RWKV(pl.LightningModule):
 
             x = self.ln_out(x)
 
-
-            x = self.head(x)
+            if clitic:
+                x= self.clitic_head(x)
+            else:
+                x = self.head(x)
 
             if os.environ["CustomModel"] == 'MoE':
                 #print(f'Moe Router_loss = {moe_router_loss}')
                 return x, moe_router_loss
+            return x, 0.0
+        
+
+        def forward_head2(self, idx,passthrough=False,frozen=False,clitic=False):
+            
+            with torch.no_grad():
+                args = self.args
+                B, T = idx.size()
+                assert T <= args.ctx_len, "Cannot forward, model ctx_len is exhausted."
+
+                x = self.emb(idx)
+                x_emb = x
+                if 'x070' in os.environ["RWKV_MY_TESTING"]:
+                        v_first = torch.empty_like(x)
+                        moe_total_loss = 0
+                        for block in self.blocks:
+                            if frozen:
+                                x, v_first = block(x, v_first,passthrough)
+
+                x = self.ln_out(x)
+
+            x= self.clitic_head(x)
+
             return x, 0.0
     
         def compute_logps_simple_mask(self, chosen_inputs, logits, attention_mask=None):
@@ -1268,6 +1355,9 @@ class RWKV(pl.LightningModule):
         def training_step(self, batch, batch_idx):
             
             args = self.args
+
+            if args.zerocot:
+                return training_step_zerocot(self,batch,batch_idx)
 
             if args.distillation:
                 temperature = args.temperature
@@ -1394,8 +1484,8 @@ class RWKV(pl.LightningModule):
                     return torch.tensor([0.0], requires_grad=True)
 
                 # Label Smoothing Loss
-                #label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
-                label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
+                label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+                #label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
                 student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
                 smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
 

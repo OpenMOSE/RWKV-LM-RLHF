@@ -17,7 +17,7 @@ from einops import rearrange
 allow_ops_in_compiled_graph()
 
 # about FLA
-from fla.ops.rwkv7 import chunk_rwkv7
+from fla.ops.rwkv7 import chunk_rwkv7,fused_recurrent_rwkv7
 
 # for infctx
 from .infctx_module import *
@@ -61,6 +61,22 @@ if 'x070' in ModelGeneration:
             r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
             o, state = chunk_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=s, output_final_state=True, head_first=False)
             return o, state
+        def RUN_RWKV7_RECURRENT(r, k, v, w, a, b, s, HEAD_SIZE=64): # for sampling
+            B,T,HC = w.shape
+            C = HEAD_SIZE
+            H = HC//C
+            w=-torch.exp(w)
+            #w = -w.float().exp().to(r)
+            r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
+            o, state = fused_recurrent_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=s, output_final_state=True, head_first=False)
+            #o = rearrange(o, 'b h l d -> b l (h d)')
+            return o, state
+        # def RUN_CUDA_RWKV7g(r, log_neglog_w, k, v, a, b, num_heads:int) -> torch.Tensor:
+        #     B,T,_ = r.shape
+        #     r,log_neglog_w,k,v,a,b = [i.view(B,T,num_heads,-1) for i in [r,log_neglog_w,k,v,a,b]]
+        #     log_w = -log_neglog_w.float().exp().to(r)
+        #     output, state = fused_recurrent_rwkv7(r=r, log_w=log_w, k=k, v=v, a=a, b=b, output_final_state=False)
+        #     return output, state
         @torch.jit.ignore
         def RUN_CUDA_RWKV7g(r,w,k,v,a,b, HEAD_SIZE=64): #compatible with cuda implement
             B,T,HC = w.shape
@@ -465,7 +481,7 @@ if 'x070' in ModelGeneration:
 
 
 
-        def forward(self, x, v_first):
+        def forward(self, x, v_first,passthrough = False):
             B, T, C = x.size()
             H = self.n_head
             xx = self.time_shift(x) - x
@@ -477,10 +493,12 @@ if 'x070' in ModelGeneration:
             xa = x + xx * self.x_a
             xg = x + xx * self.x_g
 
-            r = self.receptance(xr)
+            
+
+            r = self.receptance(xr,passthrough)
             w = -F.softplus(-(self.w0 + torch.tanh(xw @ self.w1) @ self.w2)) - 0.5 # soft-clamp to (-inf, -0.5)
-            k = self.key(xk)
-            v = self.value(xv)
+            k = self.key(xk,passthrough)
+            v = self.value(xv,passthrough)
             if self.layer_id == 0:
                 v_first = v # store the v of the first layer
             else:
@@ -497,8 +515,56 @@ if 'x070' in ModelGeneration:
             x = self.ln_x(x.view(B * T, C)).view(B, T, C)
 
             x = x + ((r.view(B,T,H,-1)*k.view(B,T,H,-1)*self.r_k).sum(dim=-1, keepdim=True) * v.view(B,T,H,-1)).view(B,T,C)
-            x = self.output(x * g)
+            x = self.output(x * g,passthrough)
             return x, v_first
+        
+        @torch.no_grad() # for sampling ppo
+        def forward_rnn(self, x, v_first, last_state: TimeMixState,passthrough=False):
+            
+            B, T, C = x.size()
+            H = self.n_head
+            #xx = self.time_shift(x) - x
+
+            shift_state = last_state.shift_state
+            wkv_state = last_state.wkv_state.clone().contiguous() 
+
+            xx = torch.concat((shift_state.unsqueeze(1), x[:, :-1]), dim=1) - x
+
+            xr = x + xx * self.x_r
+            xw = x + xx * self.x_w
+            xk = x + xx * self.x_k
+            xv = x + xx * self.x_v
+            xa = x + xx * self.x_a
+            xg = x + xx * self.x_g
+
+            shift_state = x[:, -1]
+
+            r = self.receptance(xr,passthrough)
+            w = -F.softplus(-(self.w0 + torch.tanh(xw @ self.w1) @ self.w2)) - 0.5 # soft-clamp to (-inf, -0.5)
+            k = self.key(xk,passthrough)
+            v = self.value(xv,passthrough)
+            if self.layer_id == 0:
+                v_first = v # store the v of the first layer
+            else:
+                v = v + (v_first - v) * torch.sigmoid(self.v0 + (xv @ self.v1) @ self.v2) # add value residual
+            a = torch.sigmoid(self.a0 + (xa @ self.a1) @ self.a2) # a is "in-context learning rate"
+            g = torch.sigmoid(xg @ self.g1) @ self.g2
+
+            kk = k * self.k_k
+            kk = F.normalize(kk.view(B,T,H,-1), dim=-1, p=2.0).view(B,T,C)
+            k = k * (1 + (a-1) * self.k_a)
+
+            x, wkv_state = RUN_RWKV7_RECURRENT(r,k,v,w,-kk, kk*a,s=wkv_state)
+
+            #x = x.view(B,T,-1).to(dtype=r.dtype)
+            #x = x.permute(0, 2, 1).contiguous()  # (B,H*N,T)
+
+            x = self.ln_x(x.view(B * T, C)).view(B, T, C)
+
+            x = x + ((r.view(B,T,H,-1)*k.view(B,T,H,-1)*self.r_k).sum(dim=-1, keepdim=True) * v.view(B,T,H,-1)).view(B,T,C)
+            x = self.output(x * g,passthrough)
+
+            return x, v_first,TimeMixState(shift_state,wkv_state)
     
     class RWKV_Tmix_x070_state(nn.Module):
         def __init__(self, args, layer_id):
@@ -629,7 +695,7 @@ if 'x070' in ModelGeneration:
 
 
 
-        def forward(self, x, v_first):
+        def forward(self, x, v_first,passthrough):
             B, T, C = x.size()
             H = self.n_head
             xx = self.time_shift(x) - x
@@ -641,10 +707,10 @@ if 'x070' in ModelGeneration:
             xa = x + xx * self.x_a
             xg = x + xx * self.x_g
 
-            r = self.receptance(xr)
+            r = self.receptance(xr,passthrough)
             w = -F.softplus(-(self.w0 + torch.tanh(xw @ self.w1) @ self.w2)) - 0.5 # soft-clamp to (-inf, -0.5)
-            k = self.key(xk)
-            v = self.value(xv)
+            k = self.key(xk,passthrough)
+            v = self.value(xv,passthrough)
             if self.layer_id == 0:
                 v_first = v # store the v of the first layer
             else:
@@ -661,7 +727,7 @@ if 'x070' in ModelGeneration:
             x = self.ln_x(x.view(B * T, C)).view(B, T, C)
 
             x = x + ((r.view(B,T,H,-1)*k.view(B,T,H,-1)*self.r_k).sum(dim=-1, keepdim=True) * v.view(B,T,H,-1)).view(B,T,C)
-            x = self.output(x * g)
+            x = self.output(x * g,passthrough)
             return x, v_first
         
 
@@ -858,40 +924,51 @@ if 'x070' in ModelGeneration:
 
             Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
 
-            LinearMode = 0
+            # LinearMode = 0
 
-            if Processing_Mode == 'full':
-                LinearMode = 0
+            # if Processing_Mode == 'full':
+            #     LinearMode = 0
 
-            elif Processing_Mode == 'freeze':
-                Quant_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['quant']
-                if Quant_Mode == 'none':
-                    LinearMode = 0
-                else:
-                    LinearMode = 1
-            else:
-                LinearMode = 1
+            # elif Processing_Mode == 'freeze':
+            #     Quant_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['quant']
+            #     if Quant_Mode == 'none':
+            #         LinearMode = 0
+            #     else:
+            #         LinearMode = 1
+            # else:
+            #     LinearMode = 1
 
-            if LinearMode == 0:
-                self.key = nn.Linear(args.n_embd, args.dim_ffn, bias=False)
-                self.value = nn.Linear(args.dim_ffn, args.n_embd, bias=False)
-            else:
-                self.key = make_linear_ffn(args.n_embd, args.dim_ffn, bias=False,n_layer=self.layer_id,pname='ffn.key')
-                self.value = make_linear_ffn(args.dim_ffn, args.n_embd, bias=False,n_layer=self.layer_id,pname='ffn.value')
+            # if LinearMode == 0:
+            #     self.key = nn.Linear(args.n_embd, args.dim_ffn, bias=False)
+            #     self.value = nn.Linear(args.dim_ffn, args.n_embd, bias=False)
+            # else:
+            self.key = make_linear_ffn(args.n_embd, args.dim_ffn, bias=False,n_layer=self.layer_id,pname='ffn.key')
+            self.value = make_linear_ffn(args.dim_ffn, args.n_embd, bias=False,n_layer=self.layer_id,pname='ffn.value')
 
             # !!! initialize if you are using RWKV_Tmix_x070 in your code !!!
             # self.key.weight.data.uniform_(-0.5/(args.n_embd**0.5), 0.5/(args.n_embd**0.5))
             # self.value.weight.data.zero_()
 
-        def forward(self, x):
+        def forward(self, x,passthrough=False):
             xx = self.time_shift(x) - x
             #xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]), dim=1) - x
             
             
             k = x + xx * self.x_k
-            k = torch.relu(self.key(k)) ** 2
+            k = torch.relu(self.key(k,passthrough)) ** 2
 
-            return self.value(k)#,ChannelMixState(x[:, -1])
+            return self.value(k,passthrough)#,ChannelMixState(x[:, -1])
+        
+        @torch.no_grad() # for sampling ppo
+        def forward_rnn(self, x,last_state: ChannelMixState,passthrough = False):
+            #xx = self.time_shift(x) - x
+            xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]), dim=1) - x
+            
+            
+            k = x + xx * self.x_k
+            k = torch.relu(self.key(k,passthrough)) ** 2
+
+            return self.value(k,passthrough),ChannelMixState(x[:, -1])
         
     class RWKV_CMix_x070_infctx(nn.Module):
         def __init__(self, args, layer_id):
@@ -967,9 +1044,9 @@ if 'x070' in ModelGeneration:
             self.layer_id = layer_id
             self.key = make_linear_ffn_experts(args.n_embd, args.dim_ffn, shared_weight = Shared_key,bias=False,n_layer=self.layer_id,pname='ffn.key',ExpertNo = ExpertNo)
             self.value = make_linear_ffn_experts(args.dim_ffn, args.n_embd, shared_weight = Shared_value, bias=False,n_layer=self.layer_id,pname='ffn.value',ExpertNo=ExpertNo)
-        def forward(self, hidden):
-            k = torch.relu(self.key(hidden)) ** 2
-            return self.value(k)
+        def forward(self, hidden,passthrough=False):
+            k = torch.relu(self.key(hidden),passthrough) ** 2
+            return self.value(k,passthrough)
 
     class RWKV_CMix_x070_MoE_(nn.Module):
         def __init__(self, args, layer_id, num_experts=4):

@@ -294,10 +294,13 @@ def rwkv_dequantize(quant_type, weight, qstate):
             deweight= weight.data
         return deweight#.to(torch.bfloat16).contiguous()
 
-def LinearForward(self,x):
+def LinearForward(self,x,passthrough = False):
+    #print(f'passthgough = {passthrough}')
     if self.is_quant:
             if self.pissa:
                 if self.quant_type == 'fp8': #native
+                    if passthrough:
+                        return fp8_matmul(x,self.Qweight.t()) #Inference without lora
                     return (
                     fp8_matmul(x,self.Qweight.t()) + 
                     F.linear(F.linear(x, self.lora_A), self.lora_B))
@@ -311,6 +314,8 @@ def LinearForward(self,x):
                         F.linear(F.linear(x, self.lora_A), self.lora_B))
                 else: #Bitsandbytes NF4 INT8, FP16
                     temporal_weight = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
+                    if passthrough:
+                        return F.linear(x, temporal_weight) #Inference without lora
                     if temporal_weight.dtype == torch.float16:
                         return (
                             fp16_matmul(x,temporal_weight.t()) + 
@@ -321,6 +326,9 @@ def LinearForward(self,x):
             
             elif self.bonemode: # Covered All quantize method. currently slow implementation
                 temporal_weight = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
+
+                if passthrough:
+                    return F.linear(x, temporal_weight)
                 w = rearrange(temporal_weight, '(a r1) (b r2) -> a b r1 r2', r1 = self.r, r2 = self.r)@self.bone+self.bone
                 w = rearrange(w, 'a b r1 r2 ->(a r1) (b r2) ')
                 #w = w + temporal_weight
@@ -328,6 +336,8 @@ def LinearForward(self,x):
             
             else: #LoRA
                 if self.quant_type == 'fp8': #native
+                    if passthrough:
+                        return fp8_matmul(x,self.Qweight.t())
                     return (fp8_matmul(x,self.Qweight.t()) + self.scaling *
                         F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)
                     )
@@ -343,6 +353,8 @@ def LinearForward(self,x):
                     )
                 else:
                     w = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
+                    if passthrough:
+                        return F.linear(x, temporal_weight)
                     #print(f'lora mode dtype = {w.dtype}')
                     if w.dtype == torch.float16:
                         return (fp16_matmul(x,w.t()) + self.scaling *
@@ -354,13 +366,19 @@ def LinearForward(self,x):
                 
     else: # Non Quant mode
         if self.pissa:
+            if passthrough:
+                return F.linear(x, self.weight)
             return (
                 F.linear(x, self.weight) + 
                 F.linear(F.linear(x, self.lora_A), self.lora_B))
         elif self.bonemode:
+            if passthrough:
+                F.linear(x, self.weight)
             w = rearrange(self.weight, '(a r1) (b r2) -> a b r1 r2', r1 = self.r, r2 = self.r)@self.bone+self.bone
             w = rearrange(w, 'a b r1 r2 ->(a r1) (b r2) ')
             return F.linear(x,self.weight+w)
+        if passthrough:
+                F.linear(x, self.weight)
         return (
             F.linear(x, self.weight) + self.scaling *
             F.linear(F.linear(self.lora_dropout(x), self.lora_A), self.lora_B)) 
@@ -471,8 +489,8 @@ class HeadLoraLinear(nn.Module):
         self.Qweight, self.qstate= rwkv_quantize(self.quant_type, (self.weight.data).to(target_gpu))
         self.weight = None # Because Latest Pytorch-lightning forced to BF16 type. thats why delete
     #@torch.jit.ignore
-    def forward(self, x):
-        return LinearForward(self,x)
+    def forward(self, x,passthrough=False):
+        return LinearForward(self,x,passthrough)
 
         
 @torch.jit.ignore
@@ -553,8 +571,8 @@ class LoraLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :) Chaos Modified
         self.Qweight, self.qstate= rwkv_quantize(self.quant_type, (self.weight).to(device=target_gpu))
         self.weight = None # Because Latest Pytorch-lightning forced to BF16 type. thats why delete
     #@torch.jit.ignore
-    def forward(self, x):
-        return LinearForward(self,x)
+    def forward(self, x,passthrough = False):
+        return LinearForward(self,x,passthrough)
     
 class Shared_LoraLinear(nn.Module): # for Mixture of LoRA Experts
 
@@ -613,7 +631,7 @@ class QuantLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :)
         self.Qweight, self.qstate= rwkv_quantize(self.quant_type, (self.weight).to(device=target_gpu))
         self.weight = None # Because Latest Pytorch-lightning forced to BF16 type. thats why delete
     #@torch.jit.ignore
-    def forward(self, x):
+    def forward(self, x,passthrough=False):
 
         if self.is_quant:
             if self.quant_type == 'fp8':
