@@ -87,6 +87,16 @@ def sampling_multibatch(self,logits, temperature, top_p): # This is From RWKV-In
         samples = torch.multinomial(probs, num_samples=1).squeeze(-1)
         return samples#
 
+# パディング関数の定義
+def pad_to_size(tensor, target_size=2048):
+    current_size = tensor.size(1)
+    pad_size = target_size - current_size
+    
+    # (左, 右, 上, 下)のパディングを指定
+    padding = (0, pad_size, 0, 0)
+    
+    return F.pad(tensor, padding, mode='constant', value=0)
+
 
 def GenerateForwardTokens(self,prompt,stoplength=50,additionaltoken=None,stoptoken='\n\n',temp=1.0,topp = 0.5): # from RWKV-Infer Methods. TSUKUTTETE YOKATTA-
 
@@ -188,6 +198,8 @@ def training_step_zerocot(self, batch, batch_idx):
     print('Training Step ZeroCoT')
     batch_orpo = batch
 
+    args = self.args
+
     # 損失集計用
     loss_sft_all = 0.0   # 例: 通常の教師強制Loss(もし使うなら)
     loss_rl_all  = 0.0   # REINFORCE目的のLoss
@@ -214,8 +226,8 @@ def training_step_zerocot(self, batch, batch_idx):
 
         #both tokenized. but, MENDOKUSAI NODE ITTAN TEXT Ni SURU
 
-        prompt_text = self.tokenizer.decode(prompttoken.tolist())
-        chosen_text = self.tokenizer.decode(chosentoken.tolist())
+        prompt_text = self.tokenizer.decode(prompttoken.tolist())[:args.ctx_len//2]
+        chosen_text = self.tokenizer.decode(chosentoken.tolist())[:args.ctx_len//2]
         
         #Instruct Rules
         SplitText = '\n\n'
@@ -243,6 +255,7 @@ def training_step_zerocot(self, batch, batch_idx):
         generated_token = []
         generated_tokenaddress = []
         basemodel_logit = []
+        combined_idxs = []
 
         for i in range(GenerateCount):
             generated_x, generated_tokens, tokenaddress = GenerateForwardTokens(self,
@@ -260,7 +273,7 @@ def training_step_zerocot(self, batch, batch_idx):
 
             BaseModelLogits, _ = BaseModel_Forward_NoGrad(self,BaseModelIdx)
             
-
+            combined_idxs.append(BaseModelIdx)
             generated_logit.append(generated_x)
             generated_token.append(generated_tokens)
             generated_tokenaddress.append(tokenaddress)
@@ -271,10 +284,31 @@ def training_step_zerocot(self, batch, batch_idx):
             print(f'generated_x shape = {generated_x.shape}')
 
         print(basemodel_logit)
+        effective_ctxlen = []
+        for k in range(len(combined_idxs)):
+             effective_ctxlen.append((combined_idxs[k].shape[1]))
+             combined_idxs[k] = pad_to_size(combined_idxs[k],args.ctx_len)
+        
+             
+
+        CombinedIdx = torch.cat(combined_idxs,dim=0) # will [B,ctx_len]
+
+        print(f'CombinedIdx = {CombinedIdx.shape}') 
+
+        logits = self.forward(CombinedIdx)
+
+        #Memo
+
+        #BaseModel Logits [B,ctx_len]
+        #ActorModel Logits[B,ctx_len]
+
+        #Reinforce BaseModel vs ActorModel in ChosenToken Perplexity
+
+
 
         #generated_logit and generated_token contain prompt + thinking + chosen  tokens,logits, maybe can compute probs
 
-        
+        #ここまでは動作しています
 
 
 
