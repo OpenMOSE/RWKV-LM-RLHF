@@ -28,9 +28,9 @@ from tokenizer.rwkv_tokenizer import *
 parser = ArgumentParser()
 
 #parser.add_argument("--load_model", default="myfolder/Outputs/rwkv-x070-2b9-cje-instruct-1.pth", type=str)
-parser.add_argument("--rlhf_input_folder", default="myfolder/RLHF/CoT", type=str)
-parser.add_argument("--rlhf_output_h5", default="myfolder/RLHF/CoTTest.h5", type=str)
-parser.add_argument("--endtoken", default="\n\n\x17", type=str)
+parser.add_argument("--rlhf_input_folder", default="myfolder/RLHF/MMLU", type=str)
+parser.add_argument("--rlhf_output_h5", default="myfolder/RLHF/MMLU.h5", type=str)
+parser.add_argument("--endtoken", default="\n\n", type=str)
 #\x17
 args2 = parser.parse_args()
 

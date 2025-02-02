@@ -109,7 +109,7 @@ def pad_to_size_3d(tensor, target_size=2048):
     return F.pad(tensor, padding, mode='constant', value=0)
 
 
-def GenerateForwardTokens(self,prompt,stoplength=50,additionaltoken=None,stoptoken='\n\n',temp=1.0,topp = 0.5): # from RWKV-Infer Methods. TSUKUTTETE YOKATTA-
+def GenerateForwardTokens(self,prompt,stoplength=50,additionaltoken=None,stoptoken='\n\n',temp=1.2,topp = 0.5): # from RWKV-Infer Methods. TSUKUTTETE YOKATTA-
 
     with torch.no_grad():
         args = self.args
@@ -349,7 +349,7 @@ def training_step_zerocot(self, batch, batch_idx):
     # いくつ Thinking サンプルを生成するか
     # (実験で同じプロンプトに対して複数回 Thinking をサンプリングし、平均的に学習する等)
     GenerateCount = 4
-    GenerateTokens = 256  # Thinking の長さ(目安)
+    GenerateTokens = 200  # Thinking の長さ(目安)
     # ここではさらに続けて final Output を書き足して Loss を見る例
 
     for s in range(bsz):
@@ -358,7 +358,7 @@ def training_step_zerocot(self, batch, batch_idx):
 
         # テキストに戻してデモ。実際は token のまま使う方が望ましい
         prompt_text  = self.tokenizer.decode(prompttoken.tolist())[: args.ctx_len // 2 - 256]
-        chosen_text  = self.tokenizer.decode(chosentoken.tolist())[: args.ctx_len // 2 - 256]
+        chosen_text  = self.tokenizer.decode(chosentoken.tolist())[: args.ctx_len // 2]
         
         # プロンプト作成: 
         SplitText      = '\n\n'
@@ -521,7 +521,7 @@ def training_step_zerocot(self, batch, batch_idx):
         # thinking_logprob_all: (GenerateCount,)
         # advantage_all       : (GenerateCount,)
         # => まとめて loss = - advantage * log_prob
-        loss_rl = -(thinking_logprob_all * advantage_all).mean()
+        loss_rl = -(0.1*thinking_logprob_all * advantage_all).mean()
 
         # 必要に応じて SFT のクロスエントロピーなど別ロスを加えるならここで加算
         # total_loss = alpha * loss_rl + beta * loss_sft といった形に

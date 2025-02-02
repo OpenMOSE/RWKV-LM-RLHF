@@ -91,7 +91,7 @@ if not HF_MODE:
     # download from https://huggingface.co/BlinkDL/rwkv-7-world
     #MODEL_NAME = "/home/client/Projects/RWKV-LM-RLHF/main/myfolder/models/RWKV-x060-World-7B-v3-20241112-ctx4096"
     #MODEL_NAME = "/home/client/Projects/RWKV-LM-RLHF/main/myfolder/models/RWKV-x070-World-1.5B-v3-20250127-ctx4096"
-    MODEL_NAME = "/home/client/Projects/RWKV-LM-RLHF/main/myfolder/models/cft1b5-3"
+    MODEL_NAME = "/home/client/Projects/RWKV-LM-RLHF/main/myfolder/models/1b5-reinforce"
     print(f"Loading model - {MODEL_NAME}")
 
     os.environ["RWKV_V7_ON"] = '1'
@@ -100,7 +100,7 @@ if not HF_MODE:
 
     from rwkv.model import RWKV
     from rwkv.utils import PIPELINE
-    model = RWKV(model=MODEL_NAME, strategy="cuda fp32")
+    model = RWKV(model=MODEL_NAME, strategy="cuda fp16")
     pipeline = PIPELINE(model, "rwkv_vocab_v20230424")
     tokenizer = pipeline.tokenizer
 
@@ -131,6 +131,17 @@ D. <|D|>
 
 Assistant: The answer is'''
 
+TEMPLATE_prompt = '''User: You are a very talented expert in <SUBJECT>. Answer this question:
+<Q>
+A. <|A|>
+B. <|B|>
+C. <|C|>
+D. <|D|>
+'''
+
+TEMPLATE_chosen = '''The answer is
+'''
+
 
 # TEMPLATE = '''Question: You are a very talented school teacher in <SUBJECT>. Answer this question:
 # <Q>
@@ -141,16 +152,16 @@ Assistant: The answer is'''
 # Answer: The answer is'''
 
 
-TEMPLATE = (
-    'System: You are a school teacher in <SUBJECT>.\n\n\x17'+
-    'User: Answer this question:' + '\n' +
-    '<Q>' + '\n' +
-    'A. <|A|>' + '\n' +
-    'B. <|B|>' + '\n' +
-    'C. <|C|>' + '\n' +
-    'D. <|D|>' + '\n\n\x17' +
-    'Assistant: The answer is'
-)
+# TEMPLATE = (
+#     'System: You are a school teacher in <SUBJECT>.\n\n\x17'+
+#     'User: Answer this question:' + '\n' +
+#     '<Q>' + '\n' +
+#     'A. <|A|>' + '\n' +
+#     'B. <|B|>' + '\n' +
+#     'C. <|C|>' + '\n' +
+#     'D. <|D|>' + '\n\n\x17' +
+#     'Assistant: The answer is'
+# )
 
 # TEMPLATE = (
 #     #'System: You are a school teacher in <SUBJECT>.\n\n\x17'+
@@ -221,11 +232,22 @@ with codecs.open('mmlu-cheat.jsonl', 'w', encoding='utf-8') as f:
                 .replace("<SUBJECT>", subject.replace("_", " "))
             )
 
+            all_prefix_prompt = (
+                TEMPLATE_prompt.replace("<Q>", question)
+                .replace("<|A|>", choices[0])
+                .replace("<|B|>", choices[1])
+                .replace("<|C|>", choices[2])
+                .replace("<|D|>", choices[3])
+                .replace("<SUBJECT>", subject.replace("_", " "))
+            )
+
+            all_prefix_chosen = TEMPLATE_chosen + CHOICES[gt] + '.\n\n'
+
             fordataset = all_prefix + CHOICES[gt] + '.\n\n'
 
             fordataset = fordataset.replace('\r\n','\n').strip()
 
-            json_line = json.dumps({"text": fordataset}, ensure_ascii=False)
+            json_line = json.dumps({"text": fordataset,'prompt':all_prefix_prompt, 'chosen':all_prefix_chosen}, ensure_ascii=False)
             # 1行ずつ書き込み、改行を追加
             f.write(json_line + '\n')
 
