@@ -364,7 +364,7 @@ def training_step_zerocot(self, batch, batch_idx):
         SplitText      = '\n\n'
         UserText       = 'User: '
         AssistantText  = "Assistant: "
-        ThinkingText   = "Thinking: "
+        ThinkingText   = "Thinking: Let me think it."
 
         GeneratePrompt = UserText + prompt_text + SplitText + ThinkingText
         # ここで Thinking を生成
@@ -443,6 +443,7 @@ def training_step_zerocot(self, batch, batch_idx):
         # まず、有効なトークン長をそれぞれ記録しておく
         thinking_logprob_all = []
         advantage_all        = []
+        entropy_all          = []  # [CHANGE: エントロピー計算用]
         
         for g_i in range(GenerateCount):
             # CombinedIdx[g_i]: [1, max_len]
@@ -497,6 +498,13 @@ def training_step_zerocot(self, batch, batch_idx):
                 chosen_lp = logprob_th[range(logprob_th.size(0)), flat_th_tokens]
                 sum_logprob_thinking = chosen_lp.sum()
 
+            # [CHANGE: エントロピー計算 (Thinking 部分の平均エントロピーを適当に入れる)]
+            if flat_th_tokens.numel() > 0:
+                p_th = logprob_th.exp()  # [N, V]
+                ent_th = -(p_th * logprob_th).sum(dim=-1).mean()  # 平均エントロピー
+            else:
+                ent_th = torch.zeros([], device=actor_g.device)
+
             # === Output 部分の NLL(Actor) ===
             actor_nll, actor_count = compute_nll_and_masked_tokens(
                 actor_g, tokens_g, pad_token_id=0, start_idx=start_output, end_idx=end_output
@@ -512,20 +520,59 @@ def training_step_zerocot(self, batch, batch_idx):
             # thinking_logprob を張り付け
             thinking_logprob_all.append(sum_logprob_thinking.unsqueeze(0)) 
             advantage_all.append(advantage.unsqueeze(0))
+            entropy_all.append(ent_th.unsqueeze(0))  # [CHANGE]
 
         # shape: [GenerateCount, 1]
         thinking_logprob_all = torch.cat(thinking_logprob_all, dim=0) 
         advantage_all        = torch.cat(advantage_all, dim=0)
+        entropy_all          = torch.cat(entropy_all, dim=0)           # [CHANGE]
+
+        mean_adv = advantage_all.mean()
+        std_adv  = advantage_all.std() + 1e-8
+        adv_normed = (advantage_all - mean_adv) / std_adv
+
+        clip_val = 5.0
+        adv_clipped = torch.clamp(adv_normed, -clip_val, clip_val)
+
+        # [CHANGE: エントロピー正則化の重み]
+        beta_entropy = 0.01
+        # Thinking 部分の平均エントロピー
+        mean_entropy = entropy_all.mean()
 
         # REINFORCE 損失
         # thinking_logprob_all: (GenerateCount,)
         # advantage_all       : (GenerateCount,)
         # => まとめて loss = - advantage * log_prob
-        loss_rl = -(0.1*thinking_logprob_all * advantage_all).mean()
+        #loss_rl = -(0.1*thinking_logprob_all * advantage_all).mean()
+        loss_rl = -((0.01 * thinking_logprob_all) * adv_clipped).mean()
+        
+        # [CHANGE: エントロピーボーナスをマイナス方向に加える (maximize entropy => minimize -entropy)]
+        loss_entropy = - beta_entropy * mean_entropy
+
+        actor_ppl = torch.exp(actor_nll / actor_count)
+        base_ppl  = torch.exp(base_nll  / base_count)
+
+        self.trainer.advantage = float(mean_adv)
+        self.trainer.advantage_clipped = float(adv_clipped.mean())
+
+        self.trainer.actor_ppl = float(actor_ppl)
+        self.trainer.base_ppl = float(base_ppl)
+
+        self.trainer.actor_nll = float(actor_nll)
+        self.trainer.base_nll = float(base_nll)
+
+        self.trainer.entropy = float(mean_entropy)
+
+        self.trainer.loss_rl = float(loss_rl)
+        self.trainer.loss_entropy = float(loss_entropy)
+
+        # 合計 REINFORCE ロス（エントロピー正則化込み）
+        total_loss_rl = loss_rl + loss_entropy
+
 
         # 必要に応じて SFT のクロスエントロピーなど別ロスを加えるならここで加算
         # total_loss = alpha * loss_rl + beta * loss_sft といった形に
-        total_loss = loss_rl
+        total_loss = total_loss_rl
         
         # ロスとして積算 (バッチ外 for s in range(bsz) だがデモ用に1バッチのみ)
         loss_rl_all += float(loss_rl.item())

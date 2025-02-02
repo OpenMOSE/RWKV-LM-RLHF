@@ -157,6 +157,20 @@ class train_callback(pl.Callback):
                     try:
                         lll |= {"smooth_loss": trainer.smooth_loss, "kl_loss": trainer.kl_loss, "active_ctx":trainer.realproceedtokens}
                     except: pass
+                if args.zerocot:
+                    #
+                    try:
+                        lll |= {"advantage": trainer.advantage,
+                                "advantage_clipped": trainer.advantage_clipped,
+                                "actor_ppl":trainer.actor_ppl,
+                                "base_ppl":trainer.base_ppl,
+                                "actor_nll":trainer.actor_nll,
+                                "base_nll":trainer.base_nll,
+                                "entropy":trainer.entropy,
+                                "loss_rl":trainer.loss_rl,
+                                "loss_entropy":trainer.loss_entropy                                
+                                }
+                    except: pass
                 if args.sft:
                     try:
                         lll |= {"smooth_loss": trainer.smooth_loss, "active_ctx":trainer.realproceedtokens}

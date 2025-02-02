@@ -1,5 +1,5 @@
 base_model='myfolder/models/RWKV-x070-World-1.5B-v3-20250127-ctx4096.pth'
-lora_checkpoint='myfolder/Outputs/ZeroCoT/rwkv-1.pth'
+lora_checkpoint='myfolder/Outputs/ZeroCoT/rwkv-4.pth'
 output='myfolder/models/1b5-reinforce.pth'
 QUANT='' #follow train
 TYPE='lora'
