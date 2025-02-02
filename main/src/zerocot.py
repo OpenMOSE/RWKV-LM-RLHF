@@ -110,7 +110,13 @@ def pad_to_size_3d(tensor, target_size=2048):
 
 
 def GenerateForwardTokens(self,prompt,stoplength=50,additionaltoken=None,stoptoken='\n\n',temp=1.2,topp = 0.5): # from RWKV-Infer Methods. TSUKUTTETE YOKATTA-
-
+    # with torch.profiler.profile(
+    #         activities=[
+    #             torch.profiler.ProfilerActivity.CPU,
+    #             torch.profiler.ProfilerActivity.CUDA,
+    #         ],
+    #         record_shapes=True
+    #     ) as prof:
     with torch.no_grad():
         args = self.args
 
@@ -135,8 +141,8 @@ def GenerateForwardTokens(self,prompt,stoplength=50,additionaltoken=None,stoptok
 
         shift_states = new_states.shift_states
         wkv_states = new_states.wkv_states
-
-        x, shift_states, wkv_states = self.forward_rnn(idx, shift_states, wkv_states,passthrough=True) #FLA
+        #with torch.profiler.record_function("Initial forward_rnn"):
+        x, shift_states, wkv_states = self.forward_rnn(idx, shift_states, wkv_states,passthrough=False) #FLA
 
         tokenaddress = {}
 
@@ -153,6 +159,8 @@ def GenerateForwardTokens(self,prompt,stoplength=50,additionaltoken=None,stoptok
             
             x[:, -1, 0] -= 1e10
 
+           # x=x.to(self.emb.weight.device)
+
             otokens_tensor = sampling_multibatch(self,x[:, -1], temperature=temperature, top_p=top_p)
             otokens = otokens_tensor.tolist()
 
@@ -166,22 +174,26 @@ def GenerateForwardTokens(self,prompt,stoplength=50,additionaltoken=None,stoptok
                 out_tokens[j] += [otokens[j]]
                 try:
                     tmp = self.tokenizer.decode(out_tokens[j][out_last[j]:])
+                    
                     if ("\ufffd" not in tmp) and (not tmp.endswith("\n")):
                             #if j == Target_batch - 1:
                             print(tmp,end="", flush=True)
                             output_text[j] = output_text[j] + tmp
                             out_last[j] = i + 1
                     if stoptoken in tmp:
-                            print(f'Endtoken = {repr(tmp)}')
+                            print(f'\nEndtoken\n')
                             tmp = tmp.replace(stoptoken,'')
                             break
+                    
                             
                 except:
                     pass
 
 
-            x, shift_states, wkv_states = self.forward_rnn(idx, shift_states.clone(), wkv_states.clone(),passthrough=False)
+            x, shift_states, wkv_states = self.forward_rnn(idx, shift_states, wkv_states,passthrough=False)
             out_x = torch.cat([out_x, x], dim=1)
+
+            #x=x.cpu()
 
             for xxx in occurrence:
                 occurrence[xxx] *= GEN_penalty_decay
@@ -193,8 +205,12 @@ def GenerateForwardTokens(self,prompt,stoplength=50,additionaltoken=None,stoptok
             x, shift_states, wkv_states = self.forward_rnn(additionaltoken, shift_states, wkv_states,passthrough=False) #FLA
             out_x = torch.cat([out_x, x], dim=1)
             tokenaddress['additionalprompt'] = x.shape[1]
-                 
-        return out_x, torch.tensor(out_tokens).to(device=self.emb.weight.device), tokenaddress
+
+            # プロファイラ結果を表示（関数の最後で一度出力）
+
+    #exit()
+            
+    return out_x, torch.tensor(out_tokens).to(device=self.emb.weight.device), tokenaddress
 
         
      
@@ -364,7 +380,7 @@ def training_step_zerocot(self, batch, batch_idx):
         SplitText      = '\n\n'
         UserText       = 'User: '
         AssistantText  = "Assistant: "
-        ThinkingText   = "Thinking: Let me think it."
+        ThinkingText   = "Thinking: Okay! before answering question, Let's think about it!"
 
         GeneratePrompt = UserText + prompt_text + SplitText + ThinkingText
         # ここで Thinking を生成
@@ -410,7 +426,9 @@ def training_step_zerocot(self, batch, batch_idx):
             #print(f"[Debug] Combined text:\n{self.tokenizer.decode(combined_idx[0].tolist())}")
 
             # ベースライン (BaseModel) の logits
-            base_logits, _ = BaseModel_Forward_NoGrad(self, combined_idx)
+            combined_idx_len = combined_idx.shape[1]
+            base_logits, _ = BaseModel_Forward_NoGrad(self, pad_to_size_2d(combined_idx,args.ctx_len))
+            base_logits = base_logits[:,:combined_idx_len]
 
             # リストに格納 (後で一括で pad & RL 計算)
             combined_idxs_list.append(combined_idx)
@@ -430,7 +448,9 @@ def training_step_zerocot(self, batch, batch_idx):
         # ====== ActorModel の Forward(勾配あり) ======
         #   ここで1回だけ forward して logits を取得
         #   (Thinking部の対数確率を計算し、REINFORCEしたい)
-        actor_logits, _ = ActorModel_Forward_Grad(self, CombinedIdx)
+        CombinedIdx_len = CombinedIdx.shape[1]
+        actor_logits, _ = ActorModel_Forward_Grad(self, pad_to_size_2d(CombinedIdx,args.ctx_len))
+        actor_logits=actor_logits[:,:CombinedIdx_len]
         # actor_logits shape = [GenerateCount, max_len, vocab]
 
         # ====== いよいよ REINFORCE の計算 ======

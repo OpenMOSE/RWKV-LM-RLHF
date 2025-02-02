@@ -146,6 +146,17 @@ if 'x070' in ModelGeneration:
                 q,w,k,v,a,b = [i.view(B,T,HC//HEAD_SIZE,HEAD_SIZE) for i in [q,w,k,v,a,b]]
                 return WindBackstepping.apply(w,q,k,v,a,b).view(B,T,HC)
             
+            def RUN_RWKV7_RECURRENT(r, k, v, w, a, b, s, HEAD_SIZE=64): # for sampling
+                B,T,HC = w.shape
+                C = HEAD_SIZE
+                H = HC//C
+                w=-torch.exp(w)
+                #w = -w.float().exp().to(r)
+                r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
+                o, state = fused_recurrent_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=s, output_final_state=True, head_first=False)
+                #o = rearrange(o, 'b h l d -> b l (h d)')
+                return o, state
+            
         else:
             print('x070 Wind Triton Kernel Mode')
     
@@ -518,7 +529,8 @@ if 'x070' in ModelGeneration:
             x = self.output(x * g,passthrough)
             return x, v_first
         
-        @torch.no_grad() # for sampling ppo
+        #@torch.no_grad() # for sampling ppo
+        @torch.compile
         def forward_rnn(self, x, v_first, last_state: TimeMixState,passthrough=False):
             
             B, T, C = x.size()
@@ -565,6 +577,50 @@ if 'x070' in ModelGeneration:
             x = self.output(x * g,passthrough)
 
             return x, v_first,TimeMixState(shift_state,wkv_state)
+        
+        def forward_rnn_(self, x, v_first, last_state: TimeMixState, passthrough=False):
+            B, T, C = x.size()
+            H = self.n_head
+
+            shift_state = last_state.shift_state
+            wkv_state = last_state.wkv_state#.clone()  # contiguous() を削除
+
+            # torch.concat() を避けてメモリ割り当てを削減
+            xx = torch.concat((shift_state.unsqueeze(1), x[:, :-1]), dim=1) - x
+
+            shift_state = x[:, -1]
+
+            xr, xw, xk, xv, xa, xg = [x + xx * scale for scale in [self.x_r, self.x_w, self.x_k, self.x_v, self.x_a, self.x_g]]
+
+            r = self.receptance(xr, passthrough)
+            w = -F.softplus(-(self.w0 + torch.tanh(xw @ self.w1) @ self.w2)) - 0.5  # soft-clamp to (-inf, -0.5)
+            k = self.key(xk, passthrough)
+            v = self.value(xv, passthrough)
+
+            if self.layer_id == 0:
+                v_first = v
+            else:
+                v = v + (v_first - v) * torch.sigmoid(self.v0 + (xv @ self.v1) @ self.v2)  # add value residual
+
+            a = torch.sigmoid(self.a0 + (xa @ self.a1) @ self.a2)  
+            g = torch.sigmoid(xg @ self.g1) @ self.g2
+
+            kk = k * self.k_k
+            kk = F.normalize(kk.view(B,T,H,-1), dim=-1, p=2.0).view(B,T,C)
+            k = k * (1 + (a-1) * self.k_a)
+
+            x, wkv_state = RUN_RWKV7_RECURRENT(r, k, v, w, -kk, kk * a, s=wkv_state)
+
+            # `contiguous()` を削除
+            x = self.ln_x(x.view(B * T, C)).view(B, T, C)
+
+            # einsum によりカーネルを統合
+            x = x + torch.einsum('bthd,bthd,bthd->bthd', r.view(B,T,H,-1), k.view(B,T,H,-1), v.view(B,T,H,-1)).reshape(B,T,C)
+
+
+            x = self.output(x * g, passthrough)
+
+            return x, v_first, TimeMixState(shift_state, wkv_state)
     
     class RWKV_Tmix_x070_state(nn.Module):
         def __init__(self, args, layer_id):

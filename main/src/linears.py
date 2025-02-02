@@ -293,7 +293,7 @@ def rwkv_dequantize(quant_type, weight, qstate):
         elif quant_type=='fp16':
             deweight= weight.data
         return deweight#.to(torch.bfloat16).contiguous()
-
+@torch.compile
 def LinearForward(self,x,passthrough = False):
     #print(f'passthgough = {passthrough}')
     if self.is_quant:
