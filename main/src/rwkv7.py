@@ -79,6 +79,7 @@ if 'x070' in ModelGeneration:
         #     return output, state
         @torch.jit.ignore
         def RUN_CUDA_RWKV7g(r,w,k,v,a,b, HEAD_SIZE=64): #compatible with cuda implement
+            print('FLA chunk_wkv7')
             B,T,HC = w.shape
             C = HEAD_SIZE
             H = HC//C

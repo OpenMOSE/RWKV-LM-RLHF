@@ -456,7 +456,7 @@ class RWKV(pl.LightningModule):
                                             'lr_final':float(LAYER_CONFIG['emb']['lr_final']) , 
                                             'weight_decay':float(LAYER_CONFIG['emb']['weight_decay']), 
                                             'pname':'emb'})
-                        print(optim_groups)
+                        #print(optim_groups)
                     #exit()
                 elif ('head' in n or 'ln_out' in n) and LAYER_CONFIG['head']['mode']:# != 'freeze':
                     if p.requires_grad:
@@ -465,7 +465,7 @@ class RWKV(pl.LightningModule):
                                             'lr_final':float(LAYER_CONFIG['head']['lr_final']),
                                             'weight_decay':float(LAYER_CONFIG['head']['weight_decay']) ,
                                             'pname':'head'})
-                        print(optim_groups)
+                        #print(optim_groups)
                 else:
                     print('Layer Check')
                     Found = False
@@ -474,14 +474,15 @@ class RWKV(pl.LightningModule):
                         if blockname in n:
                             print(n)
                         if blockname in n and 'time_state' in n and args.state:
-                            print(f"State-tuning {n} Set lr_init {float(LAYER_CONFIG[f'{str(i)}']['lr_init_state'])} lr_final {float(LAYER_CONFIG[f'{str(i)}']['lr_final_state'])}")
                             if p.requires_grad:
+                                print(f"State-tuning {n} Set lr_init {float(LAYER_CONFIG[f'{str(i)}']['lr_init_state'])} lr_final {float(LAYER_CONFIG[f'{str(i)}']['lr_final_state'])}")
+                            
                                 optim_groups.append({"params":[param_dict[n]], "weight_decay": 0.0,
                                                     'lr_init':float(LAYER_CONFIG[f'{str(i)}']['lr_init_state']), 
                                                     'lr_final':float(LAYER_CONFIG[f'{str(i)}']['lr_final_state']),  
                                                     'pname':n
                                                     })
-                            Found = True
+                                Found = True
                             break
                         elif blockname in n and LAYER_CONFIG[f'{str(i)}']['mode'] != 'freeze':
                             #if n in  LAYER_CONFIG[f'{str(i)}']['RejectParts'] and len(LAYER_CONFIG[f'{str(i)}']['RejectParts']) > 0:
@@ -494,15 +495,15 @@ class RWKV(pl.LightningModule):
                             if 'time_decay' in n: # for x060
                                 lr_x = 2.0
 
-                            print(f"WeightParameter {n} Set lr_init {float(LAYER_CONFIG[f'{str(i)}']['lr_init'])} lr_final {float(LAYER_CONFIG[f'{str(i)}']['lr_final'])}")
                             if p.requires_grad:
+                                print(f"WeightParameter {n} Set lr_init {float(LAYER_CONFIG[f'{str(i)}']['lr_init'])} lr_final {float(LAYER_CONFIG[f'{str(i)}']['lr_final'])}")
                                 optim_groups.append({"params":[param_dict[n]], 
                                                     'lr_init':float(LAYER_CONFIG[f'{str(i)}']['lr_init'])*lr_x, 
                                                     'lr_final':float(LAYER_CONFIG[f'{str(i)}']['lr_final'])*lr_x,  
                                                     'weight_decay':float(LAYER_CONFIG[f'{str(i)}']['weight_decay']),
                                                     'pname':n
                                                     })
-                            Found = True
+                                Found = True
                             break
                     if Found==False:
                         print( f'{n} is not found optimizer strategy')
@@ -1249,7 +1250,7 @@ class RWKV(pl.LightningModule):
                         if frozen:
                             x, v_first = block(x, v_first,passthrough)
 
-                        if args.grad_cp == 1:
+                        elif args.grad_cp == 1:
                             layer_mode = LAYER_CONFIG[f'{str(block.layer_id)}']['mode']
                             if layer_mode == 'full' or layer_mode == 'freeze':
                                 #x, v_first = deepspeed.checkpointing.checkpoint(block, x, v_first)

@@ -426,6 +426,10 @@ if __name__ == "__main__":
                 if 'head.weight'==pname:
                     print(f'  head additionally training module {pname}')
                     param.requires_grad = True
+
+
+
+                    
         if any(n.startswith("lora_") for n, _ in module.named_parameters()):
             print(f'  LoRA additionally training module {name}')
             for pname, param in module.named_parameters():
@@ -438,21 +442,14 @@ if __name__ == "__main__":
                 param.requires_grad = 'bone' in pname
                 print(f'bone Parts Enabled Training :{pname}')
 
-        #elif enable_ln_finetune and '.ln' in name:
-        # elif '.ln_x' in name:
-        #     for param in module.parameters():
-        #         print(f'  additionally training module {name}')
-        #         param.requires_grad = True
+ 
+        
         elif ('ln0' in name or 'ln_out' in name) and args.limited_lora == 0:
             for param in module.parameters():
                 print(f'  additionally training module {name}')
                 param.requires_grad = True
-        # #elif enable_time_finetune and any(n.startswith("time") for n, _ in module.named_parameters()):
-        # elif (any(n.startswith("time") for n, _ in module.named_parameters())) and args.limited_lora == 0:
-        #     for pname, param in module.named_parameters():
-        #         if pname.startswith("time"):
-        #             print(f'  LoRA additionally training parameter {pname}')
-        #             param.requires_grad = True
+
+
         
         if 'x070' in os.environ["RWKV_MY_TESTING"]:# and args.limited_lora == 0:
             #print('x070 Additional Parameters')

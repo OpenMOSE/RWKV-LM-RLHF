@@ -380,3 +380,71 @@ def training_step_zerocot_(self, batch, batch_idx):
 
 
     return loss
+
+
+
+def compute_logprob_for_tokens(
+    logits: torch.Tensor, 
+    tokens: torch.Tensor,
+    pad_token_id: int = 0,
+    start_idx: int = 0,
+    end_idx: int = None
+) -> torch.Tensor:
+    """
+    [start_idx : end_idx) のトークンに対応する log p(token) の「合計」を返す。
+    padding は無視する。
+    
+    具体的には cross_entropy 形式を使わずに、
+       logp = log_softmax(logits) を取った後に tokens を index して合計。
+    """
+    B, T, V = logits.shape
+    if end_idx is None:
+        end_idx = T
+
+    slice_logits = logits[:, start_idx:end_idx, :]   # [B, T_sliced, V]
+    slice_tokens = tokens[:, start_idx:end_idx]      # [B, T_sliced]
+
+    # フラット化
+    flat_logits = slice_logits.reshape(-1, V)    # [B*T_sliced, V]
+    flat_tokens = slice_tokens.reshape(-1)       # [B*T_sliced]
+
+    # マスク
+    valid_mask = (flat_tokens != pad_token_id) & (flat_tokens != 0)
+    valid_logits = flat_logits[valid_mask]
+    valid_tokens = flat_tokens[valid_mask]
+    if valid_tokens.numel() == 0:
+        return torch.zeros([], device=logits.device)
+
+    logp = F.log_softmax(valid_logits, dim=-1)              # [N, V]
+    chosen_logp = logp[range(len(valid_tokens)), valid_tokens]  # [N]
+    sum_logp = chosen_logp.sum()  # 合計
+
+    return sum_logp
+
+def reinforce_loss_with_baseline(
+    actor_logprob: torch.Tensor,
+    advantage: torch.Tensor
+) -> torch.Tensor:
+    """
+    REINFORCE の損失を計算:  - advantage * log_prob(actor)
+    の形になるように合計。多バッチであれば平均化するなど好みに合わせて調整。
+
+    actor_logprob: [B, n_thinking_tokens] のような形を想定
+    advantage: [B] or [B, 1] のような形
+
+    return: scalar
+    """
+    # advantage を thinking 次元へブロードキャスト
+    # actor_logprob: (B, n_think) 
+    # advantage     : (B,)  => (B,1)
+    if advantage.dim() == 1:
+        advantage = advantage.unsqueeze(1)  # (B,1)
+
+    # 損失の計算
+    # REINFORCE: loss = - E[ advantage * sum(logpi(a)) ]
+    # shape => (B, n_think)
+    loss_mat = - advantage * actor_logprob
+    
+    # バッチ / thinking トークン 合計
+    loss = loss_mat.mean()
+    return loss

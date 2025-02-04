@@ -109,7 +109,7 @@ def pad_to_size_3d(tensor, target_size=2048):
     return F.pad(tensor, padding, mode='constant', value=0)
 
 
-def GenerateForwardTokens(self,prompt,stoplength=50,additionaltoken=None,stoptoken='\n\n',temp=1.2,topp = 0.5): # from RWKV-Infer Methods. TSUKUTTETE YOKATTA-
+def GenerateForwardTokens(self,prompt,stoplength=50,additionaltoken=None,stoptoken='\n\n',temp=1.0,topp = 0.9): # from RWKV-Infer Methods. TSUKUTTETE YOKATTA-
     # with torch.profiler.profile(
     #         activities=[
     #             torch.profiler.ProfilerActivity.CPU,
@@ -128,8 +128,8 @@ def GenerateForwardTokens(self,prompt,stoplength=50,additionaltoken=None,stoptok
         
         temperature = torch.full((B,), temp)
         top_p = torch.full((B,), topp)
-        GEN_alpha_presence = 0.5
-        GEN_alpha_frequency = 0.5
+        GEN_alpha_presence = 0.3
+        GEN_alpha_frequency = 0.3
         GEN_penalty_decay = 0.996
 
         occurrence = {}
@@ -150,7 +150,7 @@ def GenerateForwardTokens(self,prompt,stoplength=50,additionaltoken=None,stoptok
 
         out_x = x.clone()
 
-    
+        print('///////////////////////////////////////////////////////////////////////////////////////////////\n')
         
         for i in range(stoplength):
 
@@ -170,6 +170,8 @@ def GenerateForwardTokens(self,prompt,stoplength=50,additionaltoken=None,stoptok
 
             idx = torch.cat(tokens, dim=0)
 
+            breaks = False
+
             for j in range(B):
                 out_tokens[j] += [otokens[j]]
                 try:
@@ -181,13 +183,21 @@ def GenerateForwardTokens(self,prompt,stoplength=50,additionaltoken=None,stoptok
                             output_text[j] = output_text[j] + tmp
                             out_last[j] = i + 1
                     if stoptoken in tmp:
-                            print(f'\nEndtoken\n')
+                            #print(f'\nEndtoken\n')
                             tmp = tmp.replace(stoptoken,'')
+                            breaks = True
+
+                            if len(output_text[j]) == 0:
+                                 #print('output text not detected try again')
+                                 breaks = False
                             break
                     
                             
                 except:
                     pass
+
+            if breaks:
+                 break
 
 
             x, shift_states, wkv_states = self.forward_rnn(idx, shift_states, wkv_states,passthrough=False)
@@ -209,6 +219,9 @@ def GenerateForwardTokens(self,prompt,stoplength=50,additionaltoken=None,stoptok
             # プロファイラ結果を表示（関数の最後で一度出力）
 
     #exit()
+
+    print('\n///////////////////////////////////////////////////////////////////////////////////////////////\n')
+        
             
     return out_x, torch.tensor(out_tokens).to(device=self.emb.weight.device), tokenaddress
 
@@ -216,7 +229,7 @@ def GenerateForwardTokens(self,prompt,stoplength=50,additionaltoken=None,stoptok
      
 
 def zerocot_init(self):
-    print('Zero CoT Initialize')
+    #print('Zero CoT Initialize')
     self.CoTDebug = True
 
     self.tokenizer = TRIE_TOKENIZER("tokenizer/rwkv_vocab_v20230424.txt")
@@ -272,71 +285,63 @@ def compute_nll_and_masked_tokens(
     nll = F.cross_entropy(valid_logits, valid_tokens, reduction='mean')
     
     return nll, valid_count
-def compute_logprob_for_tokens(
+
+def compute_nll_and_masked_tokens_shifted(
     logits: torch.Tensor, 
     tokens: torch.Tensor,
     pad_token_id: int = 0,
     start_idx: int = 0,
     end_idx: int = None
-) -> torch.Tensor:
+) -> Tuple[torch.Tensor, int]:
     """
-    [start_idx : end_idx) のトークンに対応する log p(token) の「合計」を返す。
-    padding は無視する。
+    logits: [B, T, V]
+    tokens: [B, T]
+    start_idx: この位置以降を NLL 計算対象とする
+    end_idx:  この位置以前を NLL 計算対象とする (None の場合は T まで)
+    pad_token_id: パディングに使うトークン ID
     
-    具体的には cross_entropy 形式を使わずに、
-       logp = log_softmax(logits) を取った後に tokens を index して合計。
+    ※ 標準的なLM学習の挙動（1ステップシフト）を再現するために、
+       ロジットは [start_idx, end_idx-1) を用い、
+       対象トークンは [start_idx+1, end_idx) を用います。
+    
+    返り値:
+    - total_nll: バッチごとの合計負の対数尤度 (cross-entropy の合計)
+    - count     : 有効トークン数 (paddingを除いた)
     """
     B, T, V = logits.shape
     if end_idx is None:
         end_idx = T
 
-    slice_logits = logits[:, start_idx:end_idx, :]   # [B, T_sliced, V]
-    slice_tokens = tokens[:, start_idx:end_idx]      # [B, T_sliced]
+    # シフト処理のため、区間長が少なくとも2でなければならない
+    if end_idx - start_idx < 2:
+        return torch.tensor(0.0, device=logits.device, dtype=logits.dtype), 0
 
-    # フラット化
-    flat_logits = slice_logits.reshape(-1, V)    # [B*T_sliced, V]
-    flat_tokens = slice_tokens.reshape(-1)       # [B*T_sliced]
+    # シフトを反映したスライス
+    # logits: [start_idx, end_idx-1) → 予測対象として使う
+    # tokens: [start_idx+1, end_idx) → 正解（ターゲット）として使う
+    slice_logits = logits[:, start_idx:end_idx - 1, :]    # [B, T_sliced-1, V]
+    slice_tokens = tokens[:, start_idx + 1:end_idx]         # [B, T_sliced-1]
 
-    # マスク
+    # flat へ変形 (CrossEntropy の入力形式に合わせる)
+    flat_logits = slice_logits.reshape(-1, V)         # [B*(T_sliced-1), V]
+    flat_tokens = slice_tokens.reshape(-1)            # [B*(T_sliced-1)]
+
+    # パディング位置マスクを作成
     valid_mask = (flat_tokens != pad_token_id) & (flat_tokens != 0)
-    valid_logits = flat_logits[valid_mask]
-    valid_tokens = flat_tokens[valid_mask]
-    if valid_tokens.numel() == 0:
-        return torch.zeros([], device=logits.device)
-
-    logp = F.log_softmax(valid_logits, dim=-1)              # [N, V]
-    chosen_logp = logp[range(len(valid_tokens)), valid_tokens]  # [N]
-    sum_logp = chosen_logp.sum()  # 合計
-
-    return sum_logp
-
-def reinforce_loss_with_baseline(
-    actor_logprob: torch.Tensor,
-    advantage: torch.Tensor
-) -> torch.Tensor:
-    """
-    REINFORCE の損失を計算:  - advantage * log_prob(actor)
-    の形になるように合計。多バッチであれば平均化するなど好みに合わせて調整。
-
-    actor_logprob: [B, n_thinking_tokens] のような形を想定
-    advantage: [B] or [B, 1] のような形
-
-    return: scalar
-    """
-    # advantage を thinking 次元へブロードキャスト
-    # actor_logprob: (B, n_think) 
-    # advantage     : (B,)  => (B,1)
-    if advantage.dim() == 1:
-        advantage = advantage.unsqueeze(1)  # (B,1)
-
-    # 損失の計算
-    # REINFORCE: loss = - E[ advantage * sum(logpi(a)) ]
-    # shape => (B, n_think)
-    loss_mat = - advantage * actor_logprob
     
-    # バッチ / thinking トークン 合計
-    loss = loss_mat.mean()
-    return loss
+    # 有効な位置のみ抽出
+    valid_logits = flat_logits[valid_mask]  # shape [N_valid, V]
+    valid_tokens = flat_tokens[valid_mask]  # shape [N_valid]
+    valid_count  = valid_logits.size(0) 
+
+    if valid_count == 0:
+        # 有効トークンがない場合は NLL=0 で返す
+        return torch.tensor(0.0, device=logits.device, dtype=logits.dtype), 0
+    
+    # cross_entropy を使って負の対数尤度を計算（合計値）
+    total_nll = F.cross_entropy(valid_logits, valid_tokens, reduction='sum')
+    return total_nll, valid_count
+
 
 
 
@@ -349,14 +354,12 @@ def training_step_zerocot(self, batch, batch_idx):
       => Thinking部の対数尤度に報酬を掛けて更新
     ベースモデル(BaseModel)のNLLをbaselineとして Advantage を計算。
     """
-    print('Training Step ZeroCoT')
+    #print('Training Step ZeroCoT')
 
     args = self.args
     batch_orpo = batch
     bsz = len(batch_orpo)
 
-    loss_sft_all = 0.0   # (オプション)教師強制のLossがあれば加える
-    loss_rl_all  = 0.0   # REINFORCE用
 
     # 実験としてバッチサイズは1想定で進めるなら
     # デモ用に bsz=1 として話を進める
@@ -364,8 +367,8 @@ def training_step_zerocot(self, batch, batch_idx):
 
     # いくつ Thinking サンプルを生成するか
     # (実験で同じプロンプトに対して複数回 Thinking をサンプリングし、平均的に学習する等)
-    GenerateCount = 4
-    GenerateTokens = 200  # Thinking の長さ(目安)
+    GenerateCount = 3
+    GenerateTokens = 256  # Thinking の長さ(目安)
     # ここではさらに続けて final Output を書き足して Loss を見る例
 
     for s in range(bsz):
@@ -373,14 +376,14 @@ def training_step_zerocot(self, batch, batch_idx):
         chosentoken = batch_orpo[s]['chosentoken'] # 最終回答など
 
         # テキストに戻してデモ。実際は token のまま使う方が望ましい
-        prompt_text  = self.tokenizer.decode(prompttoken.tolist())[: args.ctx_len // 2 - 256]
+        prompt_text  = self.tokenizer.decode(prompttoken.tolist())[: args.ctx_len // 2 -     GenerateTokens ]
         chosen_text  = self.tokenizer.decode(chosentoken.tolist())[: args.ctx_len // 2]
         
         # プロンプト作成: 
         SplitText      = '\n\n'
         UserText       = 'User: '
         AssistantText  = "Assistant: "
-        ThinkingText   = "Thinking: Okay! before answering question, Let's think about it!"
+        ThinkingText   = "Thinking:"# Maybe "+ chosen_text.replace(SplitText,'') + ' let me think about it. the question is'# okay. Let's think about it. this question is"
 
         GeneratePrompt = UserText + prompt_text + SplitText + ThinkingText
         # ここで Thinking を生成
@@ -423,34 +426,44 @@ def training_step_zerocot(self, batch, batch_idx):
             #    ただし gen_tokens は sampling のみ行われたので shape [B, #tokens]
             combined_idx = torch.cat([prompt_idx, gen_tokens, final_answer_idx], dim=1) # shape [1, T合計]
 
-            #print(f"[Debug] Combined text:\n{self.tokenizer.decode(combined_idx[0].tolist())}")
+            print(f"[Debug] Combined text:\n{self.tokenizer.decode(combined_idx[0].tolist())}")
 
             # ベースライン (BaseModel) の logits
-            combined_idx_len = combined_idx.shape[1]
-            base_logits, _ = BaseModel_Forward_NoGrad(self, pad_to_size_2d(combined_idx,args.ctx_len))
-            base_logits = base_logits[:,:combined_idx_len]
+            #combined_idx_len = combined_idx.shape[1]
+            #base_logits, _ = BaseModel_Forward_NoGrad(self, pad_to_size_2d(combined_idx,args.ctx_len))
+            #base_logits = base_logits[:,:combined_idx_len]
 
             # リストに格納 (後で一括で pad & RL 計算)
             combined_idxs_list.append(combined_idx)
             generated_logits_list.append(gen_x)
             generated_tokens_list.append(gen_tokens)
             generated_tokenaddress_list.append(tokenaddr)
-            base_model_logits_list.append(base_logits)
+            #base_model_logits_list.append(base_logits)
 
         # それぞれ長さを取り出し、padding してまとめる
         max_len = max(x.shape[1] for x in combined_idxs_list)
         for k in range(len(combined_idxs_list)):
             combined_idxs_list[k]      = pad_to_size_2d(combined_idxs_list[k], max_len)
-            base_model_logits_list[k]  = pad_to_size_3d(base_model_logits_list[k], max_len)
+            #base_model_logits_list[k]  = pad_to_size_3d(base_model_logits_list[k], max_len)
         CombinedIdx     = torch.cat(combined_idxs_list, dim=0)       # [GenerateCount, max_len]
-        BaseModelLogits = torch.cat(base_model_logits_list, dim=0)   # [GenerateCount, max_len, vocab]
+        #BaseModelLogits = torch.cat(base_model_logits_list, dim=0)   # [GenerateCount, max_len, vocab]
+
+
+        #print(f'BaseModelLogits shape ={BaseModelLogits.shape}')
+        print(f'CombinedIdx shape = {CombinedIdx.shape}')
 
         # ====== ActorModel の Forward(勾配あり) ======
         #   ここで1回だけ forward して logits を取得
         #   (Thinking部の対数確率を計算し、REINFORCEしたい)
         CombinedIdx_len = CombinedIdx.shape[1]
+        base_logits, _ = BaseModel_Forward_NoGrad(self, pad_to_size_2d(CombinedIdx,args.ctx_len))
         actor_logits, _ = ActorModel_Forward_Grad(self, pad_to_size_2d(CombinedIdx,args.ctx_len))
         actor_logits=actor_logits[:,:CombinedIdx_len]
+        base_logits=base_logits[:,:CombinedIdx_len]
+
+        print(f'actor_logits = {actor_logits.shape}')
+
+        print(f'diff = {torch.sum(base_logits - actor_logits)}')
         # actor_logits shape = [GenerateCount, max_len, vocab]
 
         # ====== いよいよ REINFORCE の計算 ======
@@ -469,7 +482,7 @@ def training_step_zerocot(self, batch, batch_idx):
             # CombinedIdx[g_i]: [1, max_len]
             tokens_g = CombinedIdx[g_i:g_i+1, :]  # shape [1, max_len]
             actor_g  = actor_logits[g_i:g_i+1, :, :]      # [1, max_len, vocab]
-            base_g   = BaseModelLogits[g_i:g_i+1, :, :]   # [1, max_len, vocab]
+            base_g   = base_logits[g_i:g_i+1, :, :]   # [1, max_len, vocab]
 
             # tokenaddress から区間を把握
             pad_len_prompt = generated_tokenaddress_list[g_i]['prompt']
@@ -489,16 +502,19 @@ def training_step_zerocot(self, batch, batch_idx):
             #  その log(prob) を合計
             #  1ステップ後の logits で計算するケースや、標準的には tokens[ t+1 ] の確率を logits[t] から取る等
             #  実装に応じてオフセットをずらす必要あり。
-            #  ここでは簡易に "actor_g[:, t, tokens[t]] を使う" とする
-            #  ただし cross_entropy のときは1 step シフトが必要。厳密にはご自身のモデル実装に合わせてください。
+
             
-            # actor_g, tokens_g をシフトさせて cross_entropy 形式で計算
-            # (Thinking を teacher forcing するわけではなく、REINFORCE用に対数確率を抽出)
-            # 簡易に next_tokens = tokens_g[:, start_thinking+1 : end_thinking+1] で取り、logits = actor_g[:, start_thinking : end_thinking]
-            # みたいにする等。ここでは最も単純に token[t] を logits[t] で計算してしまう例。
-            # padding を除くためにマスクもかける
-            thinking_slice_logits = actor_g[:, start_thinking : end_thinking, :]  # shape [1, #thinking, vocab]
-            thinking_slice_tokens = tokens_g[:, start_thinking : end_thinking]     # [1, #thinking]
+            #thinking_slice_logits = actor_g[:, start_thinking : end_thinking, :]  # shape [1, #thinking, vocab]
+            #thinking_slice_tokens = tokens_g[:, start_thinking : end_thinking]     # [1, #thinking]
+            # --- 変更後 ---
+            # 1ステップシフトを実施： logits[t] で次のトークン tokens[t+1] を予測
+            if end_thinking - start_thinking < 2:
+                # シーケンス長が短すぎる場合はシフトできないので、そのまま計算（またはスキップ）
+                thinking_slice_logits = actor_g[:, start_thinking : end_thinking, :]
+                thinking_slice_tokens = tokens_g[:, start_thinking : end_thinking]
+            else:
+                thinking_slice_logits = actor_g[:, start_thinking : end_thinking - 1, :]
+                thinking_slice_tokens = tokens_g[:, start_thinking + 1 : end_thinking]
 
             # (B, T_think, V) => flat
             flat_th_logits = thinking_slice_logits.reshape(-1, thinking_slice_logits.size(-1)) # [#thinking, V]
@@ -526,11 +542,11 @@ def training_step_zerocot(self, batch, batch_idx):
                 ent_th = torch.zeros([], device=actor_g.device)
 
             # === Output 部分の NLL(Actor) ===
-            actor_nll, actor_count = compute_nll_and_masked_tokens(
+            actor_nll, actor_count = compute_nll_and_masked_tokens_shifted(
                 actor_g, tokens_g, pad_token_id=0, start_idx=start_output, end_idx=end_output
             )
             # === Output 部分の NLL(Base) ===
-            base_nll, base_count = compute_nll_and_masked_tokens(
+            base_nll, base_count = compute_nll_and_masked_tokens_shifted(
                 base_g, tokens_g, pad_token_id=0, start_idx=start_output, end_idx=end_output
             )
             # actor_nll, base_nll はスカラー（合計）
@@ -548,14 +564,18 @@ def training_step_zerocot(self, batch, batch_idx):
         entropy_all          = torch.cat(entropy_all, dim=0)           # [CHANGE]
 
         mean_adv = advantage_all.mean()
-        std_adv  = advantage_all.std() + 1e-8
+        std_adv  = advantage_all.std() + 1e-9
         adv_normed = (advantage_all - mean_adv) / std_adv
 
-        clip_val = 5.0
+        #print(f'mean_adv = {mean_adv}')
+        #print(f'mean_normed = {adv_normed}')
+        #print('')
+
+        clip_val = 100.0
         adv_clipped = torch.clamp(adv_normed, -clip_val, clip_val)
 
         # [CHANGE: エントロピー正則化の重み]
-        beta_entropy = 0.01
+        beta_entropy = 0.1
         # Thinking 部分の平均エントロピー
         mean_entropy = entropy_all.mean()
 
@@ -563,8 +583,8 @@ def training_step_zerocot(self, batch, batch_idx):
         # thinking_logprob_all: (GenerateCount,)
         # advantage_all       : (GenerateCount,)
         # => まとめて loss = - advantage * log_prob
-        #loss_rl = -(0.1*thinking_logprob_all * advantage_all).mean()
-        loss_rl = -((0.01 * thinking_logprob_all) * adv_clipped).mean()
+        loss_rl = -(1.0*thinking_logprob_all * advantage_all).mean()
+        #loss_rl = -((0.2 * thinking_logprob_all) * adv_clipped).mean()
         
         # [CHANGE: エントロピーボーナスをマイナス方向に加える (maximize entropy => minimize -entropy)]
         loss_entropy = - beta_entropy * mean_entropy
@@ -594,8 +614,7 @@ def training_step_zerocot(self, batch, batch_idx):
         # total_loss = alpha * loss_rl + beta * loss_sft といった形に
         total_loss = total_loss_rl
         
-        # ロスとして積算 (バッチ外 for s in range(bsz) だがデモ用に1バッチのみ)
-        loss_rl_all += float(loss_rl.item())
+
 
         total_loss = L2Wrap.apply(total_loss, actor_logits)
 
@@ -604,6 +623,3 @@ def training_step_zerocot(self, batch, batch_idx):
         # (サンプルコードでは s=1 なので1回でOK)
         return total_loss
 
-    # もしバッチの最後にまとめてロス返すなら以下のように
-    # avg_loss = loss_rl_all / bsz
-    # return avg_loss

@@ -1,6 +1,6 @@
-base_model='myfolder/models/RWKV-x070-World-1.5B-v3-20250127-ctx4096.pth'
-lora_checkpoint='myfolder/Outputs/ZeroCoT/rwkv-4.pth'
-output='myfolder/models/1b5-reinforce.pth'
+base_model='myfolder/models/rwkv-x070-2b9-world-v3-82%trained-20250203-ctx4k.pth'
+lora_checkpoint='myfolder/Outputs/ZeroCoT2/rwkv-1.pth'
+output='myfolder/models/2b9-reinforce.pth'
 QUANT='' #follow train
 TYPE='lora'
 Lora_scaling=2.0

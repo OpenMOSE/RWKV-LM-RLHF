@@ -91,7 +91,7 @@ if not HF_MODE:
     # download from https://huggingface.co/BlinkDL/rwkv-7-world
     #MODEL_NAME = "/home/client/Projects/RWKV-LM-RLHF/main/myfolder/models/RWKV-x060-World-7B-v3-20241112-ctx4096"
     #MODEL_NAME = "/home/client/Projects/RWKV-LM-RLHF/main/myfolder/models/RWKV-x070-World-1.5B-v3-20250127-ctx4096"
-    MODEL_NAME = "/home/client/Projects/RWKV-LM-RLHF/main/myfolder/models/1b5-reinforce"
+    MODEL_NAME = "/home/client/Projects/RWKV-LM-RLHF/main/myfolder/models/2b9-reinforce"
     print(f"Loading model - {MODEL_NAME}")
 
     os.environ["RWKV_V7_ON"] = '1'
@@ -136,11 +136,9 @@ TEMPLATE_prompt = '''User: You are a very talented expert in <SUBJECT>. Answer t
 A. <|A|>
 B. <|B|>
 C. <|C|>
-D. <|D|>
-'''
+D. <|D|>'''
 
-TEMPLATE_chosen = '''The answer is
-'''
+TEMPLATE_chosen = '''The answer is'''
 
 
 # TEMPLATE = '''Question: You are a very talented school teacher in <SUBJECT>. Answer this question:
@@ -206,7 +204,7 @@ for idx, sample in enumerate(mmlu_test):
 
 
 with codecs.open('mmlu-cheat.jsonl', 'w', encoding='utf-8') as f:
-    with open('cft1b5.csv', 'w', newline='', encoding='utf-8') as file:
+    with open('2b9rl.csv', 'w', newline='', encoding='utf-8') as file:
         # CSVライターを作成
         writer = csv.writer(file)
 

@@ -57,7 +57,7 @@ class TRIE_TOKENIZER():
             x = eval(l[l.index(' '):l.rindex(' ')])
             x = x.encode("utf-8") if isinstance(x, str) else x
             assert isinstance(x, bytes)
-            print(f"len(x) {len(x)} int(l[l.rindex(' '):]) = {int(l[l.rindex(' '):])}")
+            #print(f"len(x) {len(x)} int(l[l.rindex(' '):]) = {int(l[l.rindex(' '):])}")
             assert len(x) == int(l[l.rindex(' '):])
             sorted += [x]
             self.idx2token[idx] = x

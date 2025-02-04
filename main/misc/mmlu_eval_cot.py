@@ -29,7 +29,7 @@ if not HF_MODE:
     # download from https://huggingface.co/BlinkDL/rwkv-7-world
     #MODEL_NAME = "/home/client/Projects/RWKV-LM-RLHF/main/myfolder/models/RWKV-x060-World-7B-v3-20241112-ctx4096"
     #MODEL_NAME = "/home/client/Projects/RWKV-LM-RLHF/main/myfolder/models/RWKV-x070-World-1.5B-v3-20250127-ctx4096"
-    MODEL_NAME = "/home/client/Projects/RWKV-LM-RLHF/main/myfolder/models/1b5-reinforce"
+    MODEL_NAME = "/home/client/Projects/RWKV-LM-RLHF/main/myfolder/models/rwkv-x070-2b9-world-v3-82%trained-20250203-ctx4k"
     print(f"Loading model - {MODEL_NAME}")
 
     os.environ["RWKV_V7_ON"] = '1'
