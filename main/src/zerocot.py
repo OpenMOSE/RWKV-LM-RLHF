@@ -571,7 +571,7 @@ def training_step_zerocot(self, batch, batch_idx):
         #print(f'mean_normed = {adv_normed}')
         #print('')
 
-        clip_val = 100.0
+        clip_val = 5.0
         adv_clipped = torch.clamp(adv_normed, -clip_val, clip_val)
 
         # [CHANGE: エントロピー正則化の重み]
@@ -583,8 +583,8 @@ def training_step_zerocot(self, batch, batch_idx):
         # thinking_logprob_all: (GenerateCount,)
         # advantage_all       : (GenerateCount,)
         # => まとめて loss = - advantage * log_prob
-        loss_rl = -(1.0*thinking_logprob_all * advantage_all).mean()
-        #loss_rl = -((0.2 * thinking_logprob_all) * adv_clipped).mean()
+        #loss_rl = -(1.0*thinking_logprob_all * advantage_all).mean()
+        loss_rl = -((0.2 * thinking_logprob_all) * adv_clipped).mean()
         
         # [CHANGE: エントロピーボーナスをマイナス方向に加える (maximize entropy => minimize -entropy)]
         loss_entropy = - beta_entropy * mean_entropy
