@@ -1094,134 +1094,32 @@ if 'x070' in ModelGeneration:
             # 出力: (batch*seq, num_experts)
             return self.linear(x)
         
-    class RWKV_CMix_x070_Experts(nn.Module):
+    class RWKV_CMix_x070_LoRAExperts(nn.Module):
         def __init__(self, args, layer_id, Shared_key,Shared_value,ExpertNo=0):
             # 最初にsuper().__init__()を呼び出す
             super().__init__()
             self.layer_id = layer_id
             self.key = make_linear_ffn_experts(args.n_embd, args.dim_ffn, shared_weight = Shared_key,bias=False,n_layer=self.layer_id,pname='ffn.key',ExpertNo = ExpertNo)
             self.value = make_linear_ffn_experts(args.dim_ffn, args.n_embd, shared_weight = Shared_value, bias=False,n_layer=self.layer_id,pname='ffn.value',ExpertNo=ExpertNo)
-        def forward(self, hidden,passthrough=False):
-            k = torch.relu(self.key(hidden),passthrough) ** 2
-            return self.value(k,passthrough)
+        def forward(self, hidden):
+            k = torch.relu(self.key(hidden)) ** 2
+            return self.value(k)
+      
 
-    class RWKV_CMix_x070_MoE_(nn.Module):
+    class RWKV_CMix_x070_MoLE(nn.Module):
         def __init__(self, args, layer_id, num_experts=4):
             super().__init__()
             self.args = args
             self.layer_id = layer_id
             self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
 
-            self.ActiveExperts = args.moe_active
-
+            self.ActiveExperts = args.moe_active  
             self.num_experts = num_experts
 
-            self.shared_expert = False
-            if args.moe_shared == 1:
-                self.shared_expert = True
+            #for save in checkpoint
             
 
-            with torch.no_grad():
-                ratio_1_to_almost0 = 1.0 - (layer_id / args.n_layer)  # 1 to ~0
-                ddd = torch.ones(1, 1, args.n_embd)
-                for i in range(args.n_embd):
-                    ddd[0, 0, i] = i / args.n_embd
-                self.x_k = nn.Parameter(1.0 - torch.pow(ddd, ratio_1_to_almost0**4))
-
-            Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
-
-            self.key = QuantLinear(args.n_embd, args.dim_ffn, bias=False,n_layer=self.layer_id)
-            self.value = QuantLinear(args.dim_ffn, args.n_embd, bias=False,n_layer=self.layer_id)
-
-            for i in range(self.num_experts):
-                setattr(self, f"expert_{i}", RWKV_CMix_x070_Experts(self.args,self.layer_id,self.key,self.value))
-
-            if self.shared_expert == True:
-                self.router = Router(args.n_embd, self.num_experts - 1)
-            else:
-                self.router = Router(args.n_embd, self.num_experts)
-
-
-
-        def forward(self, hidden, input_ids): # inspired by Finch MoE + Linear Router + Gating
-            # time-shift 処理
-            shifted = self.time_shift(hidden)
-            if len(shifted.size()) == 2:
-                shifted = shifted.unsqueeze(1)
-            delta_hidden_to_shifted = shifted - hidden
-            hidden_with_tokenshift = hidden + delta_hidden_to_shifted * self.x_k
-
-            # (batch, seq, dim) -> (batch*seq, dim)
-            flat_hidden = hidden_with_tokenshift.reshape(-1, hidden_with_tokenshift.size(-1))
-
-            # Router層で [batch*seq, num_experts] のスコアを取得
-            router_scores = self.router(flat_hidden)
-
-
-            # Top-k=2 をとり、その2つの Expert を選択
-            AdaptiveActiveExperts = self.ActiveExperts
-
-            if self.shared_expert == True:
-                AdaptiveActiveExperts - 1
-
-            topk_values, topk_experts = torch.topk(router_scores, k=AdaptiveActiveExperts, dim=-1)
-            # topk_values: (batch*seq, 2)
-            # topk_experts: (batch*seq, 2) -> どのExpertを選んだかのインデックス
-
-            # ゲーティングをソフトマックス (上位2つに対してのみ正規化)
-            gating = F.softmax(topk_values, dim=-1)  # (batch*seq, 2)
-
-            # Expert処理後の出力を溜めるためのテンソル
-            flat_value = torch.zeros_like(flat_hidden)
-
-
-            # ロードバランス損失を計算
-            # 「どのexpertにどの程度の確率が割り振られたか」分布
-            # (B*S, num_experts) の行列を作る
-            gating_full = torch.zeros_like(router_scores)  # (B*S, E)
-            # topk_experts[:, j] に、gating[:, j] を scatter_ で配置
-            gating_full.scatter_(dim=1, index=topk_experts, src=gating)
-
-            # Expertごとの使用率を算出
-            usage = gating_full.mean(dim=0)  # -> (num_experts,)
-            # 各Expertの使用確率が (1/num_experts) に近いほど良い
-            load_balance_loss = ((usage - (1.0 / self.num_experts))**2).sum()
-
-
-            for e in range(self.num_experts):
-                mask = []
-                for i in range(self.ActiveExperts):
-                    #mask.append((topk_experts[:, i] == e).nonzero(as_tuple=True)[0])
-                    indices = (topk_experts[:, i] == e).nonzero()
-                    mask.append(indices[:, 0])  # 最初の次元のインデックスを取得
-                    if mask[-1].numel() > 0:
-                        input_0 = flat_hidden[mask[-1]]
-
-                        #input_0 = flat_hidden[mask0]
-                        out_0 = getattr(self, f"expert_{e}")(input_0)
-                        out_0 = out_0 * gating[mask[-1], 0].unsqueeze(-1)
-                        flat_value.index_add_(0, mask[-1], out_0)
-
-            # 元の (batch, seq, dim) にreshape
-            kv = flat_value.view(hidden.size(0), hidden.size(1), hidden.size(2))
-            return kv, load_balance_loss
-        
-
-    class RWKV_CMix_x070_MoE_old(nn.Module):
-        def __init__(self, args, layer_id, num_experts=4):
-            super().__init__()
-            self.args = args
-            self.layer_id = layer_id
-            self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
-
-            # ルーターが選ぶ Expert 数（top-k）のデフォルト
-            self.ActiveExperts = args.moe_active  
-            self.num_experts = num_experts
-
-            # 共有Expertの有無
-            self.shared_expert = False
-            if args.moe_shared == 1:
-                self.shared_expert = True
+            self.shared_expert = True
 
             with torch.no_grad():
                 ratio_1_to_almost0 = 1.0 - (layer_id / args.n_layer)  # 1 からほぼ0へ
@@ -1229,29 +1127,26 @@ if 'x070' in ModelGeneration:
                 for i in range(args.n_embd):
                     ddd[0, 0, i] = i / args.n_embd
                 self.x_k = nn.Parameter(1.0 - torch.pow(ddd, ratio_1_to_almost0**4))
+                self.moe_info = nn.Parameter(torch.tensor([float(num_experts), float(args.moe_active)]))
 
             Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
 
+            # baseweight is frozen permanently
             self.key = QuantLinear(args.n_embd, args.dim_ffn, bias=False, n_layer=self.layer_id)
             self.value = QuantLinear(args.dim_ffn, args.n_embd, bias=False, n_layer=self.layer_id)
 
-            # Expert モジュールを複数用意
-            for i in range(self.num_experts):
-                setattr(self, f"expert_{i}", RWKV_CMix_x070_Experts(self.args, self.layer_id, self.key, self.value))
 
-            # Router の出力次元を設定 (共有Expertなら num_experts - 1、そうでなければ num_experts)
+            for i in range(self.num_experts):
+                setattr(self, f"expert_{i}", RWKV_CMix_x070_LoRAExperts(self.args, self.layer_id, self.key, self.value))
+
+
             if self.shared_expert:
                 self.router = Router(args.n_embd, self.num_experts - 1)
             else:
                 self.router = Router(args.n_embd, self.num_experts)
 
-        def forward(self, hidden, input_ids):
-            """
-            変更点:
-            1) expert_0(0番) は常に全トークンに適用する (Routerに依存しない)
-            2) Routerスコアは expert_1〜expert_(num_experts-1) だけに対して top-k 選択 (self.ActiveExperts-1 個)
-            3) load_balance_loss も expert_1〜expert_(num_experts-1) だけで計算する
-            """
+        def forward(self, hidden, input_ids): # input_ids for hashrouter. but currently not use.
+
 
             # time-shift 処理
             shifted = self.time_shift(hidden)
@@ -1259,210 +1154,41 @@ if 'x070' in ModelGeneration:
                 shifted = shifted.unsqueeze(1)
             delta_hidden_to_shifted = shifted - hidden
             hidden_with_tokenshift = hidden + delta_hidden_to_shifted * self.x_k
-
-            flat_hidden = hidden_with_tokenshift.reshape(-1, hidden_with_tokenshift.size(-1))
-
-            flat_value = torch.zeros_like(flat_hidden)  # 出力のバッファを確保
-            out_0 = getattr(self, f"expert_{0}")(flat_hidden)  # expert_0 実行
-            flat_value += out_0  # ゲーティングなしで加算
-
-            router_scores = self.router(flat_hidden)  # (B*S, E) ただし E は (num_experts) or (num_experts-1)
-
-            AdaptiveActiveExperts = self.ActiveExperts - 1
-
-            if self.shared_expert:
-                topk_values, topk_experts = torch.topk(router_scores, k=AdaptiveActiveExperts, dim=-1)
-            else:
-                router_scores_others = router_scores[:, 1:]  # (B*S, num_experts-1)
-                topk_values, topk_experts = torch.topk(router_scores_others, k=AdaptiveActiveExperts, dim=-1)
-
-            gating = F.softmax(topk_values, dim=-1)
-
-            if self.shared_expert:
-                gating_full = torch.zeros_like(router_scores)
-            else:
-                gating_full = torch.zeros_like(router_scores_others)
-
-            gating_full.scatter_(dim=1, index=topk_experts, src=gating)
-            usage = gating_full.mean(dim=0)  # -> (num_experts-1,)
-            load_balance_loss = ((usage - (1.0 / (self.num_experts - 1))) ** 2).sum()
-
-
-            for e in range(self.num_experts):
-                if e == 0:
-                    # すでに全トークンに適用済みなのでスキップ
-                    continue
-
-                # e=1〜(num_experts-1) について、topk_experts のどこに該当するかを探して処理
-                for i in range(AdaptiveActiveExperts):
-                    # shared_expert=True の場合も False の場合も、topk_experts の値 0 は "expert_1" を意味する
-                    # 従って「ルーターで e を指すindex = e-1」となる
-                    router_index = e - 1
-                    indices = (topk_experts[:, i] == router_index).nonzero(as_tuple=True)[0]
-                    if indices.numel() > 0:
-                        input_e = flat_hidden[indices]
-
-                        # expert_e を実行
-                        out_e = getattr(self, f"expert_{e}")(input_e)
-
-                        # ゲーティングを掛ける (元コード通り、gating[:, i] を使う)
-                        # ※ 本来は out_e *= gating[indices, i].unsqueeze(-1) のように i 番目のゲートを掛けます
-                        out_e = out_e * gating[indices, i].unsqueeze(-1)
-
-                        # scatter_add のイメージで加算
-                        flat_value.index_add_(0, indices, out_e)
-
-            kv = flat_value.view(hidden.size(0), hidden.size(1), hidden.size(2))
-            return kv, load_balance_loss
-        
-
-    class RWKV_CMix_x070_MoE(nn.Module):
-        def __init__(self, args, layer_id, num_experts=4):
-            super().__init__()
-            self.args = args
-            self.layer_id = layer_id
-            self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
-
-            # ルーターが選ぶ Expert 数（top-k）のデフォルト
-            self.ActiveExperts = args.moe_active  
-            self.num_experts = num_experts
-
-            # 共有Expertの有無
-            self.shared_expert = False
-            if args.moe_shared == 1:
-                self.shared_expert = True
-
-            with torch.no_grad():
-                ratio_1_to_almost0 = 1.0 - (layer_id / args.n_layer)  # 1 からほぼ0へ
-                ddd = torch.ones(1, 1, args.n_embd)
-                for i in range(args.n_embd):
-                    ddd[0, 0, i] = i / args.n_embd
-                self.x_k = nn.Parameter(1.0 - torch.pow(ddd, ratio_1_to_almost0**4))
-
-            Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
-
-            self.key = QuantLinear(args.n_embd, args.dim_ffn, bias=False, n_layer=self.layer_id)
-            self.value = QuantLinear(args.dim_ffn, args.n_embd, bias=False, n_layer=self.layer_id)
-
-            # Expert モジュールを複数用意
-            for i in range(self.num_experts):
-                setattr(self, f"expert_{i}", RWKV_CMix_x070_Experts(self.args, self.layer_id, self.key, self.value))
-
-            # Router の出力次元を設定 (共有Expertなら num_experts - 1、そうでなければ num_experts)
-            if self.shared_expert:
-                self.router = Router(args.n_embd, self.num_experts - 1)
-            else:
-                self.router = Router(args.n_embd, self.num_experts)
-
-        def forward(self, hidden, input_ids):
-            """
-            変更点:
-            1) expert_0(0番) は常に全トークンに適用する (Routerに依存しない)
-            2) Routerスコアは expert_1〜expert_(num_experts-1) だけに対して top-k 選択 (self.ActiveExperts-1 個)
-            3) load_balance_loss も expert_1〜expert_(num_experts-1) だけで計算する
-            """
-
-            # time-shift 処理
-            shifted = self.time_shift(hidden)
-            if len(shifted.size()) == 2:
-                shifted = shifted.unsqueeze(1)
-            delta_hidden_to_shifted = shifted - hidden
-            hidden_with_tokenshift = hidden + delta_hidden_to_shifted * self.x_k
-
             # [B, S, n_embd] => [B*S, n_embd]
             flat_hidden = hidden_with_tokenshift.reshape(-1, hidden_with_tokenshift.size(-1))
             B = flat_hidden.size(0)  # B*S のトータルトークン数
 
-            # 出力のバッファを確保 (Expertの合算先)
             flat_value = torch.zeros_like(flat_hidden)  
 
-            # -----------------------------
-            # Expert 0 (すべてのトークンに適用)
-            # -----------------------------
             out_0 = getattr(self, f"expert_{0}")(flat_hidden)  
             flat_value += out_0  # ゲーティングなしで全量加算
 
-            # -----------------------------
-            # Routerスコアの計算
-            # -----------------------------
             router_scores = self.router(flat_hidden)  
-            # shared_expert=True の場合 router_scores.shape: [B, (num_experts-1)]
-            # shared_expert=False の場合 router_scores.shape: [B, num_experts]
-
-            # top-k を取る専門家の数 (expert_1〜expert_(num_experts-1) が対象)
             AdaptiveActiveExperts = self.ActiveExperts - 1
-
-            # shared_expert=False の場合、router_scores の先頭スロットが expert_0 に対応する可能性があるので
-            # expert_1〜を使うためにスライスする
-            if not self.shared_expert:
-                # router_scores[:, 0] が expert_0 と仮定して無視 (0番はすでに処理済み)
-                router_scores_others = router_scores[:, 1:]  # shape: [B, num_experts-1]
-            else:
-                # shared_expert=True の場合は最初から num_experts-1 次元しかないので、そのまま
-                router_scores_others = router_scores
-
-            # top-k を取る
+            router_scores_others = router_scores
             topk_values, topk_experts = torch.topk(router_scores_others, k=AdaptiveActiveExperts, dim=-1)
-            # topk_values, topk_experts: shape [B, (AdaptiveActiveExperts)]
-
-            # これに softmax をかけてゲーティング係数に変換
             gating = F.softmax(topk_values, dim=-1)  # 同じshape [B, (AdaptiveActiveExperts)]
-
-            # -----------------------------
-            # Load-balance 用の usage 計算
-            # -----------------------------
-            # gating_full (size=[B, num_experts-1]) に scatter_ して usage = mean(dim=0)
             gating_full = torch.zeros_like(router_scores_others)  # [B, num_experts-1]
             gating_full.scatter_(dim=1, index=topk_experts, src=gating)
             usage = gating_full.mean(dim=0)  # -> (num_experts-1,)
             load_balance_loss = ((usage - (1.0 / (self.num_experts - 1))) ** 2).sum()
 
-            # -----------------------------
-            # Expert 1〜(num_experts-1) の処理を高速化
-            # -----------------------------
-            # topk_experts は [B, k], ここで k=AdaptiveActiveExperts
-            # => これを1次元に平坦化して全トークンを一挙に集める。すると
-            #    shape: [B*k]
             topk_experts_flat = topk_experts.reshape(-1)  # 各トークンが割り当てられたexpert番号(=0〜(num_experts-2))
             gating_flat = gating.reshape(-1)              # そのトークンのゲーティング値
 
-            # B 個のトークンが top-k 個ずつ選ぶので合計 B*k 個の割り当て先がある
-            # それぞれ「元のトークン index (0~(B-1))」が何かを作る
-            # shape: [B*k]
             source_indices = torch.arange(B, device=flat_hidden.device).unsqueeze(1).expand(B, AdaptiveActiveExperts).reshape(-1)
+            real_expert_id = topk_experts_flat  # [0..(num_experts-2)]
 
-            # 実際には expert_1 が topk_experts_flat=0, expert_2 が topk_experts_flat=1, ... のようにマッピングされる
-            # shared_expert=False の場合, real_expert_id = topk_experts_flat + 1
-            # shared_expert=True  の場合, real_expert_id = topk_experts_flat (そのまま)
-            if self.shared_expert:
-                real_expert_id = topk_experts_flat  # [0..(num_experts-2)]
-            else:
-                real_expert_id = topk_experts_flat + 1  # [1..(num_experts-1)]
-
-            # ---
-            # Expertごとにまとめて処理する
-            # ---
-            # 例: for e in 1..(num_experts-1) のループを回し、
-            #     (real_expert_id == e) のトークンだけ一度に gather して Expertに通し、結果を scatter。
-            #     Pythonループを回す点は同じでも、nested loopがなくなるのでかなり軽くなります。
-            # ---
+ 
 
             for e in range(1, self.num_experts):
-                # e番のExpertを使うトークン (bool mask)
-                # real_expert_id == e のものを集める
                 mask_e = (real_expert_id == e)
                 if not mask_e.any():
                     continue
-
-                # 実際に該当トークンのインデックスを集める
                 indices_e = mask_e.nonzero(as_tuple=True)[0]
-                # input を gather
                 input_e = flat_hidden[source_indices[indices_e]]
-                # Forward
                 out_e = getattr(self, f"expert_{e}")(input_e)
-                # ゲーティングを乗算 (gating_flat: [B*k] => 選択トークン数に縮まる)
                 out_e = out_e * gating_flat[indices_e].unsqueeze(-1)
-                # scatter_add 的に出力に加算
                 flat_value.index_add_(0, source_indices[indices_e], out_e)
 
             # (B*S, n_embd) => [B_, S_, n_embd] に戻す

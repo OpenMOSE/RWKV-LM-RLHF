@@ -372,18 +372,18 @@ def training_step_zerocot(self, batch, batch_idx):
     # ここではさらに続けて final Output を書き足して Loss を見る例
 
     for s in range(bsz):
-        prompttoken = batch_orpo[s]['prompttoken'] 
-        chosentoken = batch_orpo[s]['chosentoken'] # 最終回答など
+        prompttoken = batch_orpo[s]['prompttoken'][:args.ctx_len // 2 - GenerateTokens]
+        chosentoken = batch_orpo[s]['chosentoken'][:args.ctx_len // 2]  # 最終回答など
 
         # テキストに戻してデモ。実際は token のまま使う方が望ましい
-        prompt_text  = self.tokenizer.decode(prompttoken.tolist())[: args.ctx_len // 2 -     GenerateTokens ]
-        chosen_text  = self.tokenizer.decode(chosentoken.tolist())[: args.ctx_len // 2]
+        prompt_text  = self.tokenizer.decode(prompttoken.tolist()).replace('\n\n','\n') 
+        chosen_text  = self.tokenizer.decode(chosentoken.tolist()).replace('\n\n','\n')
         
         # プロンプト作成: 
         SplitText      = '\n\n'
         UserText       = 'User: '
         AssistantText  = "Assistant: "
-        ThinkingText   = "Thinking:"# Maybe "+ chosen_text.replace(SplitText,'') + ' let me think about it. the question is'# okay. Let's think about it. this question is"
+        ThinkingText   = "<think> yeah. let me think about it. the question is"# Maybe "+ chosen_text.replace(SplitText,'') + ' let me think about it. the question is'# okay. Let's think about it. this question is"
 
         GeneratePrompt = UserText + prompt_text + SplitText + ThinkingText
         # ここで Thinking を生成
@@ -391,7 +391,7 @@ def training_step_zerocot(self, batch, batch_idx):
                                   device=self.emb.weight.device).unsqueeze(0)
 
         # 最終回答を後ろに付ける
-        final_answer_text = SplitText + AssistantText + chosen_text
+        final_answer_text = "</think>" + SplitText + AssistantText + chosen_text
         final_answer_idx  = torch.tensor(self.tokenizer.encode(final_answer_text), 
                                          device=self.emb.weight.device).unsqueeze(0)
 

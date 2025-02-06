@@ -35,7 +35,7 @@ from bitsandbytes.optim import Adam8bit,AdamW8bit
 
 
 if 'x070' in os.environ["RWKV_MY_TESTING"]:
-    from .rwkv7 import LAYER_CONFIG,RWKV_Tmix_x070,RWKV_Tmix_x070_state,RWKV_Tmix_x070_infctx,RWKV_CMix_x070,RWKV_CMix_x070_MoE,RWKV_CMix_x070_infctx,make_linear_head,make_emb
+    from .rwkv7 import LAYER_CONFIG,RWKV_Tmix_x070,RWKV_Tmix_x070_state,RWKV_Tmix_x070_infctx,RWKV_CMix_x070,RWKV_CMix_x070_MoLE,RWKV_CMix_x070_infctx,make_linear_head,make_emb
 elif 'x060' in os.environ["RWKV_MY_TESTING"]:
     from .rwkv6 import LAYER_CONFIG,RWKV_Tmix_x060,RWKV_Tmix_x060_state,RWKV_Tmix_x060_infctx,RWKV_CMix_x060,RWKV_CMix_x060_infctx,make_linear_head,make_emb
 else:
@@ -78,7 +78,7 @@ if 'x070' in os.environ["RWKV_MY_TESTING"]:
                 self.ffn = RWKV_CMix_x070_infctx(args, layer_id)
             else:
                 if os.environ["CustomModel"] == 'MoE':
-                    self.ffn = RWKV_CMix_x070_MoE(args,layer_id,self.args.moe_experts)
+                    self.ffn = RWKV_CMix_x070_MoLE(args,layer_id,self.args.moe_experts)
                 else:
                     self.ffn = RWKV_CMix_x070(args, layer_id)
 
