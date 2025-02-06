@@ -231,7 +231,7 @@ class train_callback(pl.Callback):
                 param_dict = {n: p for n, p in pl_module.named_parameters()}
 
                 for name, state in to_save_dict.items():
-                    print(f'{name} {param_dict[name].requires_grad}')
+                    #print(f'{name} {param_dict[name].requires_grad}')
                     try:
                         if param_dict[name].requires_grad:
                             if LAYER_CONFIG['emb']['mode']=='full' and 'emb' in name:
@@ -258,7 +258,7 @@ class train_callback(pl.Callback):
                         else:
                             if '.moe_info' in name or '.moe_experts' in name:
                                 lora_dict[name] = state
-                                print(f'Additional config saved {name}')
+                                #print(f'Additional config saved {name}')
                     except (KeyError, AttributeError):
                         # キーが存在しない場合や、requires_gradプロパティがない場合の処理
                         #print(f'{name} not found')
