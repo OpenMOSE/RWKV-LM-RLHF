@@ -1084,10 +1084,10 @@ if 'x070' in ModelGeneration:
     class Router(nn.Module):
         def __init__(self, input_dim, num_experts):
             super().__init__()
-            self.linear = nn.Linear(input_dim, num_experts)
-            #nn.init.kaiming_uniform_(getattr(self,'linear').weight, a=math.sqrt(5))
-            nn.init.zeros_(self.linear.bias)
-            nn.init.normal_(self.linear.weight, mean=0, std=0.01)
+            self.linear = nn.Linear(input_dim, num_experts,bias=False)
+            nn.init.kaiming_uniform_(getattr(self,'linear').weight, a=math.sqrt(5))
+            #nn.init.zeros_(self.linear.bias)
+            #nn.init.normal_(self.linear.weight, mean=0, std=0.01)
 
         def forward(self, x):
             # x: (batch*seq, input_dim)
@@ -1106,7 +1106,7 @@ if 'x070' in ModelGeneration:
             return self.value(k)
       
 
-    class RWKV_CMix_x070_MoLE(nn.Module):
+    class RWKV_CMix_x070_MoLE_(nn.Module):
         def __init__(self, args, layer_id, num_experts=4):
             super().__init__()
             self.args = args
@@ -1144,6 +1144,8 @@ if 'x070' in ModelGeneration:
                 self.router = Router(args.n_embd, self.num_experts - 1)
             else:
                 self.router = Router(args.n_embd, self.num_experts)
+
+            nn.init.kaiming_uniform_(self.router.weight, a=math.sqrt(5))
 
         def forward(self, hidden, input_ids): # input_ids for hashrouter. but currently not use.
 
@@ -1192,6 +1194,102 @@ if 'x070' in ModelGeneration:
                 flat_value.index_add_(0, source_indices[indices_e], out_e)
 
             # (B*S, n_embd) => [B_, S_, n_embd] に戻す
+            kv = flat_value.view(hidden.size(0), hidden.size(1), hidden.size(2))
+            return kv, load_balance_loss
+        
+    class RWKV_CMix_x070_MoLE(nn.Module):
+        def __init__(self, args, layer_id, num_experts=4):
+            super().__init__()
+            self.args = args
+            self.layer_id = layer_id
+            self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
+
+            # 利用する active expert の数
+            self.ActiveExperts = args.moe_active  
+            self.num_experts = num_experts
+            self.shared_expert = True  # expert_0 は全トークンに対して必ず呼ばれる
+
+            with torch.no_grad():
+                ratio_1_to_almost0 = 1.0 - (layer_id / args.n_layer)  # 1 からほぼ0へ
+                ddd = torch.ones(1, 1, args.n_embd)
+                for i in range(args.n_embd):
+                    ddd[0, 0, i] = i / args.n_embd
+                # time-shift 用の重み
+                self.x_k = nn.Parameter(1.0 - torch.pow(ddd, ratio_1_to_almost0**4))
+                # MoE 情報（チェックポイント保存用）
+                self.moe_info = nn.Parameter(torch.tensor([float(num_experts), float(args.moe_active)]))
+
+            # layer の処理モード（必要に応じて）
+            Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
+
+            # 元の Dense FFN の重みを使って各 expert を初期化する
+            self.key = QuantLinear(args.n_embd, args.dim_ffn, bias=False, n_layer=self.layer_id)
+            self.value = QuantLinear(args.dim_ffn, args.n_embd, bias=False, n_layer=self.layer_id)
+            for i in range(self.num_experts):
+                setattr(self, f"expert_{i}", RWKV_CMix_x070_LoRAExperts(self.args, self.layer_id, self.key, self.value))
+
+            # shared_expert==True の場合、router は expert_1 以降のスコアのみを出す
+            if self.shared_expert:
+                self.router = Router(args.n_embd, self.num_experts - 1)
+            else:
+                self.router = Router(args.n_embd, self.num_experts)
+
+        def forward(self, hidden, input_ids):  # input_ids は現状使用していません
+            # 1. time-shift 処理
+            shifted = self.time_shift(hidden)
+            if len(shifted.size()) == 2:
+                shifted = shifted.unsqueeze(1)
+            delta_hidden_to_shifted = shifted - hidden
+            hidden_with_tokenshift = hidden + delta_hidden_to_shifted * self.x_k
+
+            # [B, S, n_embd] -> [B*S, n_embd]
+            flat_hidden = hidden_with_tokenshift.reshape(-1, hidden_with_tokenshift.size(-1))
+            B = flat_hidden.size(0)
+
+            # 2. 各 expert へのルーティングスコアを生成
+            if self.shared_expert:
+                # router は expert_1～expert_(num_experts-1) のスコアを出すので、expert_0 のスコアは 0 とする
+                router_scores_shared = self.router(flat_hidden)  # shape: [B, num_experts-1]
+                expert0_score = torch.zeros(B, 1, device=flat_hidden.device, dtype=router_scores_shared.dtype)
+                router_scores_all = torch.cat([expert0_score, router_scores_shared], dim=-1)  # [B, num_experts]
+            else:
+                router_scores_all = self.router(flat_hidden)  # [B, num_experts]
+
+            # 3. トークンごとに active expert を top-k 選択し、正規化する
+            if self.ActiveExperts < self.num_experts:
+                topk_values, topk_indices = torch.topk(router_scores_all, k=self.ActiveExperts, dim=-1)
+                gating_active = F.softmax(topk_values, dim=-1)  # shape: [B, ActiveExperts]
+                gating_full = torch.zeros_like(router_scores_all)
+                gating_full.scatter_(1, topk_indices, gating_active)
+            else:
+                gating_full = F.softmax(router_scores_all, dim=-1)
+                topk_indices = torch.arange(self.num_experts, device=flat_hidden.device).unsqueeze(0).expand(B, self.num_experts)
+                gating_active = gating_full
+
+            # load balance loss（各 expert の利用が均等になるように）
+            usage = gating_full.mean(dim=0)  # [num_experts]
+            load_balance_loss = ((usage - (1.0 / self.num_experts)) ** 2).sum()
+
+            # 4. 各 expert の出力を、対応する gating 重みで加重平均する
+            flat_value = torch.zeros_like(flat_hidden)
+            for e in range(self.num_experts):
+                # 各トークンに対し、top-k 選択された expert が e である箇所を抽出
+                mask = (topk_indices == e)  # shape: [B, ActiveExperts]（ActiveExperts == num_experts の場合は [B, num_experts]）
+                if mask.sum() == 0:
+                    continue
+                token_indices = torch.nonzero(mask, as_tuple=False)  # 各行：[トークン番号, topk内の位置]
+                tokens = token_indices[:, 0]  # flat_hidden 内のトークンインデックス
+                gating_weights = gating_active[tokens, token_indices[:, 1]]  # 該当する gating 重み
+
+                # 該当トークンに対して expert_e の出力を計算
+                input_e = flat_hidden[tokens]
+                out_e = getattr(self, f"expert_{e}")(input_e)
+                out_e = out_e * gating_weights.unsqueeze(-1)
+                # 型を flat_value と合わせる（BFloat16 ならここで変換）
+                out_e = out_e.to(flat_value.dtype)
+                flat_value.index_add_(0, tokens, out_e)
+
+            # [B*S, n_embd] -> [B, S, n_embd] に変形して出力
             kv = flat_value.view(hidden.size(0), hidden.size(1), hidden.size(2))
             return kv, load_balance_loss
 

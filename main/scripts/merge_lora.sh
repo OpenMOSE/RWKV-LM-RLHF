@@ -1,6 +1,6 @@
-base_model='myfolder/models/rwkv-x070-2b9-world-v3-82%trained-20250203-ctx4k.pth'
-lora_checkpoint='myfolder/Outputs/ZeroCoT_qwq/rwkv-72.pth'
-output='myfolder/models/2b9-reinforce.pth'
+base_model='myfolder/models/RWKV-x070-World-0.4B-v2.9-20250107-ctx4096.pth'
+lora_checkpoint='myfolder/Outputs/x070-0B4-moe-cjev4/rwkv-28.pth'
+output='myfolder/models/RWKV-x070-Potato-0.6B-MoLE-20250208-ctx4096.pth'
 QUANT='' #follow train
 TYPE='lora'
 Lora_scaling=2.0
