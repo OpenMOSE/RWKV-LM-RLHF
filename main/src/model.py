@@ -28,6 +28,7 @@ from .trainutils import *
 from .adam_mini import Adam_mini
 
 from .zerocot import *
+from .grpo import grpo_init,training_step_grpo
 
 
 from bitsandbytes.optim import Adam8bit,AdamW8bit
@@ -400,6 +401,9 @@ class RWKV(pl.LightningModule):
 
         if args.zerocot:
             zerocot_init(self)
+        if args.grpo:
+            grpo_init(self)
+
     def setup(self, stage):
 
         if self.device.type == 'cuda':
@@ -1359,6 +1363,8 @@ class RWKV(pl.LightningModule):
 
             if args.zerocot:
                 return training_step_zerocot(self,batch,batch_idx)
+            if args.grpo:
+                return training_step_grpo(self,batch,batch_idx)
 
             if args.distillation:
                 temperature = args.temperature

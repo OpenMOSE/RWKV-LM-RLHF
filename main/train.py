@@ -53,6 +53,8 @@ if __name__ == "__main__":
 
     parser.add_argument("--zerocot", default=0, type=int)
 
+    parser.add_argument("--grpo", default=0, type=int)
+
 
     parser.add_argument("--epoch_steps", default=1000, type=int)  # a mini "epoch" has [epoch_steps] steps
     parser.add_argument("--epoch_count", default=500, type=int)  # train for this many "epochs". will continue afterwards with lr = lr_final
@@ -315,7 +317,7 @@ if __name__ == "__main__":
             from src.rlhfdataset import RLHFDataset
             dpo_train_data = RLHFDataset(args,args.rlhf_train_file,args.ctx_len)
 
-    if args.zerocot:
+    if args.zerocot or args.grpo:
         print('h5 CoT-RL file mode')
         os.environ["H5_MODE"] = "1"
         from src.cotdataset import RLHFDataset
@@ -564,7 +566,7 @@ if __name__ == "__main__":
 
 
     # must set shuffle=False, persistent_workers=False (because worker is in another thread)
-    if args.orpo or args.dpo or args.simpo or args.wpo or args.zerocot:
+    if args.orpo or args.dpo or args.simpo or args.wpo or args.zerocot or args.grpo:
        # if args.dpo == 1:
        #     args.dpo = 0
         print("RLHF Mode") 

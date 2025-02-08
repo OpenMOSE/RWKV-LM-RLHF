@@ -25,11 +25,11 @@ pipeline = PIPELINE(mode='world')
 
 parser = ArgumentParser()
 
-parser.add_argument("--load_model", default="myfolder/Outputs/rwkv-x070-2b9-cje-instruct-1.pth", type=str)
+parser.add_argument("--load_model", default="myfolder/models/rwkv-x070-2b9-cje-instruct-1.pth", type=str)
 parser.add_argument("--model_strategy", default="fp8", type=str)
-parser.add_argument("--rlhf_input_folder", default="myfolder/RLHF/BANCHO", type=str)
-parser.add_argument("--rlhf_output_h5", default="myfolder/RLHF/bancho.h5", type=str)
-parser.add_argument("--endtoken", default="\n\n\x17", type=str)
+parser.add_argument("--rlhf_input_folder", default="myfolder/RLHF/gsm8k", type=str)
+parser.add_argument("--rlhf_output_h5", default="myfolder/RLHF/gsm8k_rlhf.h5", type=str)
+parser.add_argument("--endtoken", default="\n\n", type=str)
 #\x17
 args2 = parser.parse_args()
 
@@ -194,9 +194,9 @@ with h5py.File(args2.rlhf_output_h5, 'w') as f:
                             reject_raw = json_data['reject']
 
                             Token = f"User: {prompt_raw}{args2.endtoken}Assistant: {chosen_raw}{args2.endtoken}"
-                            Prompt = f"User: {prompt_raw}{args2.endtoken}Assistant: "
-                            Chosen = f"{chosen_raw}{args2.endtoken}"
-                            Reject = f"{reject_raw}{args2.endtoken}"
+                            Prompt = f"{prompt_raw}"
+                            Chosen = f"{chosen_raw}"
+                            Reject = f"{reject_raw}"
 
 
 
@@ -209,9 +209,9 @@ with h5py.File(args2.rlhf_output_h5, 'w') as f:
                             reject_tokens = torch.tensor(pipeline.encode(Reject))
                             model_state = None
 
-                            chosen_probs = run_rnn_logits(prompt_tokens,chosen_tokens)
+                            chosen_probs = torch.tensor(0)#run_rnn_logits(prompt_tokens,chosen_tokens)
                             print('ugyu')
-                            reject_probs = run_rnn_logits(prompt_tokens,reject_tokens)
+                            reject_probs = torch.tensor(0)#run_rnn_logits(prompt_tokens,reject_tokens)
                           
                           
 

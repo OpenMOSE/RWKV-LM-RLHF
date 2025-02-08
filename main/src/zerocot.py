@@ -368,7 +368,7 @@ def training_step_zerocot(self, batch, batch_idx):
     # いくつ Thinking サンプルを生成するか
     # (実験で同じプロンプトに対して複数回 Thinking をサンプリングし、平均的に学習する等)
     GenerateCount = 3
-    GenerateTokens = 256  # Thinking の長さ(目安)
+    GenerateTokens = 1024  # Thinking の長さ(目安)
     # ここではさらに続けて final Output を書き足して Loss を見る例
 
     for s in range(bsz):

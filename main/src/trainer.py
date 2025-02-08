@@ -171,6 +171,15 @@ class train_callback(pl.Callback):
                                 "loss_entropy":trainer.loss_entropy                                
                                 }
                     except: pass
+                if args.grpo:
+                    #
+                    try:
+                        lll |= {"rewards_mean": trainer.rewards_mean,
+                                "rewards_std": trainer.rewards_std,
+                                "kl_value":trainer.kl_value,
+                                "loss_reinforce":trainer.loss_reinforce                                                           
+                                }
+                    except: pass
                 if args.sft:
                     try:
                         lll |= {"smooth_loss": trainer.smooth_loss, "active_ctx":trainer.realproceedtokens}
