@@ -440,7 +440,7 @@ def training_step_grpo(self, batch, batch_idx):
         # all_text = self.tokenizer.decode(combined_idx[0].tolist())
         # gen_text = self.tokenizer.decode(single_gen_tokens.unsqueeze(0).tolist())
 
-        all_text = user_prefix_without_system + gen_texts[g_i]
+        all_text = user_prefix_without_system + prompt_text + asst_prefix+ gen_texts[g_i]
         gen_text = gen_texts[g_i]
 
         combined_idx = torch.tensor(

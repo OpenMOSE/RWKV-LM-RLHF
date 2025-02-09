@@ -1,4 +1,4 @@
-python train.py --load_model "myfolder/models/rwkv-x070-2b9-world-v3-82%trained-20250203-ctx4k.pth" \
+python train.py --load_model "myfolder/models/rwkv-x070-2b9-world-v3-preview-20250210-ctx4k.pth" \
  --wandb "RWKV-LM-RLHF x070-2B9 Reinforce gsm8k" \
  --proj_dir "myfolder/Outputs/ZeroCoT_gsm8k2" \
  --state 0 \
