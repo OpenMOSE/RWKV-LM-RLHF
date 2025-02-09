@@ -33,7 +33,7 @@ def ActorModel_Forward_NoGrad(self,idx): #This is for forward test
 def ActorModel_Forward_Grad(self,idx): # can call 1time per step. because of gradient checkpointing
         return self.forward(idx,frozen=False,passthrough=False)
 
-
+#@torch.jit.script
 def sampling_multibatch(self,logits, temperature, top_p): # This is From RWKV-Infer
         # you can change any sampler
         device = logits.device
@@ -79,7 +79,7 @@ def pad_to_size_3d(tensor, target_size=2048):
               0, 0)       # 最初の次元（1）
     return F.pad(tensor, padding, mode='constant', value=0)
 
-
+@torch.compile
 def GenerateForwardTokens(self,prompt,batchcount = 3,stoplength=50,additionaltoken=None,stoptoken='\n\n',temp=1.0,topp = 0.9): # from RWKV-Infer Methods. TSUKUTTETE YOKATTA-
 
     with torch.no_grad():
@@ -215,7 +215,7 @@ def GenerateForwardTokens(self,prompt,batchcount = 3,stoplength=50,additionaltok
 
 def grpo_init(self):
     #print('Zero CoT Initialize')
-    self.CoTDebug = True
+    self.CoTDebug = self.args.grpo_debug
 
     self.tokenizer = TRIE_TOKENIZER("tokenizer/rwkv_vocab_v20230424.txt")
 
@@ -233,8 +233,7 @@ Thinking Text (up to 100 words)
 </think>
 <answer>
 Answer Text (up to 100 words)
-</answer>
-"""
+</answer>"""
 
 PENALTY_OUTPUT = '''<think>
 Thinking Text (up to 100 words)
@@ -359,8 +358,8 @@ def my_rulebase_reward_func(prompt, completions: List[str],answer) -> List[float
 
     # 必要に応じてリストに変換
     Rewards = final_rewards.tolist()
-  
-    print(f'Rewards = {Rewards}')
+    
+    #print(f'Rewards = {Rewards}')
 
     return Rewards
 
@@ -449,8 +448,8 @@ def training_step_grpo(self, batch, batch_idx):
                     device=self.emb.weight.device
                     ).unsqueeze(0)
 
-
-        print(f"[DEBUG] Sample {g_i}:  {all_text}")
+        if self.CoTDebug:
+            print(f"[DEBUG] Sample {g_i}:  {all_text}")
 
         generated_completions_all.append(gen_text)  # use for reward
         combined_idxs_all.append(combined_idx)
@@ -462,8 +461,10 @@ def training_step_grpo(self, batch, batch_idx):
         completions=generated_completions_all, 
         answer=final_answer_text
     )  
+
     # for debugging
-    #print("[DEBUG] rewards_list:", rewards_list)
+    if self.CoTDebug:
+        print("[DEBUG] rewards_list:", rewards_list)
 
     # normalize rewards (A_i = (r_i - mean)/std)
     rewards_tensor = torch.tensor(rewards_list, device=self.emb.weight.device, dtype=torch.float)

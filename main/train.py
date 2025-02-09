@@ -54,6 +54,7 @@ if __name__ == "__main__":
     parser.add_argument("--zerocot", default=0, type=int)
 
     parser.add_argument("--grpo", default=0, type=int)
+    parser.add_argument("--grpo_debug", default=1, type=int)
     parser.add_argument("--grpo_gen_count", default=4, type=int)
     parser.add_argument("--grpo_gen_length", default=1024, type=int)
     parser.add_argument("--grpo_gen_temperature", default=1.0, type=float)
