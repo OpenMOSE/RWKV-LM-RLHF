@@ -448,3 +448,346 @@ def reinforce_loss_with_baseline(
     # バッチ / thinking トークン 合計
     loss = loss_mat.mean()
     return loss
+
+
+
+
+
+
+
+def training_step_grpo_(self, batch, batch_idx):
+    """
+    GRPO (Group Relative Policy Optimization) Implementa
+
+    - Sample G times (GenerateCount times) per batch
+    - Calculate reward for each sampling
+    - Normalize reward to get advantage
+    - Calculate KL dissipation for model (Actor) and reference (BaseModel, etc.)
+
+    - Minimize loss L = - sum( ratio_no_grad * log_probs_actor * advantage ) + β * KL
+(= maximize the above formula).
+    """
+    args = self.args
+
+    # (簡易サンプル) バッチサイズを1と仮定
+    # 複数バッチを同時に扱うなら forループを回すか、あるいは一括で扱う
+    bsz = len(batch)
+    assert bsz == 1, "このサンプルコードはバッチサイズ1想定です"
+
+    GenerateCount = 4  # G: 1バッチあたり何回生成するか
+    # Prompt, Chosen などはユーザのタスクごとに書き換えてください
+    prompttoken = batch[0]['prompttoken'][: args.ctx_len // 2]  # 適宜切り取り
+    chosentoken = batch[0]['chosentoken'][: args.ctx_len // 2]
+
+    # テキストに戻す（実運用ならトークン列で使う）
+    prompt_text = self.tokenizer.decode(prompttoken.tolist()).replace('\n\n','\n')
+    final_answer_text = self.tokenizer.decode(chosentoken.tolist()).replace('\n\n','\n')
+
+    # -----------------------------------------------------
+    # 例: "User: <prompt>\nAssistant:" の後に生成させる形にする
+    #     その後、最終回答などを付け足したい場合は追加
+    # -----------------------------------------------------
+    system_prefix = 'System: ' + SYSTEM_PROMPT 
+    user_prefix = system_prefix + "\n\nUser: "
+    asst_prefix = "\n\nAssistant:"
+    prompt_idx = torch.tensor(
+        self.tokenizer.encode(user_prefix + prompt_text + asst_prefix),
+        device=self.emb.weight.device
+    ).unsqueeze(0)
+
+
+    # -----------------------------------------------------
+    # G回 生成 (Actorモデル) - (no_gradでサンプリングのみ)
+    # -----------------------------------------------------
+    generated_completions = []   
+    generated_completions_only = []       
+    combined_idxs_list = []            # [Prompt + Generated + (Opt)Appended] のトークン列
+    token_addresses_list = []
+
+    for g_i in range(GenerateCount):
+        # GenerateForwardTokens は既存コードを流用 (no_grad でサンプリング)
+        gen_x, gen_tokens, tokenaddr = GenerateForwardTokens(
+            self,
+            prompt=prompt_idx,
+            stoplength=1024,  # 生成ステップ数
+            additionaltoken=None,
+            stoptoken='User:',  # 適宜
+            temp=1.0,
+            topp=0.9
+        )
+
+        # 生成されたシーケンス (prompt_idx + gen_tokens + appended_answer_idx) をまとめてトークン列に
+        combined_idx = torch.cat([prompt_idx, gen_tokens], dim=1)
+
+        # 実際にテキスト表示して確認
+        generated_text = self.tokenizer.decode(combined_idx[0].tolist())
+        print(f"[DEBUG] g_i={g_i}, completion:\n", generated_text)
+
+        generated_text_only = self.tokenizer.decode(gen_tokens[0].tolist())
+
+        generated_completions.append(generated_text)
+        generated_completions_only.append(generated_text_only)
+        combined_idxs_list.append(combined_idx)
+        token_addresses_list.append(tokenaddr)
+
+    # -----------------------------------------------------
+    # 報酬を計算（ルールベース or RewardModel）
+    #   今回は単純に my_rulebase_reward_func の例を呼び出す
+    # -----------------------------------------------------
+    # 生成結果が "User: ... Assistant: <ここ>" 全部含まれるので、
+    # 場合によっては "<ここ>" 以降だけ切り出して RewardModel に通す等を行う
+    # ここでは全体を突っ込む簡単な例
+    rewards_list = my_rulebase_reward_func(prompt=user_prefix,completions=generated_completions_only,answer=final_answer_text)  # 長さG
+    print(f'rewards_list = {rewards_list}')
+
+    # 報酬を正規化 => advantage
+    rewards_tensor = torch.tensor(rewards_list, device=self.emb.weight.device, dtype=torch.float)
+    mean_r = rewards_tensor.mean()
+    std_r  = rewards_tensor.std(unbiased=False) + 1e-8
+    advantages_tensor = (rewards_tensor - mean_r) / std_r  # shape [G]
+
+    # -----------------------------------------------------
+    # まとめて ActorModel/ReferenceModel をForward
+    #   - ActorModel は勾配あり
+    #   - ReferenceModel(BaseModel) は勾配なし
+    #
+    #  まず、padding して連結 (dim=0がG個)
+    # -----------------------------------------------------
+    max_len = max(idx.shape[1] for idx in combined_idxs_list)
+    for i in range(GenerateCount):
+        combined_idxs_list[i] = pad_to_size_2d(combined_idxs_list[i], max_len)
+
+    all_combined_idx = torch.cat(combined_idxs_list, dim=0)  # [G, max_len]
+
+    CombinedIdx_len = all_combined_idx.shape[1]
+
+    # Reference (Base) の logits => no_grad
+    with torch.no_grad():
+        base_logits, _ = BaseModel_Forward_NoGrad(self, pad_to_size_2d(all_combined_idx,args.ctx_len))
+
+    # Actor の logits => 勾配あり
+    actor_logits, _ = ActorModel_Forward_Grad(self, pad_to_size_2d(all_combined_idx,args.ctx_len))
+    
+    actor_logits=actor_logits[:,:CombinedIdx_len]
+    base_logits=base_logits[:,:CombinedIdx_len]
+
+    # softmax して対数を取っておく (Actor / Base)
+    # shape [G, max_len, vocab]
+    log_p_actor = F.log_softmax(actor_logits, dim=-1)
+    log_p_ref   = F.log_softmax(base_logits,  dim=-1)
+
+    # -----------------------------------------------------
+    # KL散逸 D_KL(πθ||πref) の計算
+    #   tokenごとに  D_KL = r - log(r) - 1,  r=exp(log_p_theta - log_p_ref)
+    #   => ここでは全トークンで平均を取る (あるいは合計でも可)
+    # -----------------------------------------------------
+    # マスク(パディング0など)を無視して計算したい場合は下記のようにする:
+    # ここでは簡単のため全トークンで計算
+    ratio = torch.exp(log_p_actor - log_p_ref)  # [G, max_len, vocab]
+    kl_element = ratio - torch.log(ratio + 1e-10) - 1.0  # [G, max_len, vocab]
+    # 実際に選択されたトークンだけを見る場合は、以下のように gather する:
+    #   chosen_token = all_combined_idx[:, 1:] (1ステップシフトなら要調整)
+    #   ratio_chosen = ratio[range(G), t, chosen_token[t]] のように計算
+    #  ただし近似式の "r - log(r) - 1" は πθ全体の分布を使う例が多いため、
+    #  ここでは全次元を平均している例を示す。
+    kl_value = kl_element.mean()  # スカラー
+
+    # -----------------------------------------------------
+    # GRPO の 損失計算
+    #   L = - 1/G ∑_i ∑_t [ ratio_i(t).detach() * log_p_actor(i,t) * A_i ]
+    #       + β * KL
+    #
+    #  ただし token単位のループを回す必要がある。
+    #  (ここでは簡単のため "全トークンに同じ advantage_i" を掛ける例)
+    # -----------------------------------------------------
+
+    # Actor が実際に「生成したトークン」に対する log p を取り出し、
+    # ratio.detach() を掛けたものを合計して -を取る。
+    #
+    # サンプリングした「実際のトークン」だけを抜き出すには 1ステップシフト等が必要ですが、
+    # 例では「全トークンに対して 'ratio.detach() * log_p_actor(*, token) * advantage' を和」しており、
+    # コードを簡単にするために gather せずに「正解トークン=all_combined_idx[:,1:]」を使う形にします。
+    #
+    # → 実際には「1ステップシフト」や「<BOS>禁止」などタスクに合わせて要実装。
+    #
+
+    # ========== ここでは簡単のため 1ステップシフトでトークンを取る ===========
+    # shape [G, max_len-1]
+    tokens_shifted = all_combined_idx[:, 1:].clone()
+    logits_for_shifted = log_p_actor[:, :-1, :]  # [G, max_len-1, vocab]
+    base_for_shifted   = log_p_ref[:,   :-1, :]  # 同様に使う場合
+
+    # ratio_for_shifted = exp(log_p_actor - log_p_ref) も同様にシフト
+    ratio_for_shifted  = ratio[:, :-1, :]
+
+    # flatten
+    B, T, V = logits_for_shifted.shape
+    flat_logits_actor = logits_for_shifted.reshape(-1, V)          # [G*(max_len-1), V]
+    flat_ratio        = ratio_for_shifted.reshape(-1, V)           # 同じshape
+    flat_tokens       = tokens_shifted.reshape(-1)                 # [G*(max_len-1)]
+
+    # padding除去
+    valid_mask = (flat_tokens != 0)
+    flat_logits_actor = flat_logits_actor[valid_mask]
+    flat_ratio        = flat_ratio[valid_mask]
+    flat_tokens       = flat_tokens[valid_mask]
+
+    # log p_theta (chosen_token) と ratio(chosen_token) を取り出す
+    log_probs_chosen = F.log_softmax(flat_logits_actor, dim=-1)  # 既にlog_softmax済みなら省略可
+    # ratio_chosen     = exp(log_probs_chosen - log_p_ref_chosen) ... 既に flat_ratio があるなら gather
+    row_idx = torch.arange(len(flat_tokens), device=flat_tokens.device)
+    ratio_chosen = flat_ratio[row_idx, flat_tokens]  # [N_valid]
+    lp_chosen    = log_probs_chosen[row_idx, flat_tokens]  # [N_valid]
+
+    # 各シーケンス i の advantage を token単位に割り当てるため、
+    # i を特定 (0..G-1) するインデックスを作る
+    # ( max_len-1 ぶん連番で並んでいるので、 (0..G-1)を繰り返す形を作るなど)
+    # shape [G*(T-1)]
+    seq_indices = torch.arange(B * T, device=flat_tokens.device)
+    # i = seq_indices // T (integer div), ただしvalid_maskで抜かれた後なのでずれる → うまく対応
+    # 簡単のため再度マスク前の形に reshape してから gather するアプローチを示す
+    seq_indices_2d = seq_indices.reshape(B, T)
+    valid_mask_2d  = valid_mask.reshape(B, T)
+    # 2次元で取り出す → i = 行インデックス
+    # いったん flattenしたものを元に戻してから使う
+    # (やや冗長だが、分かりやすさ重視で記述)
+    i_list = []
+    flat_idx_counter = 0
+    for i_seq in range(B):
+        for j_seq in range(T):
+            if valid_mask_2d[i_seq, j_seq]:
+                i_list.append(i_seq)
+    i_tensor = torch.tensor(i_list, device=flat_tokens.device, dtype=torch.long)
+    # i_tensor[k] ∈ [0..G-1]
+
+    # advantage を対応づける
+    # advantages_tensor: shape[G], i_tensor[k] が i なら advantage[i] を引っ張る
+    adv_chosen = advantages_tensor[i_tensor]  # [N_valid], 各トークンに対して対応するシーケンスのadvantageを付与
+
+    # ratio.detach() だけ取り出す
+    ratio_chosen_nd = ratio_chosen.detach()  # 勾配を流さない
+    # 最終的な REINFORCE 項: sum( ratio_no_grad * log_prob_theta * advantage )
+    #  ↓ 符号は「maximize」したいので  "loss" に入れるときは負号
+    reinforce_term = ratio_chosen_nd * lp_chosen * adv_chosen
+    # ミニバッチ全体(かつ全トークン)で平均を取る(論文式だと 1/G とか 1/|o_i| がつく)
+    # ここでは簡易的に全部の token / sample で平均
+    reinforce_loss = - reinforce_term.mean()
+
+    # KLペナルティ
+    # すでに kl_value = kl_element.mean() でスカラー出してあるが、
+    # "生成トークンだけ" などに限定するには上記 gather と同様の処理が必要。
+    # ここでは「全トークンで平均」した kl_value を使い、β 係数を掛ける形。
+    beta_kl = 0.1  # 適宜ハイパーパラメータ化
+    kl_loss = beta_kl * kl_value  # こちらは "loss" に足し合わせる方向
+
+    total_loss = reinforce_loss + kl_loss
+
+    # 追加: ログなどを格納
+    self.log("rewards_mean", float(mean_r), prog_bar=True)
+    self.log("rewards_std",  float(std_r),  prog_bar=True)
+    self.log("kl_value",     float(kl_value), prog_bar=True)
+    self.log("loss_reinforce", float(reinforce_loss), prog_bar=True)
+
+    self.trainer.rewards_mean = float(mean_r)
+    self.trainer.rewards_std = float(std_r)
+    self.trainer.kl_value = float(kl_value)
+    self.trainer.loss_reinforce = float(reinforce_loss)
+
+    # Lightningの都合で返す
+    return total_loss
+
+
+
+
+# if you want to use. its suitable for reinforce.
+def compute_nll_and_masked_tokens(
+    logits: torch.Tensor, 
+    tokens: torch.Tensor,
+    pad_token_id: int = 0,
+    start_idx: int = 0,
+    end_idx: int = None
+) -> Tuple[torch.Tensor, int]:
+    """
+    logits: [B, T, V]
+    tokens: [B, T]
+    start_idx: この位置以降を NLL 計算対象とする
+    end_idx:  この位置以前を NLL 計算対象とする (None の場合は T まで)
+    pad_token_id: パディングに使うトークン ID
+    
+    返り値:
+    - total_nll: バッチごとの合計負の対数尤度 (cross-entropy の合計)
+    - count     : 有効トークン数 (paddingを除いた)
+    """
+    B, T, V = logits.shape
+    if end_idx is None:
+        end_idx = T
+    
+    slice_logits = logits[:, start_idx:end_idx, :]    # [B, T_sliced, V]
+    slice_tokens = tokens[:, start_idx:end_idx]       # [B, T_sliced]
+
+    # CrossEntropy で扱いやすいよう、(B*T_sliced, V) と (B*T_sliced) へ
+    flat_logits = slice_logits.reshape(-1, V)         # [B*T_sliced, V]
+    flat_tokens = slice_tokens.reshape(-1)            # [B*T_sliced]
+
+    # パディング位置マスクを作成（pad_token_id や 0 を除外するなど）
+    valid_mask = (flat_tokens != pad_token_id) & (flat_tokens != 0) 
+    
+    valid_logits = flat_logits[valid_mask]  # shape [N_valid, V]
+    valid_tokens = flat_tokens[valid_mask]  # shape [N_valid]
+    valid_count  = valid_logits.size(0) 
+
+    if valid_count == 0:
+        return torch.tensor(0.0, device=logits.device, dtype=logits.dtype), 0
+    
+    # F.cross_entropy は mean なので、合計が欲しければ reduction='sum' を使う
+    nll = F.cross_entropy(valid_logits, valid_tokens, reduction='mean')
+    
+    return nll, valid_count
+
+def compute_nll_and_masked_tokens_shifted(
+    logits: torch.Tensor, 
+    tokens: torch.Tensor,
+    pad_token_id: int = 0,
+    start_idx: int = 0,
+    end_idx: int = None
+) -> Tuple[torch.Tensor, int]:
+    """
+    logits: [B, T, V]
+    tokens: [B, T]
+    start_idx: この位置以降を NLL 計算対象とする
+    end_idx:  この位置以前を NLL 計算対象とする (None の場合は T まで)
+    pad_token_id: パディングに使うトークン ID
+    
+    ※ 標準的なLM学習の挙動（1ステップシフト）を再現するために、
+       ロジットは [start_idx, end_idx-1) を用い、
+       対象トークンは [start_idx+1, end_idx) を用います。
+    
+    返り値:
+    - total_nll: バッチごとの合計負の対数尤度 (cross-entropy の合計)
+    - count     : 有効トークン数 (paddingを除いた)
+    """
+    B, T, V = logits.shape
+    if end_idx is None:
+        end_idx = T
+
+    if end_idx - start_idx < 2:
+        return torch.tensor(0.0, device=logits.device, dtype=logits.dtype), 0
+
+    slice_logits = logits[:, start_idx:end_idx - 1, :]    # [B, T_sliced-1, V]
+    slice_tokens = tokens[:, start_idx + 1:end_idx]         # [B, T_sliced-1]
+
+    flat_logits = slice_logits.reshape(-1, V)         # [B*(T_sliced-1), V]
+    flat_tokens = slice_tokens.reshape(-1)            # [B*(T_sliced-1)]
+
+    valid_mask = (flat_tokens != pad_token_id) & (flat_tokens != 0)
+    
+    valid_logits = flat_logits[valid_mask]  # shape [N_valid, V]
+    valid_tokens = flat_tokens[valid_mask]  # shape [N_valid]
+    valid_count  = valid_logits.size(0) 
+
+    if valid_count == 0:
+        return torch.tensor(0.0, device=logits.device, dtype=logits.dtype), 0
+    
+    total_nll = F.cross_entropy(valid_logits, valid_tokens, reduction='sum')
+    return total_nll, valid_count
+
