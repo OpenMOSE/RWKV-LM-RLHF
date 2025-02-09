@@ -18,6 +18,11 @@ python train.py --load_model "myfolder/models/rwkv-x070-2b9-world-v3-82%trained-
  --gpu_arch 'cuda' \
  --limited_lora 1 \
  --grpo 1 \
+ --grpo_gen_count 4 \
+ --grpo_gen_length 512 \
+ --grpo_gen_temperature 1.0 \
+ --grpo_gen_topp 0.7 \
+ --grpo_kl_beta 0.1 \
  --rlhf_train_file 'dev_example/GRPO/dataset/gsm8k_rlhf.h5' \
  --random_mode 1 \
  --optim '' \

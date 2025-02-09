@@ -30,7 +30,7 @@ if not HF_MODE:
     #MODEL_NAME = "/home/client/Projects/RWKV-LM-RLHF/main/myfolder/models/RWKV-x060-Jpn-14B-20240819-ctx4096.pth"
     #MODEL_NAME = "/home/client/Projects/RWKV-LM-RLHF/main/myfolder/models/rwkv-x070-2b9-world-v3-82%trained-20250203-ctx4k"
     #MODEL_NAME = "/home/client/Projects/RWKV-LM-RLHF/main/myfolder/models/RWKV-x070-World-1.5B-v3-20250127-ctx4096"
-    MODEL_NAME = "/home/client/Projects/RWKV-LM-RLHF/main/myfolder/models/cft1b5-3"
+    MODEL_NAME = "/home/client/Projects/RWKV-LM-RLHF/main/myfolder/models/rwkv-x070-2b9-world-v3-preview-20250210-ctx4k"
     print(f"Loading model - {MODEL_NAME}")
 
     os.environ["RWKV_V7_ON"] = '1'
@@ -132,7 +132,7 @@ for idx, sample in enumerate(mmlu_test):
 
 
 with codecs.open('mmlu-cheat.jsonl', 'w', encoding='utf-8') as f:
-    with open('v6-14b-jpn.csv', 'w', newline='', encoding='utf-8') as file:
+    with open('v7-2b9-preview.csv', 'w', newline='', encoding='utf-8') as file:
         # CSVライターを作成
         writer = csv.writer(file)
 

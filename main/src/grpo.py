@@ -80,117 +80,137 @@ def pad_to_size_3d(tensor, target_size=2048):
     return F.pad(tensor, padding, mode='constant', value=0)
 
 
-def GenerateForwardTokens(self,prompt,stoplength=50,additionaltoken=None,stoptoken='\n\n',temp=1.0,topp = 0.9): # from RWKV-Infer Methods. TSUKUTTETE YOKATTA-
+def GenerateForwardTokens(self,prompt,batchcount = 3,stoplength=50,additionaltoken=None,stoptoken='\n\n',temp=1.0,topp = 0.9): # from RWKV-Infer Methods. TSUKUTTETE YOKATTA-
 
     with torch.no_grad():
         args = self.args
 
         H =  args.dim_att // args.head_size_a
 
-        B = 1 #Single Batch
-        new_states = BlockStateList.create(args.n_layer, B, args.n_embd, H,
-                                            self.emb.weight.device, self.emb.weight.dtype)
+        B = batchcount
+
         
-        temperature = torch.full((B,), temp)
-        top_p = torch.full((B,), topp)
+
+        
+        temperature = torch.full((1,), temp)
+        top_p = torch.full((1,), topp)
         GEN_alpha_presence = 0.3
         GEN_alpha_frequency = 0.3
         GEN_penalty_decay = 0.996
 
-        occurrence = {}
+        #occurrence = {}
+        occurrences = [{} for _ in range(B)]
         out_tokens = [[] for _ in range(B)]
         out_last = [0 for _ in range(B)]
         output_text = ['' for _ in range(B)]
+        batch_status = [False for _ in range(B)] # if finished True
+        batch_finishpos = [0 for _ in range(B)] # if finished True
 
         idx = prompt
 
+        new_states = BlockStateList.create(args.n_layer, B, args.n_embd, H,
+                                            self.emb.weight.device, self.emb.weight.dtype)
+        
+
+        batch_idx = idx.repeat(B, 1)
+
         shift_states = new_states.shift_states
         wkv_states = new_states.wkv_states
+        x, shift_states, wkv_states = self.forward_rnn(batch_idx, shift_states, wkv_states,passthrough=False) #FLA
 
-        x, shift_states, wkv_states = self.forward_rnn(idx, shift_states, wkv_states,passthrough=False) #FLA
+        #tokenaddress = {}
 
-        tokenaddress = {}
+        #tokenaddress['prompt'] = x.shape[1]#(B,T,-1)
 
-        tokenaddress['prompt'] = x.shape[1]#(B,T,-1)
+        #out_x = x.clone()
 
-        out_x = x.clone()
-
-        print('///////////////////////////////////////////////////////////////////////////////////////////////\n')
+        #print('///////////////////////////////////////////////////////////////////////////////////////////////\n')
         
         for i in range(stoplength):
 
-            for n in occurrence:
-                x[:,-1, n] -= GEN_alpha_presence + occurrence[n] * GEN_alpha_frequency # repetition penalty
-            
-            x[:, -1, 0] -= 1e10 # disable x0 token
-
-            otokens_tensor = sampling_multibatch(self,x[:, -1], temperature=temperature, top_p=top_p)
-            otokens = otokens_tensor.tolist()
-
+            for j in range(B):
+                for n in occurrences[j]:
+                    x[j,-1, n] -= GEN_alpha_presence + occurrences[j][n] * GEN_alpha_frequency # repetition penalty
             tokens = []
             for j in range(B):
-                tokens.append(torch.tensor(otokens[j]).unsqueeze(0).unsqueeze(0).to('cuda'))
+                otokens_tensor = sampling_multibatch(self,x[j, -1].unsqueeze(0), temperature=temperature, top_p=top_p)
+                otokens = otokens_tensor.tolist()
+                tokens.append(torch.tensor(otokens).unsqueeze(0).to('cuda'))
+                if batch_status[j] == False:
+                   batch_finishpos[j] = batch_finishpos[j]+1
+                out_tokens[j] += otokens#[otokens]
 
             idx = torch.cat(tokens, dim=0)
+
+            #print(idx.shape)
+            #exit()
 
             breaks = False
 
             for j in range(B):
-                out_tokens[j] += [otokens[j]]
+                #out_tokens[j] += [otokens[j]]
                 try:
                     tmp = self.tokenizer.decode(out_tokens[j][out_last[j]:])
                     
                     if ("\ufffd" not in tmp) and (not tmp.endswith("\n")):
-                            #if j == Target_batch - 1:
-                            print(tmp,end="", flush=True)
-                            output_text[j] = output_text[j] + tmp
-                            out_last[j] = i + 1
-                    if stoptoken in tmp:
+                            if batch_status[j] == False:
+                                output_text[j] = output_text[j] + tmp
+                                out_last[j] = i + 1
+                    if batch_status[j] == False and stoptoken in tmp:
                             #print(f'\nEndtoken\n')
                             tmp = tmp.replace(stoptoken,'')
-                            breaks = True
 
-                            if len(output_text[j]) == 0:
-                                 #print('output text not detected try again')
-                                 breaks = False
-                            #break
+                            if len(output_text[j]) != 0:
+                                 batch_status[j] = True
+                                #  if batch_finishpos[j] == 0:
+                                #     batch_finishpos[j] = i  
                     
-                    if stoptoken in output_text[j]:
+                    if batch_status[j] == False and stoptoken in output_text[j]:
                             #break
                             breaks = True
-                            print('ENDTOKENDETECTED!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1')
+                            batch_status[j] = True
+
+                            output_text[j] = output_text[j].replace(stoptoken,'')
+
+                            #if batch_finishpos[j] == 0:
+                            #   batch_finishpos[j] = i  
+                            #print('ENDTOKENDETECTED!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1')
           
-                except:
+                except Exception as e:
+                    #print('exceptions')
+                    #print(f"エラーが発生しました: {type(e).__name__}")
+                    #print()
                     pass
+
+            # if breaks:
+            #      break
+            breaks = True
+            for j in range(B):
+                if batch_status[j] == False:
+                     breaks = False
 
             if breaks:
                  break
+                 
 
 
             x, shift_states, wkv_states = self.forward_rnn(idx, shift_states, wkv_states,passthrough=False)
-            out_x = torch.cat([out_x, x], dim=1)
+            #out_x = torch.cat([out_x, x], dim=1)
 
             #x=x.cpu()
+            for j in range(B):
+                for xxx in occurrences[j]:
+                    occurrences[j][xxx] *= GEN_penalty_decay
+                    occurrences[j][x[j,-1]] = 1 + (occurrences[j][x[j,-1]] if x[j,-1] in occurrences[j] else 0)
 
-            for xxx in occurrence:
-                occurrence[xxx] *= GEN_penalty_decay
-                occurrence[x[0,-1]] = 1 + (occurrence[x[0,-1]] if x[0,-1] in occurrence else 0)
+        #tokenaddress['generated'] = out_x.shape[1] - tokenaddress['prompt']
 
-        tokenaddress['generated'] = out_x.shape[1] - tokenaddress['prompt']
+    #print(output_text)
 
-        if additionaltoken != None:
-            x, shift_states, wkv_states = self.forward_rnn(additionaltoken, shift_states, wkv_states,passthrough=False) #FLA
-            out_x = torch.cat([out_x, x], dim=1)
-            tokenaddress['additionalprompt'] = x.shape[1]
-
-            # プロファイラ結果を表示（関数の最後で一度出力）
-
-    #exit()
-
-    print('\n///////////////////////////////////////////////////////////////////////////////////////////////\n')
-        
+    #print('\n///////////////////////////////////////////////////////////////////////////////////////////////\n')
+    #tensor_tokens =  torch.tensor(out_tokens).to(device=self.emb.weight.device).view(B,-1)   
             
-    return out_x, torch.tensor(out_tokens).to(device=self.emb.weight.device), tokenaddress
+    return output_text# , batch_finishpos
 
 
 def grpo_init(self):
@@ -198,6 +218,12 @@ def grpo_init(self):
     self.CoTDebug = True
 
     self.tokenizer = TRIE_TOKENIZER("tokenizer/rwkv_vocab_v20230424.txt")
+
+    self.grpo_gen_count = self.args.grpo_gen_count
+    self.grpo_gen_length = self.args.grpo_gen_length
+    self.grpo_gen_temperature = self.args.grpo_gen_temperature
+    self.grpo_gen_topp = self.args.grpo_gen_topp
+    self.grpo_kl_beta = self.args.grpo_kl_beta
 
 ##############################################################################
 # Load and prep dataset
@@ -209,6 +235,13 @@ Thinking Text (up to 100 words)
 Answer Text (up to 100 words)
 </answer>
 """
+
+PENALTY_OUTPUT = '''<think>
+Thinking Text (up to 100 words)
+</think>
+<answer>
+Answer Text (up to 100 words)
+</answer>'''
 
 XML_COT_FORMAT = """\
 <think>
@@ -240,6 +273,8 @@ def correctness_reward_func(prompt, completions, answer, **kwargs) -> list[float
     responses = [completion for completion in completions]
     q = prompt
     extracted_responses = [extract_xml_answer(r) for r in responses]
+
+    #print(f'Extracted Response = {extracted_responses}')
     #print('-'*20, f"Question:\n{q}", f"\nAnswer:\n{answer}", f"\nResponse:\n{responses[0]}", f"\nExtracted:\n{extracted_responses[0]}")
     return [2.0 if r == a else 0.0 for r, a in zip(extracted_responses, answer)]
 
@@ -261,6 +296,15 @@ def soft_format_reward_func(completions, **kwargs) -> list[float]:
     responses = [completion for completion in completions]
     matches = [re.match(pattern, r) for r in responses]
     return [0.5 if match else 0.0 for match in matches]
+
+def repetition_penalty_reward_func(completions, **kwargs) -> list[float]:
+    matches = []
+    for text in completions:
+        if PENALTY_OUTPUT in text:
+              matches.append(0.0)  #if contained input prompt.
+        else:
+              matches.append(1.0) 
+    return matches
 
 def count_xml(text) -> float:
     count = 0.0
@@ -291,7 +335,30 @@ def my_rulebase_reward_func(prompt, completions: List[str],answer) -> List[float
     rewards4 = soft_format_reward_func(completions)
     rewards5 = xmlcount_reward_func(completions)
 
-    Rewards = list(np.array(rewards1) + np.array(rewards2)+ np.array(rewards3)+ np.array(rewards4)+ np.array(rewards5))
+
+    penalty = repetition_penalty_reward_func(completions)
+
+    # Rewards = list((
+    #                np.array(rewards1) + 
+    #                np.array(rewards2) +
+    #                np.array(rewards3) +
+    #                np.array(rewards4) +
+    #                np.array(rewards5)
+    #                 ) * np.array(penalty)
+                   
+    #                )
+    # すべての報酬配列が同じ長さであることを確認
+    rewards = np.array(rewards1) + \
+            np.array(rewards2) + \
+            np.array(rewards3) + \
+            np.array(rewards4) + \
+            np.array(rewards5)
+
+    # penaltyとrewardsの形状を確認
+    final_rewards = rewards * np.array(penalty)
+
+    # 必要に応じてリストに変換
+    Rewards = final_rewards.tolist()
   
     print(f'Rewards = {Rewards}')
 
@@ -320,7 +387,7 @@ def training_step_grpo(self, batch, batch_idx):
     bsz = len(batch)
     assert bsz == 1, "currently can run only 1bsz"
 
-    GenerateCount = 4  # G: Generate Count each batch hardcoded.
+    GenerateCount = self.grpo_gen_count  # G: Generate Count each batch hardcoded.
 
     # Get prompt and chosen from dataset
     prompttoken = batch[0]['prompttoken'][: args.ctx_len // 2]
@@ -332,11 +399,15 @@ def training_step_grpo(self, batch, batch_idx):
     # Prompt format for RWKV. now hard coding....
     system_prefix = 'System: ' + SYSTEM_PROMPT 
     user_prefix   = system_prefix + "\n\nUser: "
+    user_prefix_without_system = "User: "
     asst_prefix   = "\n\nAssistant:"
+
+
+    prompt_prefix = user_prefix + prompt_text + asst_prefix
 
     # tokenize text-> idx
     prompt_idx = torch.tensor(
-        self.tokenizer.encode(user_prefix + prompt_text + asst_prefix),
+        self.tokenizer.encode(prompt_prefix),
         device=self.emb.weight.device
     ).unsqueeze(0)
 
@@ -345,29 +416,45 @@ def training_step_grpo(self, batch, batch_idx):
     combined_idxs_all = []
     token_addresses_list = []
 
-    for g_i in range(GenerateCount):
 
-        gen_x, gen_tokens, tokenaddr = GenerateForwardTokens(
+    gen_texts= GenerateForwardTokens(
             self,
             prompt=prompt_idx,
-            stoplength=1024,  #Maximum Generate Length
+            batchcount=GenerateCount,
+            stoplength=self.grpo_gen_length,  #Maximum Generate Length
             additionaltoken=None,
             stoptoken='User:',  # StopToken
-            temp=1.0,
-            topp=0.8
+            temp=self.grpo_gen_temperature,
+            topp=self.grpo_gen_topp
         )
+    
 
-        # Prompt + Generated
-        combined_idx = torch.cat([prompt_idx, gen_tokens], dim=1)  # shape [1, T_total]
+    
+    for g_i in range(GenerateCount):
+        # if gen_tokens.shape[1] == batch_finishpos[g_i]:
+        #     single_gen_tokens = gen_tokens[g_i]
+        # else:
+        #     single_gen_tokens = gen_tokens[g_i][:batch_finishpos[g_i]]
+        # combined_idx = torch.cat([prompt_idx, single_gen_tokens.unsqueeze(0)], dim=1)  # shape [1, T_total]
 
         # Decode for debug
-        all_text = self.tokenizer.decode(combined_idx[0].tolist())
-        gen_text = self.tokenizer.decode(gen_tokens[0].tolist())
+        # all_text = self.tokenizer.decode(combined_idx[0].tolist())
+        # gen_text = self.tokenizer.decode(single_gen_tokens.unsqueeze(0).tolist())
+
+        all_text = user_prefix_without_system + gen_texts[g_i]
+        gen_text = gen_texts[g_i]
+
+        combined_idx = torch.tensor(
+                    self.tokenizer.encode(all_text),
+                    device=self.emb.weight.device
+                    ).unsqueeze(0)
+
+
         print(f"[DEBUG] Sample {g_i}:  {all_text}")
 
         generated_completions_all.append(gen_text)  # use for reward
         combined_idxs_all.append(combined_idx)
-        token_addresses_list.append(tokenaddr)
+
 
     # 3) Compute Reward and normalize
     rewards_list = my_rulebase_reward_func(
@@ -376,7 +463,7 @@ def training_step_grpo(self, batch, batch_idx):
         answer=final_answer_text
     )  
     # for debugging
-    print("[DEBUG] rewards_list:", rewards_list)
+    #print("[DEBUG] rewards_list:", rewards_list)
 
     # normalize rewards (A_i = (r_i - mean)/std)
     rewards_tensor = torch.tensor(rewards_list, device=self.emb.weight.device, dtype=torch.float)
@@ -407,9 +494,7 @@ def training_step_grpo(self, batch, batch_idx):
     # Gather ratio=πθ/πref and log(πθ)
     # → Loop "1/|o_i| sum_t(...) according to the formula" and multiply by 1/G at the end
     G = GenerateCount
-    total_tokens = 0
-    sum_loss_reinforce = 0.0
-    sum_kl = 0.0
+ 
 
     for i in range(G):
         # each shape [1, max_len, vocab]
@@ -483,17 +568,19 @@ def training_step_grpo(self, batch, batch_idx):
     reinforce_loss = - (sum_loss_reinforce_torch / G)
     kl_value_torch = (sum_kl_torch / G)
 
-    beta_kl = 0.1 #beta hardcoded.
+    beta_kl = self.grpo_kl_beta #beta hardcoded.
 
     kl_loss = beta_kl * kl_value_torch
 
     total_loss = reinforce_loss + kl_loss
 
+    total_loss = L2Wrap.apply(total_loss,actor_logits)
+
     # for debug...
     self.log("rewards_mean", float(mean_r), prog_bar=True)
-    self.log("rewards_std",  float(std_r),  prog_bar=True)
-    self.log("kl_value",     float(kl_value_torch.item()), prog_bar=True)
-    self.log("loss_reinforce", float(reinforce_loss), prog_bar=True)
+    # self.log("rewards_std",  float(std_r),  prog_bar=True)
+    # self.log("kl_value",     float(kl_value_torch.item()), prog_bar=True)
+    # self.log("loss_reinforce", float(reinforce_loss), prog_bar=True)
 
     self.trainer.rewards_mean = float(mean_r)
     self.trainer.rewards_std = float(std_r)
