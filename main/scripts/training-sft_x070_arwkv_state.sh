@@ -1,25 +1,24 @@
 python train.py --load_model "/home/client/Projects/RWKV-Infer/models/ARWKV-7B-Preview-0.1.pth" \
- --wandb "RWKV-LM-RLHF xa070 ARWKV-7B SFT CJE5 Clean" --proj_dir "myfolder/Outputs/arwkv5cje" \
- --vocab_size 152064 --ctx_len 16384 \
- --chunk_ctx 1024 \
+ --load_cold_adapter "myfolder/Outputs/nsha/rwkv-8.pth" \
+ --wandb "RWKV-LM-RLHF xa070 ARWKV-7B SFT nsha" --proj_dir "myfolder/Outputs/nsha2" \
+ --vocab_size 152064 --ctx_len 2048 \
  --epoch_steps 300 --epoch_count 200 --epoch_begin 0 --epoch_save 1 \
  --micro_bsz 1 --n_layer 28 --n_embd 3584 --dim_ffn 18944 \
  --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
  --accelerator gpu --devices 1 --precision 'bf16' \
  --grad_cp 1 --my_testing "xa070" \
  --strategy deepspeed_stage_2_offload \
- --layer_profile 'layerprofile/28_TEST_dora.csv' \
- --fla 1 \
- --infctx 1 \
- --state 0 \
+ --layer_profile 'layerprofile/28_TEST_state.csv' \
+ --fla 0 \
+ --state 1 \
  --quant 1 \
  --quant_mode 'fp8'\
- --gpu_arch 'cuda' \
- --limited_lora 0 \
+ --gpu_arch 'triton' \
+ --limited_lora 1 \
  --sft 1 \
  --smoothing 0.005 \
  --random_mode 1 \
- --infctx_dataset_multiplier 16 \
+ --infctx_dataset_multiplier 1 \
  --optim '' \
  --train_data_file 'myfolder/2024_dataset/nsha.h5' \
- --accumulate_grad_batches 8
+ --accumulate_grad_batches 1

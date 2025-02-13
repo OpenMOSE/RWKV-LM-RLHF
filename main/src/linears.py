@@ -453,7 +453,24 @@ class LoraEmbedding(nn.Module): #Not working well. please help
         lora_embedded = lora_embedded @ self.lora_B.T  # [batch_size, seq_len, embedding_dim]
         
         return embedded + self.scaling * lora_embedded
+    
+class NormalLinear(nn.Module):
+    def __init__(self, in_features: int, out_features: int, bias: bool, n_layer: int, pname=''):
+        super().__init__()
 
+        self.weight = nn.Parameter(torch.empty((out_features, in_features)))
+        assert bias == False, "Biased LoraLinear not supported"
+    def forward(self, x,passthrough = False):
+        return F.linear(x,self.weight)
+    
+class NormalLinear_h(nn.Module):
+    def __init__(self, in_features: int, out_features: int, bias: bool):
+        super().__init__()
+
+        self.weight = nn.Parameter(torch.empty((out_features, in_features)))
+        assert bias == False, "Biased LoraLinear not supported"
+    def forward(self, x,passthrough = False):
+        return F.linear(x,self.weight)
 class LoraLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :) Chaos Modified
     #@torch.jit.unused
     def __init__(self, in_features: int, out_features: int, bias: bool, n_layer: int, pname=''):
@@ -602,7 +619,9 @@ def make_linear_att(*args, **kwargs):
     if any(word in pname for word in LAYER_CONFIG[f'{str(layer_id)}']['RejectParts']) and LAYER_CONFIG[f'{str(layer_id)}']['RejectParts'][0] != '':
         Reject = True
         print(f'reject pname {pname}')
-    if LAYER_CONFIG[f'{str(layer_id)}']['mode'] == 'freeze' or Reject == True:
+    if LAYER_CONFIG[f'{str(layer_id)}']['mode'] == 'full' and Reject == False:
+        return NormalLinear(*args, **kwargs)    
+    elif LAYER_CONFIG[f'{str(layer_id)}']['mode'] == 'freeze' or Reject == True:
         return QuantLinear(*args, **kwargs)
     else:
         return LoraLinear(*args, **kwargs)
@@ -616,8 +635,9 @@ def make_linear_ffn(*args, **kwargs):
     if any(word in pname for word in LAYER_CONFIG[f'{str(layer_id)}']['RejectParts']) and LAYER_CONFIG[f'{str(layer_id)}']['RejectParts'][0] != '':
         Reject = True
         print(f'reject pname {pname}')
-    #print(f'ffn layerid = {layer_id}')
-    if LAYER_CONFIG[f'{str(layer_id)}']['mode'] == 'freeze' or Reject == True:
+    if LAYER_CONFIG[f'{str(layer_id)}']['mode'] == 'full' and Reject == False:
+        return NormalLinear(*args, **kwargs)    
+    elif LAYER_CONFIG[f'{str(layer_id)}']['mode'] == 'freeze' or Reject == True:
         return QuantLinear(*args, **kwargs)
     else:
         return LoraLinear(*args, **kwargs)
@@ -641,8 +661,12 @@ def make_linear_ffn_experts(*args, **kwargs):
 def make_linear_head(*args, **kwargs):
     #layer_id = kwargs.get('n_layer')
     #print(f'ffn layerid = {layer_id}')
-    if LAYER_CONFIG[f'head']['mode'] == 'full' or LAYER_CONFIG[f'head']['mode'] == 'freeze':
-        return HeadLoraLinear(*args, **kwargs)
+    # if LAYER_CONFIG[f'head']['mode'] == 'full':
+    #     return HeadLoraLinear(*args, **kwargs)
+    if LAYER_CONFIG[f'head']['mode'] == 'full':
+        return NormalLinear_h(*args, **kwargs)    
+    elif LAYER_CONFIG[f'head']['mode'] == 'freeze':
+        return NormalLinear_h(*args, **kwargs)
         #return nn.Linear(*args, **kwargs)
     else:
         return HeadLoraLinear(*args, **kwargs)

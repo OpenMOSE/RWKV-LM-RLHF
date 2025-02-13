@@ -24,8 +24,8 @@ import json
 parser = ArgumentParser()
 
 #parser.add_argument("--load_initial_state", default="", type=str)
-parser.add_argument("--input_folder", default="myfolder/2024_dataset/may_qwen", type=str)
-parser.add_argument("--output_parquet", default="myfolder/2024_dataset/may-qwen-tokenizer.h5", type=str)
+parser.add_argument("--input_folder", default="myfolder/2024_dataset/General3_qwen", type=str)
+parser.add_argument("--output_parquet", default="myfolder/2024_dataset/General-jpencnv5-qwen-tokenizer-clean.h5", type=str)
 #\x17
 args2 = parser.parse_args()
 torch.backends.cudnn.benchmark = True

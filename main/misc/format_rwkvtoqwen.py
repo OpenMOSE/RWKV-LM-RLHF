@@ -39,8 +39,8 @@ def convert_text_format(original_text: str) -> str:
 
 
 def main():
-    input_dir = "myfolder/datasets/may"
-    output_dir = "myfolder/2024_dataset/may_qwen"
+    input_dir = "myfolder/2024_dataset/Nsha"
+    output_dir = "myfolder/2024_dataset/Nsha_qwen"
 
     # 出力先フォルダが無ければ作成する
     os.makedirs(output_dir, exist_ok=True)

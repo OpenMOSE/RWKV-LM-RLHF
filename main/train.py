@@ -395,6 +395,9 @@ if __name__ == "__main__":
     if (AdapterMethod == 'lora' or AdapterMethod == 'bone') and args.quant:
         Realtime_Quant = True
 
+    print(Realtime_Quant)
+ 
+
     #os.environ["RWKV_GLOBAL_NO"] = "0"
 
     @rank_zero_only

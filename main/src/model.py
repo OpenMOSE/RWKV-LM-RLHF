@@ -444,7 +444,10 @@ class RWKV(pl.LightningModule):
                 #print(LAYER_CONFIG)
 
                 if realtime_quant:
+
                     for name, m in self.blocks.named_modules():
+                        #print(name)
+                        #exit()
                         if hasattr(m, "quant") and callable(getattr(m, "quant")) and f'{str(i)}.' in name:
                                 m.quant(args.quant_mode,target_gpu)
                                 print(f'{name} Quant')
