@@ -46,6 +46,8 @@ class LayerProfiler:
                         CONFIG[f'{str(i)}']={'mode':'freeze','quant':quant,'lr_init':row['Weight_lr_init'],'lr_final':row['Weight_lr_final'],'lr_init_state':row['State_lr_init'],'lr_final_state':row['State_lr_final'],'RejectParts':row['RejectParts'].split(','),'weight_decay':row['Weight_decay']}
                     elif row['Mode'] == 'lora':
                         CONFIG[f'{str(i)}']={'mode':'lora','quant':quant,'rank':row['Rank'],'alpha':row['Alpha'],'dropout':row['Dropout'],'lr_init':row['Weight_lr_init'],'lr_final':row['Weight_lr_final'],'lr_init_state':row['State_lr_init'],'lr_final_state':row['State_lr_final'],'RejectParts':row['RejectParts'].split(','),'weight_decay':row['Weight_decay']}
+                    elif row['Mode'] == 'dora':
+                        CONFIG[f'{str(i)}']={'mode':'dora','quant':quant,'rank':row['Rank'],'alpha':row['Alpha'],'dropout':row['Dropout'],'lr_init':row['Weight_lr_init'],'lr_final':row['Weight_lr_final'],'lr_init_state':row['State_lr_init'],'lr_final_state':row['State_lr_final'],'RejectParts':row['RejectParts'].split(','),'weight_decay':row['Weight_decay']}
                     elif row['Mode'] == 'bone': # test implement
                         CONFIG[f'{str(i)}']={'mode':'bone','quant':quant,'rank':row['Rank'],'lr_init':row['Weight_lr_init'],'lr_final':row['Weight_lr_final'],'lr_init_state':row['State_lr_init'],'lr_final_state':row['State_lr_final'],'RejectParts':row['RejectParts'].split(','),'weight_decay':row['Weight_decay']}
                     elif row['Mode'] == 'pissa':
@@ -67,6 +69,8 @@ class LayerProfiler:
                     CONFIG[f'head']={'mode':row['Mode'] , 'quant':quant ,'lr_init':row['Weight_lr_init'],'lr_final':row['Weight_lr_final'],'weight_decay':row['Weight_decay'] } 
                 elif row['Mode'] == 'lora':
                         CONFIG[f'head']={'mode':'lora','rank':row['Rank'],'alpha':row['Alpha'], 'quant':quant ,'dropout':row['Dropout'],'lr_init':row['Weight_lr_init'],'lr_final':row['Weight_lr_final'],'weight_decay':row['Weight_decay']}
+                elif row['Mode'] == 'dora':
+                        CONFIG[f'head']={'mode':'dora','rank':row['Rank'],'alpha':row['Alpha'], 'quant':quant ,'dropout':row['Dropout'],'lr_init':row['Weight_lr_init'],'lr_final':row['Weight_lr_final'],'weight_decay':row['Weight_decay']}
                 elif row['Mode'] == 'pissa':
                         CONFIG[f'head']={'mode':'pissa','rank':row['Rank'],'alpha':row['Alpha'], 'quant':quant ,'dropout':row['Dropout'],'lr_init':row['Weight_lr_init'],'lr_final':row['Weight_lr_final'],'weight_decay':row['Weight_decay']}
                 elif row['Mode'] == 'bone':

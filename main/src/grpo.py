@@ -575,7 +575,7 @@ def training_step_grpo(self, batch, batch_idx):
 
     total_loss = reinforce_loss + kl_loss
 
-    total_loss = L2Wrap.apply(total_loss,actor_logits)
+    #total_loss = L2Wrap.apply(total_loss,actor_logits)
 
     # for debug...
     self.log("rewards_mean", float(mean_r), prog_bar=True)

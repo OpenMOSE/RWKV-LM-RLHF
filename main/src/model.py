@@ -37,6 +37,8 @@ from bitsandbytes.optim import Adam8bit,AdamW8bit
 
 if 'x070' in os.environ["RWKV_MY_TESTING"]:
     from .rwkv7 import LAYER_CONFIG,RWKV_Tmix_x070,RWKV_Tmix_x070_state,RWKV_Tmix_x070_infctx,RWKV_CMix_x070,RWKV_CMix_x070_MoLE,RWKV_CMix_x070_infctx,make_linear_head,make_emb
+if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+    from .arwkv7 import LAYER_CONFIG,ARWKV_Tmix_x070,ARWKV_Tmix_x070_state,ARWKV_Tmix_x070_infctx,Qwen2MLP,Qwen2MLP_infctx,Qwen2RMSNorm,make_linear_head,make_emb
 elif 'x060' in os.environ["RWKV_MY_TESTING"]:
     from .rwkv6 import LAYER_CONFIG,RWKV_Tmix_x060,RWKV_Tmix_x060_state,RWKV_Tmix_x060_infctx,RWKV_CMix_x060,RWKV_CMix_x060_infctx,make_linear_head,make_emb
 else:
@@ -122,6 +124,62 @@ if 'x070' in os.environ["RWKV_MY_TESTING"]:
             def forward_rnn(self, x, v_first,last_state: BlockState,passthrough=False):
                 if self.layer_id == 0:
                     x = self.ln0(x)
+
+                x_attn, v_first, att_state = self.att.forward_rnn(self.ln1(x), v_first, last_state.time_mix_state,passthrough)
+                x = x + x_attn
+
+                ffn_out ,ffn_state = self.ffn.forward_rnn(self.ln2(x), last_state.channel_mix_state,passthrough)
+
+                x = x + ffn_out
+                return x, v_first ,BlockState(att_state, ffn_state)
+if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+    class Block(nn.Module):
+        def __init__(self, args, layer_id):
+            super().__init__()
+            self.args = args
+            self.layer_id = layer_id
+
+            self.ln1 = Qwen2RMSNorm(args.n_embd)
+            self.ln2 = Qwen2RMSNorm(args.n_embd)
+
+            #if self.layer_id == 0:
+            #    self.ln0 = nn.LayerNorm(args.n_embd)
+
+            if os.environ["RWKV_TRAIN_TYPE"] == 'state':
+                self.att = ARWKV_Tmix_x070_state(args, layer_id) 
+            elif os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
+                self.att = ARWKV_Tmix_x070_infctx(args, layer_id) 
+            else:
+                self.att = ARWKV_Tmix_x070(args, layer_id)  
+
+            if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
+                self.ffn = Qwen2MLP_infctx(args, layer_id)
+            else:
+                self.ffn = Qwen2MLP(args, layer_id)
+
+
+        if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
+            def forward(self, x, v_first,last_state: BlockState, x_emb=None):
+
+                x_attn, v_first, att_state = self.att(self.ln1(x), v_first, last_state.time_mix_state)
+
+                x = x + x_attn
+
+                ffn_out ,ffn_state = self.ffn(self.ln2(x), last_state.channel_mix_state)
+
+                x = x + ffn_out
+                return x, v_first ,BlockState(att_state, ffn_state)
+        else:
+            def forward(self, x, v_first,passthrough = False):
+      
+
+                x_attn, v_first = self.att(self.ln1(x), v_first, passthrough)
+                x = x + x_attn
+
+                x = x + self.ffn(self.ln2(x),passthrough)
+                return x, v_first
+            @torch.no_grad()
+            def forward_rnn(self, x, v_first,last_state: BlockState,passthrough=False):
 
                 x_attn, v_first, att_state = self.att.forward_rnn(self.ln1(x), v_first, last_state.time_mix_state,passthrough)
                 x = x + x_attn
@@ -355,7 +413,14 @@ class RWKV(pl.LightningModule):
 
         self.emb = make_emb(args.vocab_size, args.n_embd)
 
-        self.ln_out = nn.LayerNorm(args.n_embd)
+
+        if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+            self.ln_out = Qwen2RMSNorm(args.n_embd)
+        else:
+            self.ln_out = nn.LayerNorm(args.n_embd)
+
+
+
         self.head = make_linear_head(args.n_embd, args.vocab_size, bias=False)
 
         if args.zerocot:
@@ -383,15 +448,35 @@ class RWKV(pl.LightningModule):
                         if hasattr(m, "quant") and callable(getattr(m, "quant")) and f'{str(i)}.' in name:
                                 m.quant(args.quant_mode,target_gpu)
                                 print(f'{name} Quant')
+
+                if LAYER_CONFIG[f'{str(i)}']['mode'] == 'dora':
+                    print('DoRA Mode Norm')
+                    for name, m in self.blocks.named_modules():
+                        if hasattr(m, "dora_init") and callable(getattr(m, "dora_init")) and f'{str(i)}.' in name:
+                                m.dora_init()
+                                print(f'{name} dora_init')
+                                #exit()
+
+
+
             self.load_element_weights(self,'emb',load_dict)
             self.load_element_weights(self,'ln_out',load_dict)
             self.load_element_weights(self,'head',load_dict)
             if realtime_quant:
                 for name, m in self.named_modules():
-                    print(f'pname = {name}')
+                    #print(f'pname = {name}')
+                    
                     if hasattr(m, "quant") and callable(getattr(m, "quant")) and f'head' in name:
                             m.quant(args.quant_mode,target_gpu)
                             print(f'{name} Quant')
+
+            if LAYER_CONFIG[f'head']['mode'] == 'dora':
+                    print('DoRA Mode Norm head')
+                    for name, m in self.named_modules():
+                        if hasattr(m, "dora_init") and callable(getattr(m, "dora_init")) and f'head' in name:
+                                m.dora_init()
+                                print(f'{name} dora_init')
+            #exit()
         else:
             self.blocks = nn.ModuleList([Block(args, i) for i in range(args.n_layer)])
         global NowCurrentlyGPUNo
@@ -618,7 +703,7 @@ class RWKV(pl.LightningModule):
             if args.dropout > 0:
                 x = self.drop0(x)
 
-            if 'x070' in os.environ["RWKV_MY_TESTING"]:
+            if 'x070' in os.environ["RWKV_MY_TESTING"] or 'xa070' in os.environ["RWKV_MY_TESTING"]:
                 v_first = torch.empty_like(x)
                 
                 for i, (block, block_state) in enumerate(zip(self.blocks,
@@ -930,6 +1015,7 @@ class RWKV(pl.LightningModule):
                 smoothing = args.smoothing
 
                 input_ids = batch['input_ids']
+                
                 target = batch['target_ids']
                 attention_mask = batch['attention_mask'].float()
                 max_len = int(attention_mask.sum(dim=1).max().item())
@@ -1217,7 +1303,7 @@ class RWKV(pl.LightningModule):
             if args.dropout > 0:
                 x = self.drop0(x)
 
-            if 'x070' in os.environ["RWKV_MY_TESTING"]:
+            if 'x070' in os.environ["RWKV_MY_TESTING"] or 'xa070' in os.environ["RWKV_MY_TESTING"]:
                 v_first = torch.empty_like(x)
                 
                 for i, (block, block_state) in enumerate(zip(self.blocks,
@@ -1247,7 +1333,7 @@ class RWKV(pl.LightningModule):
 
             if args.dropout > 0:
                 x = self.drop0(x)
-            if 'x070' in os.environ["RWKV_MY_TESTING"]:
+            if 'x070' in os.environ["RWKV_MY_TESTING"] or 'xa070' in os.environ["RWKV_MY_TESTING"]:
                     v_first = torch.empty_like(x)
                     moe_total_loss = 0
                     for block in self.blocks:
@@ -1448,6 +1534,8 @@ class RWKV(pl.LightningModule):
                 target = batch['target_ids']
                 attention_mask = batch['attention_mask']
 
+                print(input_ids)
+
                 #max_len = int(input_ids.shape[1])#int(attention_mask.sum(dim=1).max().item())
 
                 max_len = int(attention_mask.sum(dim=1).max().item())
@@ -1458,7 +1546,7 @@ class RWKV(pl.LightningModule):
                         return n
                     return n + (128 - remainder)
 
-                if 'x070' in os.environ["RWKV_MY_TESTING"]:
+                if 'x070' in os.environ["RWKV_MY_TESTING"] or 'xa070' in os.environ["RWKV_MY_TESTING"]:
                     max_len = find_next_128_multiple(max_len)
                     input_ids = input_ids[:, :max_len]
                     target = target[:, :max_len]
@@ -1566,7 +1654,7 @@ class RWKV(pl.LightningModule):
                     max_len = max(len1, len2)
 
                     # 必要に応じてパディング
-                    if 'x070' in os.environ.get("RWKV_MY_TESTING", ""):
+                    if 'x070' in os.environ.get("RWKV_MY_TESTING", "") or 'xa070' in os.environ.get("RWKV_MY_TESTING", ""):
                         max_len = args.ctx_len
 
                     if len1 < max_len:
@@ -1681,7 +1769,7 @@ class RWKV(pl.LightningModule):
                     max_len = max(len1, len2)
 
                     # 必要に応じてパディング
-                    if 'x070' in os.environ.get("RWKV_MY_TESTING", ""):
+                    if 'x070' in os.environ.get("RWKV_MY_TESTING", "")or 'xa070' in os.environ.get("RWKV_MY_TESTING", ""):
                         max_len = args.ctx_len
 
                     # パディング処理（右側0埋め）

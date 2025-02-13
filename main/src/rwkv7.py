@@ -463,30 +463,11 @@ if 'x070' in ModelGeneration:
 
                 Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
 
-                LinearMode = 0
-
-                if Processing_Mode == 'full':
-                    LinearMode = 0
-
-                elif Processing_Mode == 'freeze':
-                    Quant_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['quant']
-                    if Quant_Mode == 'none':
-                        LinearMode = 0
-                    else:
-                        LinearMode = 1
-                else:
-                    LinearMode = 1
-
-                if LinearMode == 0:
-                    self.receptance = nn.Linear(C, C, bias=False)
-                    self.key = nn.Linear(C, C, bias=False)
-                    self.value = nn.Linear(C, C, bias=False)
-                    self.output = nn.Linear(C, C, bias=False)
-                else:
-                    self.receptance = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.receptance')
-                    self.key = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.key')
-                    self.value = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.value')
-                    self.output = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.output')
+               
+                self.receptance = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.receptance')
+                self.key = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.key')
+                self.value = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.value')
+                self.output = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.output')
 
 
                 self.ln_x = nn.GroupNorm(H, C, eps=(1e-5)*(args.head_size_divisor**2)) # !!! notice eps value !!!
@@ -579,49 +560,6 @@ if 'x070' in ModelGeneration:
 
             return x, v_first,TimeMixState(shift_state,wkv_state)
         
-        def forward_rnn_(self, x, v_first, last_state: TimeMixState, passthrough=False):
-            B, T, C = x.size()
-            H = self.n_head
-
-            shift_state = last_state.shift_state
-            wkv_state = last_state.wkv_state#.clone()  # contiguous() を削除
-
-            # torch.concat() を避けてメモリ割り当てを削減
-            xx = torch.concat((shift_state.unsqueeze(1), x[:, :-1]), dim=1) - x
-
-            shift_state = x[:, -1]
-
-            xr, xw, xk, xv, xa, xg = [x + xx * scale for scale in [self.x_r, self.x_w, self.x_k, self.x_v, self.x_a, self.x_g]]
-
-            r = self.receptance(xr, passthrough)
-            w = -F.softplus(-(self.w0 + torch.tanh(xw @ self.w1) @ self.w2)) - 0.5  # soft-clamp to (-inf, -0.5)
-            k = self.key(xk, passthrough)
-            v = self.value(xv, passthrough)
-
-            if self.layer_id == 0:
-                v_first = v
-            else:
-                v = v + (v_first - v) * torch.sigmoid(self.v0 + (xv @ self.v1) @ self.v2)  # add value residual
-
-            a = torch.sigmoid(self.a0 + (xa @ self.a1) @ self.a2)  
-            g = torch.sigmoid(xg @ self.g1) @ self.g2
-
-            kk = k * self.k_k
-            kk = F.normalize(kk.view(B,T,H,-1), dim=-1, p=2.0).view(B,T,C)
-            k = k * (1 + (a-1) * self.k_a)
-
-            x, wkv_state = RUN_RWKV7_RECURRENT(r, k, v, w, -kk, kk * a, s=wkv_state)
-
-            # `contiguous()` を削除
-            x = self.ln_x(x.view(B * T, C)).view(B, T, C)
-
-            # einsum によりカーネルを統合
-            x = x + torch.einsum('bthd,bthd,bthd->bthd', r.view(B,T,H,-1), k.view(B,T,H,-1), v.view(B,T,H,-1)).reshape(B,T,C)
-
-
-            x = self.output(x * g, passthrough)
-
-            return x, v_first, TimeMixState(shift_state, wkv_state)
     
     class RWKV_Tmix_x070_state(nn.Module):
         def __init__(self, args, layer_id):
@@ -722,30 +660,11 @@ if 'x070' in ModelGeneration:
 
                 Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
 
-                LinearMode = 0
-
-                if Processing_Mode == 'full':
-                    LinearMode = 0
-
-                elif Processing_Mode == 'freeze':
-                    Quant_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['quant']
-                    if Quant_Mode == 'none':
-                        LinearMode = 0
-                    else:
-                        LinearMode = 1
-                else:
-                    LinearMode = 1
-
-                if LinearMode == 0:
-                    self.receptance = nn.Linear(C, C, bias=False)
-                    self.key = nn.Linear(C, C, bias=False)
-                    self.value = nn.Linear(C, C, bias=False)
-                    self.output = nn.Linear(C, C, bias=False)
-                else:
-                    self.receptance = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.receptance')
-                    self.key = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.key')
-                    self.value = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.value')
-                    self.output = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.output')
+                
+                self.receptance = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.receptance')
+                self.key = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.key')
+                self.value = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.value')
+                self.output = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.output')
 
 
                 self.ln_x = nn.GroupNorm(H, C, eps=(1e-5)*(args.head_size_divisor**2)) # !!! notice eps value !!!
@@ -887,30 +806,11 @@ if 'x070' in ModelGeneration:
 
                 Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
 
-                LinearMode = 0
-
-                if Processing_Mode == 'full':
-                    LinearMode = 0
-
-                elif Processing_Mode == 'freeze':
-                    Quant_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['quant']
-                    if Quant_Mode == 'none':
-                        LinearMode = 0
-                    else:
-                        LinearMode = 1
-                else:
-                    LinearMode = 1
-
-                if LinearMode == 0:
-                    self.receptance = nn.Linear(C, C, bias=False)
-                    self.key = nn.Linear(C, C, bias=False)
-                    self.value = nn.Linear(C, C, bias=False)
-                    self.output = nn.Linear(C, C, bias=False)
-                else:
-                    self.receptance = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.receptance')
-                    self.key = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.key')
-                    self.value = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.value')
-                    self.output = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.output')
+                
+                self.receptance = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.receptance')
+                self.key = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.key')
+                self.value = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.value')
+                self.output = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.output')
 
 
                 self.ln_x = nn.GroupNorm(H, C, eps=(1e-5)*(args.head_size_divisor**2)) # !!! notice eps value !!!
@@ -981,24 +881,7 @@ if 'x070' in ModelGeneration:
 
             Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
 
-            # LinearMode = 0
-
-            # if Processing_Mode == 'full':
-            #     LinearMode = 0
-
-            # elif Processing_Mode == 'freeze':
-            #     Quant_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['quant']
-            #     if Quant_Mode == 'none':
-            #         LinearMode = 0
-            #     else:
-            #         LinearMode = 1
-            # else:
-            #     LinearMode = 1
-
-            # if LinearMode == 0:
-            #     self.key = nn.Linear(args.n_embd, args.dim_ffn, bias=False)
-            #     self.value = nn.Linear(args.dim_ffn, args.n_embd, bias=False)
-            # else:
+     
             self.key = make_linear_ffn(args.n_embd, args.dim_ffn, bias=False,n_layer=self.layer_id,pname='ffn.key')
             self.value = make_linear_ffn(args.dim_ffn, args.n_embd, bias=False,n_layer=self.layer_id,pname='ffn.value')
 
@@ -1043,26 +926,9 @@ if 'x070' in ModelGeneration:
 
             Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
 
-            LinearMode = 0
 
-            if Processing_Mode == 'full':
-                LinearMode = 0
-
-            elif Processing_Mode == 'freeze':
-                Quant_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['quant']
-                if Quant_Mode == 'none':
-                    LinearMode = 0
-                else:
-                    LinearMode = 1
-            else:
-                LinearMode = 1
-
-            if LinearMode == 0:
-                self.key = nn.Linear(args.n_embd, args.dim_ffn, bias=False)
-                self.value = nn.Linear(args.dim_ffn, args.n_embd, bias=False)
-            else:
-                self.key = make_linear_ffn(args.n_embd, args.dim_ffn, bias=False,n_layer=self.layer_id,pname='ffn.key')
-                self.value = make_linear_ffn(args.dim_ffn, args.n_embd, bias=False,n_layer=self.layer_id,pname='ffn.value')
+            self.key = make_linear_ffn(args.n_embd, args.dim_ffn, bias=False,n_layer=self.layer_id,pname='ffn.key')
+            self.value = make_linear_ffn(args.dim_ffn, args.n_embd, bias=False,n_layer=self.layer_id,pname='ffn.value')
 
             # !!! initialize if you are using RWKV_Tmix_x070 in your code !!!
             # self.key.weight.data.uniform_(-0.5/(args.n_embd**0.5), 0.5/(args.n_embd**0.5))

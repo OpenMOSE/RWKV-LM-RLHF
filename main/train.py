@@ -459,7 +459,7 @@ if __name__ == "__main__":
 
 
         
-        if 'x070' in os.environ["RWKV_MY_TESTING"]:# and args.limited_lora == 0:
+        if 'x070' in os.environ["RWKV_MY_TESTING"] or 'xa070' in os.environ["RWKV_MY_TESTING"]:# and args.limited_lora == 0:
             #print('x070 Additional Parameters')
             for i in range(args.n_layer):
                 text = f'blocks.{str(i)}.'
@@ -498,15 +498,7 @@ if __name__ == "__main__":
 
 
 
-    if AdapterMethod == 'pissa':
-        init_dict = {}
-        rank_zero_info(f"########## Init PISSA... ##########")
-        for name, m in model.named_modules():
-            if hasattr(m, "pissa_init") and callable(getattr(m, "pissa_init")):
-                m.pissa_init(args.svd_niter)
-                init_dict[f'{name}.init_lora_A'] = m.lora_A.data
-                init_dict[f'{name}.init_lora_B'] = m.lora_B.data
-        torch.save(init_dict, f'{args.proj_dir}/init_pissa.pth')
+
 
     if os.path.isfile(args.load_adapter) and AdapterMethod == 'lora':
         model.load_state_dict(torch.load(args.load_adapter, map_location="cpu"),
@@ -516,14 +508,7 @@ if __name__ == "__main__":
         model.load_state_dict(torch.load(args.load_adapter, map_location="cpu"),
                               strict=False)
         
-    if os.path.isfile(args.load_adapter) and AdapterMethod == 'pissa':
-        model.load_state_dict(torch.load(args.load_adapter, map_location="cpu"),
-                            strict=False)
-        pissa_init = torch.load(args.load_adapter_pissa_init, map_location="cpu")
-        rank_zero_info(f"########## Load PISSA... ##########")
-        for name, m in model.named_modules():
-            if hasattr(m, "pissa_load") and callable(getattr(m, "pissa_load")):
-                m.pissa_load(pissa_init[f'{name}.init_lora_A'], pissa_init[f'{name}.init_lora_B'])
+
 
     if args.quant and Realtime_Quant == False:
         rank_zero_info(f"########## Quant... ##########")
