@@ -777,7 +777,15 @@ class RWKV(pl.LightningModule):
                     student_logits,new_shift_states, new_wkv_states = self(chunk_input_ids,last_shift_states, last_wkv_states)
 
                     # Label Smoothing Loss
-                    label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+
+                    #label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+                    if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+                        label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
+                    else:
+                        label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+
+
+
                     student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
                     smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
 
@@ -902,7 +910,16 @@ class RWKV(pl.LightningModule):
                     student_logits,new_shift_states, new_wkv_states = self(chunk_input_ids,last_shift_states, last_wkv_states)
                     print(f'logit sum0={torch.sum(student_logits)}')
                     # Label Smoothing Loss
-                    label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+
+
+                    #label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+                    if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+                        label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
+                    else:
+                        label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+
+
+
                     student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
                     #print(f'logit sum1={torch.sum(student_logits_shifted)}')
                     #smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
@@ -1046,7 +1063,14 @@ class RWKV(pl.LightningModule):
                     student_logits,new_shift_states, new_wkv_states = self(chunk_input_ids,last_shift_states, last_wkv_states)
                     #print(f'logit sum0={torch.sum(student_logits)}')
                     # Label Smoothing Loss
-                    label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+
+                    #label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+                    if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+                        label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
+                    else:
+                        label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+
+
                     student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1)).float()
 
                     smooth_loss = label_smoothing_loss(student_logits_shifted.float(), targets)
@@ -1412,7 +1436,14 @@ class RWKV(pl.LightningModule):
                     return torch.tensor([0.0], requires_grad=True)
 
                 # Label Smoothing Loss
-                label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+                #label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+                if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+                    label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
+                else:
+                    label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+
+
+
                 student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
                 smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
 
@@ -1557,17 +1588,16 @@ class RWKV(pl.LightningModule):
                         chosen_input = batch_orpo[s]['chosen_input']
                         chosen_output = batch_orpo[s]['chosen_target']
                         length_chosen = batch_orpo[s]['chosen_token_len']
-                        # ↓SimPOなので参照モデル由来の確率は使わない
-                        # chosen_ref_prob = batch_orpo[s]['chosen_base_prob']
+                        chosen_ref_prob = batch_orpo[s]['chosen_base_prob']
                         reject_input = batch_orpo[s]['reject_input']
                         reject_output = batch_orpo[s]['reject_target']
                         length_reject = batch_orpo[s]['reject_token_len']
-                        # reject_ref_prob = batch_orpo[s]['reject_base_prob']
+                        reject_ref_prob = batch_orpo[s]['reject_base_prob']
                         chosen_token = batch_orpo[s]['chosentoken']
                         reject_token = batch_orpo[s]['rejecttoken']
                     else:
-                        # unpackしたときの要素数を合わせる（参照モデル確率は削除）
-                        chosen_input, chosen_output, length_chosen, _, reject_input, reject_output, length_reject, _ = batch_orpo[s]
+                        chosen_input,chosen_output,length_chosen,chosen_ref_prob, reject_input,reject_output,length_reject,reject_ref_prob,chosen_token,reject_token = batch_orpo[s]
+
 
                     # パディング用のマスク作成
                     chosen_mask = (chosen_output != 0).float()
@@ -1826,13 +1856,13 @@ class RWKV(pl.LightningModule):
                         chosen_token = batch_orpo[s]['chosentoken']
                         reject_token = batch_orpo[s]['rejecttoken']
                     else:
-                        chosen_input,chosen_output,length_chosen,chosen_ref_prob, reject_input,reject_output,length_reject,reject_ref_prob = batch_orpo[s]
+                        chosen_input,chosen_output,length_chosen,chosen_ref_prob, reject_input,reject_output,length_reject,reject_ref_prob,chosen_token,reject_token = batch_orpo[s]
 
                     # マスクの作成
                     chosen_mask = (chosen_output != 0).float()  # パディングは0と仮定
                     reject_mask = (reject_output != 0).float()
 
-                    
+                     
                     # 両方のテンソルの長さを取得
                     len1 = chosen_input.size(0)
                     len2 = reject_input.size(0)
@@ -1940,7 +1970,7 @@ class RWKV(pl.LightningModule):
                 batch_orpo = batch
 
                 loss1 = 0.0
-                lossorpoonly = 0.0
+                lossorpoonly = 0.0 
                 
                 try: self.trainer.pref_match_percentage
                 except (NameError, AttributeError): self.trainer.pref_match_percentage = 0.5
@@ -1951,7 +1981,19 @@ class RWKV(pl.LightningModule):
                 
                 #SFT_targets = []
                 for s in range(bsz):
-                    chosen_input,chosen_output,length_chosen,chosen_ref_prob, reject_input,reject_output,length_reject,reject_ref_prob = batch_orpo[s]
+                    if os.environ["H5_MODE"] == "1":
+                        chosen_input = batch_orpo[s]['chosen_input']
+                        chosen_output = batch_orpo[s]['chosen_target']
+                        length_chosen = batch_orpo[s]['chosen_token_len']
+                        chosen_ref_prob = batch_orpo[s]['chosen_base_prob']
+                        reject_input = batch_orpo[s]['reject_input']
+                        reject_output = batch_orpo[s]['reject_target']
+                        length_reject = batch_orpo[s]['reject_token_len']
+                        reject_ref_prob = batch_orpo[s]['reject_base_prob']
+                        chosen_token = batch_orpo[s]['chosentoken']
+                        reject_token = batch_orpo[s]['rejecttoken']
+                    else:
+                        chosen_input,chosen_output,length_chosen,chosen_ref_prob, reject_input,reject_output,length_reject,reject_ref_prob,chosen_token,reject_token = batch_orpo[s]
 
                     # マスクの作成
                     chosen_mask = (chosen_output != 0).float()  # パディングは0と仮定
@@ -2058,7 +2100,19 @@ class RWKV(pl.LightningModule):
                 
                 #SFT_targets = []
                 for s in range(bsz):
-                    chosen_input,chosen_output,length_chosen,chosen_ref_prob, reject_input,reject_output,length_reject,reject_ref_prob = batch_orpo[s]
+                    if os.environ["H5_MODE"] == "1":
+                        chosen_input = batch_orpo[s]['chosen_input']
+                        chosen_output = batch_orpo[s]['chosen_target']
+                        length_chosen = batch_orpo[s]['chosen_token_len']
+                        chosen_ref_prob = batch_orpo[s]['chosen_base_prob']
+                        reject_input = batch_orpo[s]['reject_input']
+                        reject_output = batch_orpo[s]['reject_target']
+                        length_reject = batch_orpo[s]['reject_token_len']
+                        reject_ref_prob = batch_orpo[s]['reject_base_prob']
+                        chosen_token = batch_orpo[s]['chosentoken']
+                        reject_token = batch_orpo[s]['rejecttoken']
+                    else:
+                        chosen_input,chosen_output,length_chosen,chosen_ref_prob, reject_input,reject_output,length_reject,reject_ref_prob,chosen_token,reject_token = batch_orpo[s]
 
                     # マスクの作成
                     chosen_mask = (chosen_output != 0).float()  # パディングは0と仮定

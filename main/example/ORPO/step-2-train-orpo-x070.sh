@@ -1,19 +1,19 @@
-python train.py --load_model 'myfolder/models/rwkv-x070-450m-world-v2.9-65%trained-20241223-ctx4k.pth' \
- --wandb "RWKV-LM-RLHF x070 0b4" --proj_dir "myfolder/Outputs/0b4-x070-test"\
+python train.py --load_model 'myfolder/models/RWKV-x070-World-1.5B-v3-20250127-ctx4096.pth' \
+ --wandb "RWKV-LM-RLHF x070 1B5 ORPO" --proj_dir "myfolder/Outputs/1B5ORPO"\
  --infctx 0 \
  --vocab_size 65536 --ctx_len 1024 \
  --epoch_steps 100 --epoch_count 1000 --epoch_begin 0 --epoch_save 1 \
- --micro_bsz 1 --n_layer 24 --n_embd 1024 \
+ --micro_bsz 1 --n_layer 24 --n_embd 2048 \
  --lr_init 5e-6 --lr_final 1e-7 \
  --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
  --accelerator gpu --devices 1 --precision bf16 \
  --grad_cp 1 --my_testing "x070" \
  --strategy deepspeed_stage_1 \
- --layer_profile 'layerprofile/24_TEST_bone.csv' \
+ --layer_profile 'layerprofile/24_TEST_lora.csv' \
  --quant 1 \
  --quant_mode 'nf4'\
  --gpu_arch 'cuda' \
  --orpo 1 \
- --orpo_alpha 0.01 \
- --rlhf_train_file 'example/ORPO/output_save/rlhf_example_dataset.save' \
+ --orpo_alpha 0.006 \
+ --rlhf_train_file 'example/DPO/output_save/rlhf_example_dataset.save' \
  --rlhf_max_corpus_len 512

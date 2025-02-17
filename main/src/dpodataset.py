@@ -53,6 +53,8 @@ class DPODataset(Dataset):
             torch.tensor(prompt_tokens[1:] + reject_tokens, dtype=torch.long),
             len(reject_tokens),
             reject_base_prob,
+            torch.tensor(chosen_tokens,dtype=torch.long),
+            torch.tensor(reject_tokens,dtype=torch.long)
             # torch.tensor([0] * (len(prompt_tokens)-1) + [1] * len(reject_tokens), dtype=self.precision),
         )
         
