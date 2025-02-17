@@ -272,7 +272,7 @@ def LinearForward(self,x,passthrough = False):
                 else:
                     w = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
                     if passthrough:
-                        return F.linear(x, temporal_weight)
+                        return F.linear(x, w)
                     
                     if self.doramode:
                         lora_weight = self.lora_B @ self.lora_A

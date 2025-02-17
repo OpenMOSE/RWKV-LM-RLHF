@@ -79,7 +79,7 @@ def pad_to_size_3d(tensor, target_size=2048):
               0, 0)       # 最初の次元（1）
     return F.pad(tensor, padding, mode='constant', value=0)
 
-@torch.compile
+#@torch.compile
 def GenerateForwardTokens(self,prompt,batchcount = 3,stoplength=50,additionaltoken=None,stoptoken='\n\n',temp=1.0,topp = 0.9): # from RWKV-Infer Methods. TSUKUTTETE YOKATTA-
 
     with torch.no_grad():
@@ -153,6 +153,8 @@ def GenerateForwardTokens(self,prompt,batchcount = 3,stoplength=50,additionaltok
                     tmp = self.tokenizer.decode(out_tokens[j][out_last[j]:])
                     
                     if ("\ufffd" not in tmp) and (not tmp.endswith("\n")):
+                            if j == 0:
+                                 print(tmp,end="", flush=True)
                             if batch_status[j] == False:
                                 output_text[j] = output_text[j] + tmp
                                 out_last[j] = i + 1
@@ -216,8 +218,13 @@ def GenerateForwardTokens(self,prompt,batchcount = 3,stoplength=50,additionaltok
 def grpo_init(self):
     #print('Zero CoT Initialize')
     self.CoTDebug = self.args.grpo_debug
-
-    self.tokenizer = TRIE_TOKENIZER("tokenizer/rwkv_vocab_v20230424.txt")
+    if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+        from transformers import AutoTokenizer
+        tokenizer = AutoTokenizer.from_pretrained(os.path.dirname(os.path.abspath(__file__)) + "/../tokenizer/qwen")
+        self.tokenizer = tokenizer
+    
+    else:
+        self.tokenizer = TRIE_TOKENIZER("tokenizer/rwkv_vocab_v20230424.txt")
 
     self.grpo_gen_count = self.args.grpo_gen_count
     self.grpo_gen_length = self.args.grpo_gen_length

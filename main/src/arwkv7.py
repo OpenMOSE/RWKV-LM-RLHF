@@ -47,7 +47,7 @@ if 'xa070' in ModelGeneration:
             B,T,HC = w.shape
             C = HEAD_SIZE
             H = HC//C
-            w=-torch.exp(w)
+            w = -w.float().exp().to(r)
             r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
             o, state = chunk_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=s, output_final_state=True, head_first=False)
             return o, state
@@ -55,7 +55,7 @@ if 'xa070' in ModelGeneration:
             B,T,HC = w.shape
             C = HEAD_SIZE
             H = HC//C
-            w=-torch.exp(w)
+            w = -w.float().exp().to(r)
             r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
             o, state = chunk_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=s, output_final_state=True, head_first=False)
             return o, state
@@ -63,19 +63,15 @@ if 'xa070' in ModelGeneration:
             B,T,HC = w.shape
             C = HEAD_SIZE
             H = HC//C
-            w=-torch.exp(w)
-            #w = -w.float().exp().to(r)
+            w = -w.float().exp().to(r)
             r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
             o, state = fused_recurrent_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=s, output_final_state=True, head_first=False)
-            #o = rearrange(o, 'b h l d -> b l (h d)')
             return o, state
         @torch.jit.ignore
         def RUN_CUDA_RWKV7g(r,w,k,v,a,b, HEAD_SIZE=64): #compatible with cuda implement
-            #print('FLA chunk_wkv7')
             B,T,HC = w.shape
             C = HEAD_SIZE
             H = HC//C
-            #w=-torch.exp(w)
             r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
             w = -w.float().exp().to(r)
             o, _ = chunk_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=None, output_final_state=False, head_first=False)
@@ -373,8 +369,6 @@ if 'xa070' in ModelGeneration:
             hidden_states = hidden_states.to(torch.float32)
             variance = hidden_states.pow(2).mean(-1, keepdim=True)
             hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
-            #print(self.weight)
-            #exit()
             return self.weight * hidden_states.to(input_dtype)
 
         def extra_repr(self):
@@ -478,6 +472,9 @@ if 'xa070' in ModelGeneration:
 
                 Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
 
+                ## C = 3584
+                ## 
+
                
                 self.receptance = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.receptance')
                 self.key = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.key')
@@ -508,6 +505,7 @@ if 'xa070' in ModelGeneration:
             w = -F.softplus(-(self.w0 + torch.tanh(xw @ self.w1) @ self.w2)) - 0.5 # soft-clamp to (-inf, -0.5)
             k = self.key(xk,passthrough)
             v = self.value(xv,passthrough)
+            #print(f'{self.layer_id} {self.a0} {self.a1} {self.a2}' )
             if self.layer_id == 0:
                 v_first = v # store the v of the first layer
             else:
@@ -516,17 +514,21 @@ if 'xa070' in ModelGeneration:
             g = torch.sigmoid(xg @ self.g1) @ self.g2
 
             kk = k * self.k_k
+
             kk = F.normalize(kk.view(B,T,H,-1), dim=-1, p=2.0).view(B,T,C)
+
             k = k * (1 + (a-1) * self.k_a)
 
             x = RUN_CUDA_RWKV7g(r, w, k, v, -kk, kk*a,HEAD_SIZE=self.head_size)
+
+            x=x.view(B, T, C)
 
             x = x + ((r.view(B,T,H,-1)*k.view(B,T,H,-1)*self.r_k).sum(dim=-1, keepdim=True) * v.view(B,T,H,-1)).view(B,T,C)
             x = self.output(x * g,passthrough)
             return x, v_first
         
         #@torch.no_grad() # for sampling ppo
-        @torch.compile
+        #@torch.compile
         def forward_rnn(self, x, v_first, last_state: TimeMixState,passthrough=False):
             
             B, T, C = x.size()
@@ -564,7 +566,7 @@ if 'xa070' in ModelGeneration:
 
             x, wkv_state = RUN_RWKV7_RECURRENT(r,k,v,w,-kk, kk*a,s=wkv_state)
 
- 
+            x=x.view(B, T, C)
 
             x = x + ((r.view(B,T,H,-1)*k.view(B,T,H,-1)*self.r_k).sum(dim=-1, keepdim=True) * v.view(B,T,H,-1)).view(B,T,C)
             x = self.output(x * g,passthrough)
@@ -707,6 +709,8 @@ if 'xa070' in ModelGeneration:
             k = k * (1 + (a-1) * self.k_a)
 
             x , _ = RUN_RWKV7_STATE(r,k,v,w,-kk, kk*a,self.time_state)
+
+            x=x.view(B, T, C)
 
             x = x + ((r.view(B,T,H,-1)*k.view(B,T,H,-1)*self.r_k).sum(dim=-1, keepdim=True) * v.view(B,T,H,-1)).view(B,T,C)
             x = self.output(x * g,passthrough)
@@ -861,57 +865,16 @@ if 'xa070' in ModelGeneration:
 
             x , wkv_state = RUN_RWKV7_INFCTX(r,k,v,w,-kk, kk*a,wkv_state)
 
+            x=x.view(B, T, C)
+
             x = x + ((r.view(B,T,H,-1)*k.view(B,T,H,-1)*self.r_k).sum(dim=-1, keepdim=True) * v.view(B,T,H,-1)).view(B,T,C)
+            
             x = self.output(x * g)
             
             return x, v_first,TimeMixState(shift_state,wkv_state)
 
     
         
-    class RWKV_CMix_x070(nn.Module):
-        def __init__(self, args, layer_id):
-            super().__init__()
-            self.args = args
-            self.layer_id = layer_id
-            self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
-
-            with torch.no_grad():
-                ratio_1_to_almost0 = 1.0 - (layer_id / args.n_layer)  # 1 to ~0
-                ddd = torch.ones(1, 1, args.n_embd)
-                for i in range(args.n_embd):
-                    ddd[0, 0, i] = i / args.n_embd
-                self.x_k = nn.Parameter(1.0 - torch.pow(ddd, ratio_1_to_almost0**4))
-
-            Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
-
-     
-            self.key = make_linear_ffn(args.n_embd, args.dim_ffn, bias=False,n_layer=self.layer_id,pname='ffn.key')
-            self.value = make_linear_ffn(args.dim_ffn, args.n_embd, bias=False,n_layer=self.layer_id,pname='ffn.value')
-
-            # !!! initialize if you are using RWKV_Tmix_x070 in your code !!!
-            # self.key.weight.data.uniform_(-0.5/(args.n_embd**0.5), 0.5/(args.n_embd**0.5))
-            # self.value.weight.data.zero_()
-
-        def forward(self, x,passthrough=False):
-            xx = self.time_shift(x) - x
-            #xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]), dim=1) - x
-            
-            
-            k = x + xx * self.x_k
-            k = torch.relu(self.key(k,passthrough)) ** 2
-
-            return self.value(k,passthrough)#,ChannelMixState(x[:, -1])
-        
-        @torch.no_grad() # for sampling ppo
-        def forward_rnn(self, x,last_state: ChannelMixState,passthrough = False):
-            #xx = self.time_shift(x) - x
-            xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]), dim=1) - x
-            
-            
-            k = x + xx * self.x_k
-            k = torch.relu(self.key(k,passthrough)) ** 2
-
-            return self.value(k,passthrough),ChannelMixState(x[:, -1])
     class Qwen2MLP(nn.Module):
         def __init__(self, args, layer_id):
             super().__init__()
@@ -933,39 +896,6 @@ if 'xa070' in ModelGeneration:
             down_proj = self.down(F.silu(self.gate(x,passthrough)) * self.up(x,passthrough),passthrough)
             return down_proj, last_state
         
-    class RWKV_CMix_x070_infctx(nn.Module):
-        def __init__(self, args, layer_id):
-            super().__init__()
-            self.args = args
-            self.layer_id = layer_id
-            self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
-
-            with torch.no_grad():
-                ratio_1_to_almost0 = 1.0 - (layer_id / args.n_layer)  # 1 to ~0
-                ddd = torch.ones(1, 1, args.n_embd)
-                for i in range(args.n_embd):
-                    ddd[0, 0, i] = i / args.n_embd
-                self.x_k = nn.Parameter(1.0 - torch.pow(ddd, ratio_1_to_almost0**4))
-
-            Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
-
-
-            self.key = make_linear_ffn(args.n_embd, args.dim_ffn, bias=False,n_layer=self.layer_id,pname='ffn.key')
-            self.value = make_linear_ffn(args.dim_ffn, args.n_embd, bias=False,n_layer=self.layer_id,pname='ffn.value')
-
-            # !!! initialize if you are using RWKV_Tmix_x070 in your code !!!
-            # self.key.weight.data.uniform_(-0.5/(args.n_embd**0.5), 0.5/(args.n_embd**0.5))
-            # self.value.weight.data.zero_()
-
-        def forward(self, x,last_state: ChannelMixState):
-            #xx = self.time_shift(x) - x
-            xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]), dim=1) - x
-            
-            
-            k = x + xx * self.x_k
-            k = torch.relu(self.key(k)) ** 2
-
-            return self.value(k),ChannelMixState(x[:, -1])
         
     class Qwen2MLP_infctx(nn.Module):
         def __init__(self, args, layer_id):

@@ -42,7 +42,7 @@ if 'xa070' in os.environ["RWKV_MY_TESTING"]:
 elif 'x060' in os.environ["RWKV_MY_TESTING"]:
     from .rwkv6 import LAYER_CONFIG,RWKV_Tmix_x060,RWKV_Tmix_x060_state,RWKV_Tmix_x060_infctx,RWKV_CMix_x060,RWKV_CMix_x060_infctx,make_linear_head,make_emb
 else:
-    assert "Unsupported RWKV Architecture. please set x070 or x060"
+    assert "Unsupported RWKV Architecture. please set xa070 or x070 or x060"
 try:
     print('RWKV_MY_TESTING', os.environ["RWKV_MY_TESTING"])
 except:
@@ -142,9 +142,6 @@ if 'xa070' in os.environ["RWKV_MY_TESTING"]:
             self.ln1 = Qwen2RMSNorm(args.n_embd)
             self.ln2 = Qwen2RMSNorm(args.n_embd)
 
-            #if self.layer_id == 0:
-            #    self.ln0 = nn.LayerNorm(args.n_embd)
-
             if os.environ["RWKV_TRAIN_TYPE"] == 'state':
                 self.att = ARWKV_Tmix_x070_state(args, layer_id) 
             elif os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
@@ -243,8 +240,6 @@ if 'x060' in os.environ["RWKV_MY_TESTING"]:
                         x = self.drop0(x + self.att(self.ln1(x)))
                     x = self.drop1(x + self.ffn(self.ln2(x)))
 
-
-    
                 return x, BlockState(att_state, fnn_state)
         else:
             def forward(self, x, x_emb=None):
@@ -505,9 +500,8 @@ class RWKV(pl.LightningModule):
         keys_to_delete = []
 
         for key, value in load_dict.items():
-            #print(key)
             if key.startswith(block_prefix):
-                new_key = key[len(block_prefix):]  # block_prefixを除去
+                new_key = key[len(block_prefix):] 
                 block_state_dict[new_key] = value
 
 
@@ -520,7 +514,7 @@ class RWKV(pl.LightningModule):
 
         for key, value in load_dict.items():
             if key.startswith(block_prefix):
-                new_key = key#key[len(block_prefix):]  # block_prefixを除去
+                new_key = key
                 block_state_dict[new_key] = value
 
         element.load_state_dict(block_state_dict, strict=False)
@@ -537,8 +531,6 @@ class RWKV(pl.LightningModule):
             param_dict = {n: p for n, p in self.named_parameters()}
             optim_groups = []
 
- 
-
             for n, p in self.named_parameters():
                 print(f'LR Check {n}')
                 if ('emb' in n  or 'ln0' in n):# and LAYER_CONFIG['emb']['mode'] == 'full':
@@ -548,8 +540,7 @@ class RWKV(pl.LightningModule):
                                             'lr_final':float(LAYER_CONFIG['emb']['lr_final']) , 
                                             'weight_decay':float(LAYER_CONFIG['emb']['weight_decay']), 
                                             'pname':'emb'})
-                        #print(optim_groups)
-                    #exit()
+
                 elif ('head' in n or 'ln_out' in n) and LAYER_CONFIG['head']['mode']:# != 'freeze':
                     if p.requires_grad:
                         optim_groups.append({"params":[param_dict[n]],
@@ -557,7 +548,6 @@ class RWKV(pl.LightningModule):
                                             'lr_final':float(LAYER_CONFIG['head']['lr_final']),
                                             'weight_decay':float(LAYER_CONFIG['head']['weight_decay']) ,
                                             'pname':'head'})
-                        #print(optim_groups)
                 else:
                     print('Layer Check')
                     Found = False
@@ -577,7 +567,6 @@ class RWKV(pl.LightningModule):
                                 Found = True
                             break
                         elif blockname in n and LAYER_CONFIG[f'{str(i)}']['mode'] != 'freeze':
-                            #if n in  LAYER_CONFIG[f'{str(i)}']['RejectParts'] and len(LAYER_CONFIG[f'{str(i)}']['RejectParts']) > 0:
                             if any(word in n for word in LAYER_CONFIG[f'{str(i)}']['RejectParts']) and LAYER_CONFIG[f'{str(i)}']['RejectParts'][0] != '':
                                 print(f'Rejected {n}')
                                 Found = True
@@ -656,16 +645,13 @@ class RWKV(pl.LightningModule):
             
             if args.layerwise_lr > 0:
                     optim_groups = [
-                        #{"params": [param_dict[n] for n in lr_1x], "weight_decay": 0.0, "my_lr_scale": 1.0},
                         {"params": [param_dict[n] for n in lr_2x], "weight_decay": 0.0, "my_lr_scale": 2.0},
-                        #{"params": [param_dict[n] for n in lr_3x], "weight_decay": 0.0, "my_lr_scale": 3.0},
                     ]
                     print(optim_groups)
                     #exit()
             else:
                 optim_groups = [{"params": [param_dict[n] for n in lr_1x], "weight_decay": 0.0, "my_lr_scale": 1.0}]
-                #print(f'optim_groups  {optim_groups}')
-                #raise optim_groups
+
 
             if args.weight_decay > 0:
                 optim_groups += [{"params": [param_dict[n] for n in lr_decay], "weight_decay": args.weight_decay, "my_lr_scale": 1.0}]
@@ -1033,35 +1019,6 @@ class RWKV(pl.LightningModule):
                 states = BlockStateList.create(args.n_layer, B, C, H, self.emb.weight.device,
                     self.emb.weight.dtype)
                 
-                # def robust_masked_mean(values, mask, clip_min=-100, clip_max=100):
-                #     EPSILON = 1e-8
-                #     assert torch.is_tensor(values), "values must be a tensor"
-                #     assert torch.is_tensor(mask), "mask must be a tensor"
-                #     assert values.shape == mask.shape, f"Shape mismatch: values {values.shape} vs mask {mask.shape}"
-                #     mask = mask.float()
-                #     if not ((mask == 0) | (mask == 1)).all():
-                #         print("Warning: mask contains values other than 0 and 1")
-                #         mask = (mask > 0.5).float()
-                #     clipped_values = torch.clamp(values, clip_min, clip_max)
-                #     scale = torch.max(torch.abs(clipped_values))
-                #     if scale > EPSILON:
-                #         scaled_values = clipped_values / scale
-                #     else:
-                #         scaled_values = clipped_values
-                #     sum_mask = torch.sum(mask)
-                #     if sum_mask <= EPSILON:
-                #         return torch.zeros_like(values.mean())
-                #     masked_sum = torch.sum(scaled_values * mask)
-                #     mean = masked_sum / (sum_mask + EPSILON)
-                #     if scale > EPSILON:
-                #         mean = mean * scale
-                #     if torch.isnan(mean) or torch.isinf(mean):
-                #         print("Warning: Result is NaN or Inf")
-                #         return torch.zeros_like(mean)
-                    
-                #     return mean
-
-
 
                 def checkpointed_step2(chunk_input_ids,chunk_target_ids,
                                     chunk_attention_mask,
@@ -1187,47 +1144,7 @@ class RWKV(pl.LightningModule):
                 self.trainer.smooth_loss = float(smooth_loss)
                 self.trainer.realproceedtokens =float(proceedtokens)
 
-                #print(f'total_loss dtype = {total_loss.dtype}')
-
-                #print(f'totalloss = {total_loss}')
-
-                
-                # for i in range(math.ceil(T / T_train)):
-                #     print('loop start-------------------------------------------------------------------------------')
-                #     print(f'i = {i}')
-                #     print(f'T_train = {T_train}')
-                #     print(f'math.ceil(T / T_train) = {math.ceil(T / T_train)}')
-                #     chunk_start = i * T_train
-                #     chunk_end = (i + 1) * T_train#min((i + 1) * T_train, T)
-                #     print(f'chunk start = {chunk_start} chunk end = {chunk_end} diff = {chunk_end-chunk_start}')
-                #     total_loss, smooth_loss, new_shift_states, new_wkv_states, token_amount , status = torch_checkpoint(
-                #     #total_loss, smooth_loss, new_shift_states, new_wkv_states, token_amount , status = deepspeed.checkpointing.checkpoint(
-                #         checkpointed_step2,
-                #         input_ids[:, chunk_start:chunk_end],
-                #         target[:, chunk_start:chunk_end],
-                #         attention_mask[:, chunk_start:chunk_end],
-                #         total_loss,
-                #         smooth_loss,
-                #         states.shift_states,
-                #         states.wkv_states,
-                #         token_amount,
-                #         use_reentrant=False
-                #     )
-                #     if status == 'skip':
-                #         break
-                #     states = BlockStateList(new_shift_states, new_wkv_states)
-                #     #states.shift_states = new_shift_states
-                #     #states.wkv_states = new_wkv_states
-
-                #     if status == 'proceed':
-                #         proceedtokens = proceedtokens + (chunk_end-chunk_start)
-
-                
-                # self.trainer.smooth_loss = float(smooth_loss)
-                # #self.trainer.kl_loss = float(kl_loss)
-                # self.trainer.realproceedtokens =float(proceedtokens)
-
-                # #print(f'total_loss = {float(total_loss)}')
+          
 
                 return total_loss#, states
 
@@ -1537,7 +1454,7 @@ class RWKV(pl.LightningModule):
                 target = batch['target_ids']
                 attention_mask = batch['attention_mask']
 
-                print(input_ids)
+                #print(input_ids)
 
                 #max_len = int(input_ids.shape[1])#int(attention_mask.sum(dim=1).max().item())
 
@@ -1582,8 +1499,12 @@ class RWKV(pl.LightningModule):
                     return torch.tensor([0.0], requires_grad=True)
 
                 # Label Smoothing Loss
-                label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
-                #label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
+                
+                
+                if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+                    label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
+                else:
+                    label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
                 student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
                 smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
 

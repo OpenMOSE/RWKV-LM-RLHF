@@ -1,0 +1,23 @@
+python train.py --load_model "/home/client/Projects/RWKV-Infer/models/ARWKV-7B-Preview-0.1.pth" \
+ --wandb "RWKV-LM-RLHF ARWKV 7B SFT" --proj_dir "myfolder/Outputs/arwkv7b" \
+ --vocab_size 152064 --ctx_len 4096 \
+ --epoch_steps 100 --epoch_count 200 --epoch_begin 0 --epoch_save 1 \
+ --micro_bsz 1 --n_layer 28 --n_embd 3584 --dim_ffn 18944 \
+ --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
+ --accelerator gpu --devices 1 --precision 'bf16' \
+ --grad_cp 1 --my_testing "xa070" \
+ --strategy deepspeed_stage_2_offload \
+ --layer_profile 'layerprofile/28_TEST_lora.csv' \
+ --fla 1 \
+ --infctx 0 \
+ --quant 1 \
+ --quant_mode 'nf4'\
+ --gpu_arch 'cuda' \
+ --limited_lora 0 \
+ --sft 1 \
+ --smoothing 0.001 \
+ --random_mode 1 \
+ --optim '' \
+ --train_data_file 'example/SFT/output_h5/sftdataset_qwen.h5' \
+ --infctx_dataset_multiplier 8 \
+ --accumulate_grad_batches 1
