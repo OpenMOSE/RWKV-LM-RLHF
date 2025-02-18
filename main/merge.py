@@ -47,6 +47,7 @@ with torch.no_grad():
                 print('headmode')
             lora_A = prefix + '.lora_A'
             lora_B = prefix + '.lora_B'
+            lora_M = prefix + '.lora_M'
             init_lora_A = prefix + '.init_lora_A'
             init_lora_B = prefix + '.init_lora_B'
             if lora_A in keys and 'expert' not in keys:
@@ -77,6 +78,29 @@ with torch.no_grad():
                         w[k] = (w[k]- w_init_lora[init_lora_B] @ w_init_lora[init_lora_A]).to(dtype=torch.bfloat16)
                     w[k] +=  w[lora_B] @ w[lora_A]
                     print('pizza')
+                elif args.type == 'dora':
+                    w[lora_A] = w[lora_A].to(device=device)
+                    w[lora_B] = w[lora_B].to(device=device)
+                    w[lora_M] = w[lora_M].to(device=device)
+
+                    if quant=='4bit':
+                        qw,qs = bnb.functional.quantize_4bit(w[k])
+                        w[k] = (bnb.functional.dequantize_4bit(qw,quant_state=qs)).to(dtype=torch.bfloat16)
+                    elif quant=='nf4':
+                        qw,qs = bnb.functional.quantize_nf4(w[k])
+                        w[k] = (bnb.functional.dequantize_nf4(qw,quant_state=qs)).to(dtype=torch.bfloat16)
+                    elif quant=='fp4':
+                        qw,qs = bnb.functional.quantize_fp4(w[k])
+                        w[k] = (bnb.functional.dequantize_fp4(qw,quant_state=qs)).to(dtype=torch.bfloat16)
+                    elif quant=='int8':
+                        qw,qs = bnb.functional.quantize(w[k])
+                        w[k] = (bnb.functional.dequantize(qw,state=qs)).to(dtype=torch.bfloat16)
+
+
+                    w[k] = w[k] + w[lora_B] @ w[lora_A] * lora_scaling
+                    norm = w[k].norm(dim=0, keepdim=True) + 1e-6
+                    w[k] = (w[lora_M] * w[k]) / norm  
+                    print('dora')
                 else:
                     if quant=='4bit':
                         qw,qs = bnb.functional.quantize_4bit(w[k])
