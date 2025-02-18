@@ -40,13 +40,16 @@ with torch.no_grad():
     # merge LoRA weights
     keys = list(w.keys())
     for k in keys:
-        if k.endswith('.weight'):
+        if k.endswith('.weight') or k.endswith('head'):
             prefix = k[:-len('.weight')]
+            if k.endswith('head'):
+                prefix = k[:-len('head')]
+                print('headmode')
             lora_A = prefix + '.lora_A'
             lora_B = prefix + '.lora_B'
             init_lora_A = prefix + '.init_lora_A'
             init_lora_B = prefix + '.init_lora_B'
-            if lora_A in keys:
+            if lora_A in keys and 'expert' not in keys:
                 assert lora_B in keys
                 print(f'merging {lora_A} and {lora_B} into {k}')
                 assert w[lora_B].shape[1] == w[lora_A].shape[0]
@@ -95,8 +98,13 @@ with torch.no_grad():
                 del w[lora_B]
                 continue
 
-        if 'lora' not in k:
+        if 'expert' in k or ('lora' not in k):
             print(f'retaining {k}')
             output_w[k] = w[k].clone()
             del w[k]
+
+        # if 'lora' not in k:
+        #     print(f'retaining {k}')
+        #     output_w[k] = w[k].clone()
+        #     del w[k]
     torch.save(output_w, output)

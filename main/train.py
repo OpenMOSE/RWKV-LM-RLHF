@@ -45,6 +45,23 @@ if __name__ == "__main__":
 
     parser.add_argument("--fla", default=0, type=int)
 
+    parser.add_argument("--moe", default=0, type=int)
+    parser.add_argument("--moe_experts", default=8, type=int)
+    parser.add_argument("--moe_active", default=2, type=int)
+    parser.add_argument("--moe_shared", default=1, type=int)
+    parser.add_argument("--moe_balance_alpha", default=0.01, type=float)
+
+    parser.add_argument("--zerocot", default=0, type=int)
+
+    parser.add_argument("--grpo", default=0, type=int)
+    parser.add_argument("--grpo_debug", default=1, type=int)
+    parser.add_argument("--grpo_gen_count", default=4, type=int)
+    parser.add_argument("--grpo_gen_length", default=1024, type=int)
+    parser.add_argument("--grpo_gen_temperature", default=1.0, type=float)
+    parser.add_argument("--grpo_gen_topp", default=0.7, type=float)
+    parser.add_argument("--grpo_kl_beta", default=0.1, type=float)
+
+
     parser.add_argument("--epoch_steps", default=1000, type=int)  # a mini "epoch" has [epoch_steps] steps
     parser.add_argument("--epoch_count", default=500, type=int)  # train for this many "epochs". will continue afterwards with lr = lr_final
     parser.add_argument("--epoch_begin", default=0, type=int)  # if you load a model trained for x "epochs", set epoch_begin = x
@@ -103,12 +120,18 @@ if __name__ == "__main__":
     parser.add_argument("--dpo_alpha", default=0.1, type=float) 
     parser.add_argument("--dpo_beta", default=0.01, type=float)
 
-
-
-
     parser.add_argument("--orpo", default=0, type=int) #orpo
     parser.add_argument("--orpo_mode", default=0, type=int) #orpo
     parser.add_argument("--orpo_alpha", default=0.01, type=float) #orpo
+
+    parser.add_argument("--simpo", default=0, type=int)
+    parser.add_argument("--simpo_alpha", default=0.3, type=float) 
+    parser.add_argument("--simpo_beta", default=0.01, type=float)
+    parser.add_argument("--simpo_gamma", default=0.00, type=float)
+
+    parser.add_argument("--wpo", default=0, type=int)
+    parser.add_argument("--wpo_alpha", default=0.3, type=float) 
+    parser.add_argument("--wpo_beta", default=0.01, type=float)
 
 
     parser.add_argument("--rlhf_max_corpus_len", default=1024, type=int) #limit maximum dpo dataset token per dpo item. if avoid OoM decrease this value
@@ -195,6 +218,11 @@ if __name__ == "__main__":
         os.environ["FLA_MODE"] = "1"
     else:
         os.environ["FLA_MODE"] = "0"
+
+    if args.moe:
+        os.environ["CustomModel"] = "MoE"
+    else:
+        os.environ["CustomModel"] = ""
 
 
     if args.dim_att <= 0:
@@ -283,9 +311,23 @@ if __name__ == "__main__":
     from src.dataset import MyDataset
     
     
-    if args.dpo or args.orpo:
-        from src.dpodataset import DPODataset
-        dpo_train_data = DPODataset(args)
+    if args.dpo or args.orpo or args.simpo or args.wpo:
+        
+        if '.save' in args.rlhf_train_file:
+            from src.dpodataset import DPODataset
+            dpo_train_data = DPODataset(args)
+            os.environ["H5_MODE"] = "0"
+        else:
+            print('h5 RLHF file mode')
+            os.environ["H5_MODE"] = "1"
+            from src.rlhfdataset import RLHFDataset
+            dpo_train_data = RLHFDataset(args,args.rlhf_train_file,args.ctx_len)
+
+    if args.zerocot or args.grpo:
+        print('h5 CoT-RL file mode')
+        os.environ["H5_MODE"] = "1"
+        from src.cotdataset import RLHFDataset
+        dpo_train_data = RLHFDataset(args,args.rlhf_train_file,args.ctx_len)
 
     
 
@@ -294,7 +336,12 @@ if __name__ == "__main__":
         distillation_data = HDF5TopKTensorDataset(args,args.train_data_file,args.top_k,args.ctx_len)
     elif args.sft:
         from src.sftdataset import HDF5TopKTensorDataset,collate_fn
-        sft_data = HDF5TopKTensorDataset(args,args.train_data_file,args.ctx_len)
+        filename = ''
+        if os.path.isfile(args.train_data_file):
+            filename = args.train_data_file
+        elif os.path.isfile(args.rlhf_train_file) and '.h5' in args.rlhf_train_file:
+            filename = args.rlhf_train_file
+        sft_data = HDF5TopKTensorDataset(args,filename,args.ctx_len)
     #else:
     #    train_data = MyDataset(args)
 
@@ -348,6 +395,9 @@ if __name__ == "__main__":
     if (AdapterMethod == 'lora' or AdapterMethod == 'bone') and args.quant:
         Realtime_Quant = True
 
+    print(Realtime_Quant)
+ 
+
     #os.environ["RWKV_GLOBAL_NO"] = "0"
 
     @rank_zero_only
@@ -387,6 +437,10 @@ if __name__ == "__main__":
                 if 'head.weight'==pname:
                     print(f'  head additionally training module {pname}')
                     param.requires_grad = True
+
+
+
+                    
         if any(n.startswith("lora_") for n, _ in module.named_parameters()):
             print(f'  LoRA additionally training module {name}')
             for pname, param in module.named_parameters():
@@ -399,23 +453,16 @@ if __name__ == "__main__":
                 param.requires_grad = 'bone' in pname
                 print(f'bone Parts Enabled Training :{pname}')
 
-        #elif enable_ln_finetune and '.ln' in name:
-        # elif '.ln_x' in name:
-        #     for param in module.parameters():
-        #         print(f'  additionally training module {name}')
-        #         param.requires_grad = True
+ 
+        
         elif ('ln0' in name or 'ln_out' in name) and args.limited_lora == 0:
             for param in module.parameters():
                 print(f'  additionally training module {name}')
                 param.requires_grad = True
-        # #elif enable_time_finetune and any(n.startswith("time") for n, _ in module.named_parameters()):
-        # elif (any(n.startswith("time") for n, _ in module.named_parameters())) and args.limited_lora == 0:
-        #     for pname, param in module.named_parameters():
-        #         if pname.startswith("time"):
-        #             print(f'  LoRA additionally training parameter {pname}')
-        #             param.requires_grad = True
+
+
         
-        if 'x070' in os.environ["RWKV_MY_TESTING"]:# and args.limited_lora == 0:
+        if 'x070' in os.environ["RWKV_MY_TESTING"] or 'xa070' in os.environ["RWKV_MY_TESTING"]:# and args.limited_lora == 0:
             #print('x070 Additional Parameters')
             for i in range(args.n_layer):
                 text = f'blocks.{str(i)}.'
@@ -454,15 +501,7 @@ if __name__ == "__main__":
 
 
 
-    if AdapterMethod == 'pissa':
-        init_dict = {}
-        rank_zero_info(f"########## Init PISSA... ##########")
-        for name, m in model.named_modules():
-            if hasattr(m, "pissa_init") and callable(getattr(m, "pissa_init")):
-                m.pissa_init(args.svd_niter)
-                init_dict[f'{name}.init_lora_A'] = m.lora_A.data
-                init_dict[f'{name}.init_lora_B'] = m.lora_B.data
-        torch.save(init_dict, f'{args.proj_dir}/init_pissa.pth')
+
 
     if os.path.isfile(args.load_adapter) and AdapterMethod == 'lora':
         model.load_state_dict(torch.load(args.load_adapter, map_location="cpu"),
@@ -472,14 +511,7 @@ if __name__ == "__main__":
         model.load_state_dict(torch.load(args.load_adapter, map_location="cpu"),
                               strict=False)
         
-    if os.path.isfile(args.load_adapter) and AdapterMethod == 'pissa':
-        model.load_state_dict(torch.load(args.load_adapter, map_location="cpu"),
-                            strict=False)
-        pissa_init = torch.load(args.load_adapter_pissa_init, map_location="cpu")
-        rank_zero_info(f"########## Load PISSA... ##########")
-        for name, m in model.named_modules():
-            if hasattr(m, "pissa_load") and callable(getattr(m, "pissa_load")):
-                m.pissa_load(pissa_init[f'{name}.init_lora_A'], pissa_init[f'{name}.init_lora_B'])
+
 
     if args.quant and Realtime_Quant == False:
         rank_zero_info(f"########## Quant... ##########")
@@ -510,11 +542,14 @@ if __name__ == "__main__":
             else:
                 print(f"{str(shape[0]).ljust(5)}       {n}")
 
+    print(trainer.strategy.config)
+    #exit()
+
     if "deepspeed" in args.strategy:
         trainer.strategy.config["zero_optimization"]["allgather_bucket_size"] = args.ds_bucket_mb * 1000 * 1000
         trainer.strategy.config["zero_optimization"]["reduce_bucket_size"] = args.ds_bucket_mb * 1000 * 1000
         trainer.strategy.config["zero_optimization"]["overlap_comm"] = False
-
+        trainer.strategy.config["zero_force_ds_cpu_optimizer"] = False
     # if args.precision == 32:
     #     print('fp32 mode')
     #     for pname, param in model.named_modules():
@@ -525,13 +560,14 @@ if __name__ == "__main__":
 
 
     # must set shuffle=False, persistent_workers=False (because worker is in another thread)
-    if args.orpo or args.dpo:
+    if args.orpo or args.dpo or args.simpo or args.wpo or args.zerocot or args.grpo:
        # if args.dpo == 1:
        #     args.dpo = 0
         print("RLHF Mode") 
         #from pytorch_lightning.trainer.supporters import CombinedLoader
         #data_loader = DataLoader(train_data, shuffle=False, pin_memory=True, batch_size=args.micro_bsz, num_workers=1, persistent_workers=False, drop_last=True)
         dpo_loader = DataLoader(dpo_train_data, shuffle=False, pin_memory=True, batch_size=args.micro_bsz, num_workers=1, persistent_workers=False, drop_last=True, collate_fn=lambda x:x)
+
         #combined_loader = CombinedLoader([data_loader, dpo_loader], "min_size")
         trainer.fit(model, dpo_loader)
     if args.distillation:

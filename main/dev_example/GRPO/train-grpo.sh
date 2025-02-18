@@ -1,0 +1,30 @@
+python train.py --load_model "myfolder/models/rwkv-x070-2b9-world-v3-preview-20250210-ctx4k.pth" \
+ --wandb "RWKV-LM-RLHF x070-2B9 Reinforce gsm8k" \
+ --proj_dir "myfolder/Outputs/ZeroCoT_gsm8k2" \
+ --state 0 \
+ --infctx 0 \
+ --fla 1 \
+ --vocab_size 65536 --ctx_len 4096 \
+ --epoch_steps 100 --epoch_count 200 --epoch_begin 0 --epoch_save 1 \
+ --micro_bsz 1 --n_layer 32 --n_embd 2560 \
+ --lr_init 1e-5 --lr_final 1e-6 \
+ --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
+ --accelerator gpu --devices 1 --precision 'bf16' \
+ --grad_cp 1 --my_testing "x070" \
+ --strategy deepspeed_stage_1 \
+ --layer_profile 'layerprofile/32_TEST_lora_rl.csv' \
+ --quant 1 \
+ --quant_mode 'fp8'\
+ --gpu_arch 'cuda' \
+ --limited_lora 1 \
+ --grpo 1 \
+ --grpo_gen_count 4 \
+ --grpo_gen_length 512 \
+ --grpo_gen_temperature 1.0 \
+ --grpo_gen_topp 0.7 \
+ --grpo_kl_beta 0.1 \
+ --rlhf_train_file 'dev_example/GRPO/dataset/gsm8k_rlhf.h5' \
+ --random_mode 1 \
+ --optim '' \
+ --infctx_dataset_multiplier 1 \
+ --accumulate_grad_batches 4

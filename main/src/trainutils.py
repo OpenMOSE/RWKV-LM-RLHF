@@ -124,6 +124,28 @@ else:
             gy = torch.zeros_like(y)
             gy.scatter_(-1, ids, maxx * factor)
             return (grad_output, gy)
+    class L2Wrap2(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, loss, y, y2):
+            ctx.save_for_backward(y,y2)
+            #ctx.save_for_backward(y2)
+            return loss
+
+        @staticmethod
+        def backward(ctx, grad_output):
+            y,y2 = ctx.saved_tensors
+            #y2 = ctx.saved_tensors[1]
+            # to encourage the logits to be close to 0
+            factor = 1e-4 / (y.shape[0] * y.shape[1])
+            maxx, ids = torch.max(y, -1, keepdim=True)
+            gy = torch.zeros_like(y)
+            gy.scatter_(-1, ids, maxx * factor)
+
+            factor2 = 1e-4 / (y2.shape[0] * y2.shape[1])
+            maxx2, ids2 = torch.max(y2, -1, keepdim=True)
+            gy2 = torch.zeros_like(y2)
+            gy2.scatter_(-1, ids2, maxx2 * factor2)
+            return (grad_output, gy, gy2)
         
 
 
@@ -141,4 +163,40 @@ class LabelSmoothingLoss(torch.nn.Module):
         nll_loss = -log_prob.gather(dim=-1, index=target.unsqueeze(1)).squeeze(1)
         smooth_loss = -log_prob.sum(dim=-1) / n_classes
         loss = (1 - self.smoothing) * nll_loss + self.smoothing * smooth_loss        
+        return loss
+    
+class LabelSmoothingLoss2(nn.Module):
+    def __init__(self, smoothing=0.001, epsilon=1e-8):
+        super().__init__()
+        self.smoothing = smoothing
+        self.epsilon = epsilon
+
+    def forward(self, pred, target):
+        """
+        pred: (batch_size, n_classes)
+        target: (batch_size)  [正解クラスIndex]
+        """
+        # 1) softplusを取る
+        sp = F.softplus(pred)  # shape: [B, C]
+
+        # 2) 各サンプル毎に合計値を計算 (正規化用)
+        sp_sum = sp.sum(dim=-1, keepdim=True) + self.epsilon  # shape: [B, 1]
+
+        # 3) ターゲットクラスのみ gather で取得 (NLL用)
+        #    log p_{y_i} = log( sp[y_i] ) - log(sp_sum)
+        sp_y = sp.gather(dim=-1, index=target.unsqueeze(-1)) + self.epsilon
+        nll_loss = - (torch.log(sp_y) - torch.log(sp_sum)).squeeze(-1)
+
+        # 4) 全クラスの log p_k の和 (スムージング用)
+        #    sum_k log p_k = sum_k log(sp_k) - C * log(sp_sum)
+        #    ただし sum_k log(sp_k) は sp.log().sum(dim=-1) で計算
+        #sp = sp.log()  # メモリ節約のためin-placeでlogをとる (必要ならclone()してもOK)
+        sum_log_sp = sp.log().sum(dim=-1)  # shape: [B]
+        n_classes = pred.size(-1)
+        sum_log_prob = sum_log_sp - n_classes * torch.log(sp_sum.squeeze(-1))
+        smooth_loss = - sum_log_prob / n_classes
+
+        # 5) ラベルスムージングの合成
+        loss = (1 - self.smoothing) * nll_loss + self.smoothing * smooth_loss
+
         return loss

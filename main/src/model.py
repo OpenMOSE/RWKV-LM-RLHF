@@ -20,9 +20,15 @@ from einops import rearrange
 if importlib.util.find_spec('deepspeed'):
     import deepspeed
     from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
+    from deepspeed.ops.lion import DeepSpeedCPULion, FusedLion
 
 from .infctx_module import *
 from .trainutils import *
+
+from .adam_mini import Adam_mini
+
+from .zerocot import *
+from .grpo import grpo_init,training_step_grpo
 
 
 from bitsandbytes.optim import Adam8bit,AdamW8bit
@@ -30,11 +36,13 @@ from bitsandbytes.optim import Adam8bit,AdamW8bit
 
 
 if 'x070' in os.environ["RWKV_MY_TESTING"]:
-    from .rwkv7 import LAYER_CONFIG,RWKV_Tmix_x070,RWKV_Tmix_x070_state,RWKV_Tmix_x070_infctx,RWKV_CMix_x070,RWKV_CMix_x070_infctx,make_linear_head,make_emb
+    from .rwkv7 import LAYER_CONFIG,RWKV_Tmix_x070,RWKV_Tmix_x070_state,RWKV_Tmix_x070_infctx,RWKV_CMix_x070,RWKV_CMix_x070_MoLE,RWKV_CMix_x070_infctx,make_linear_head,make_emb
+if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+    from .arwkv7 import LAYER_CONFIG,ARWKV_Tmix_x070,ARWKV_Tmix_x070_state,ARWKV_Tmix_x070_infctx,Qwen2MLP,Qwen2MLP_infctx,Qwen2RMSNorm,make_linear_head,make_emb
 elif 'x060' in os.environ["RWKV_MY_TESTING"]:
     from .rwkv6 import LAYER_CONFIG,RWKV_Tmix_x060,RWKV_Tmix_x060_state,RWKV_Tmix_x060_infctx,RWKV_CMix_x060,RWKV_CMix_x060_infctx,make_linear_head,make_emb
 else:
-    assert "Unsupported RWKV Architecture. please set x070 or x060"
+    assert "Unsupported RWKV Architecture. please set xa070 or x070 or x060"
 try:
     print('RWKV_MY_TESTING', os.environ["RWKV_MY_TESTING"])
 except:
@@ -72,7 +80,10 @@ if 'x070' in os.environ["RWKV_MY_TESTING"]:
             if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
                 self.ffn = RWKV_CMix_x070_infctx(args, layer_id)
             else:
-                self.ffn = RWKV_CMix_x070(args, layer_id)
+                if os.environ["CustomModel"] == 'MoE':
+                    self.ffn = RWKV_CMix_x070_MoLE(args,layer_id,self.args.moe_experts)
+                else:
+                    self.ffn = RWKV_CMix_x070(args, layer_id)
 
 
         if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
@@ -87,16 +98,93 @@ if 'x070' in os.environ["RWKV_MY_TESTING"]:
 
                 x = x + ffn_out
                 return x, v_first ,BlockState(att_state, ffn_state)
-        else:
-            def forward(self, x, v_first):
+        elif os.environ["CustomModel"] == 'MoE':
+            def forward(self, x, v_first,input_ids):
                 if self.layer_id == 0:
                     x = self.ln0(x)
 
                 x_attn, v_first = self.att(self.ln1(x), v_first)
                 x = x + x_attn
 
-                x = x + self.ffn(self.ln2(x))
+                ffn_out ,moe_router_loss = self.ffn(self.ln2(x),input_ids)
+
+                x  = x + ffn_out
+                return x, v_first,moe_router_loss
+        else:
+            def forward(self, x, v_first,passthrough = False):
+                if self.layer_id == 0:
+                    x = self.ln0(x)
+
+                x_attn, v_first = self.att(self.ln1(x), v_first, passthrough)
+                x = x + x_attn
+
+                x = x + self.ffn(self.ln2(x),passthrough)
                 return x, v_first
+            @torch.no_grad()
+            def forward_rnn(self, x, v_first,last_state: BlockState,passthrough=False):
+                if self.layer_id == 0:
+                    x = self.ln0(x)
+
+                x_attn, v_first, att_state = self.att.forward_rnn(self.ln1(x), v_first, last_state.time_mix_state,passthrough)
+                x = x + x_attn
+
+                ffn_out ,ffn_state = self.ffn.forward_rnn(self.ln2(x), last_state.channel_mix_state,passthrough)
+
+                x = x + ffn_out
+                return x, v_first ,BlockState(att_state, ffn_state)
+if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+    class Block(nn.Module):
+        def __init__(self, args, layer_id):
+            super().__init__()
+            self.args = args
+            self.layer_id = layer_id
+
+            self.ln1 = Qwen2RMSNorm(args.n_embd)
+            self.ln2 = Qwen2RMSNorm(args.n_embd)
+
+            if os.environ["RWKV_TRAIN_TYPE"] == 'state':
+                self.att = ARWKV_Tmix_x070_state(args, layer_id) 
+            elif os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
+                self.att = ARWKV_Tmix_x070_infctx(args, layer_id) 
+            else:
+                self.att = ARWKV_Tmix_x070(args, layer_id)  
+
+            if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
+                self.ffn = Qwen2MLP_infctx(args, layer_id)
+            else:
+                self.ffn = Qwen2MLP(args, layer_id)
+
+
+        if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
+            def forward(self, x, v_first,last_state: BlockState, x_emb=None):
+
+                x_attn, v_first, att_state = self.att(self.ln1(x), v_first, last_state.time_mix_state)
+
+                x = x + x_attn
+
+                ffn_out ,ffn_state = self.ffn(self.ln2(x), last_state.channel_mix_state)
+
+                x = x + ffn_out
+                return x, v_first ,BlockState(att_state, ffn_state)
+        else:
+            def forward(self, x, v_first,passthrough = False):
+      
+
+                x_attn, v_first = self.att(self.ln1(x), v_first, passthrough)
+                x = x + x_attn
+
+                x = x + self.ffn(self.ln2(x),passthrough)
+                return x, v_first
+            @torch.no_grad()
+            def forward_rnn(self, x, v_first,last_state: BlockState,passthrough=False):
+
+                x_attn, v_first, att_state = self.att.forward_rnn(self.ln1(x), v_first, last_state.time_mix_state,passthrough)
+                x = x + x_attn
+
+                ffn_out ,ffn_state = self.ffn.forward_rnn(self.ln2(x), last_state.channel_mix_state,passthrough)
+
+                x = x + ffn_out
+                return x, v_first ,BlockState(att_state, ffn_state)
 if 'x060' in os.environ["RWKV_MY_TESTING"]:
     class Block(nn.Module):
         def __init__(self, args, layer_id):
@@ -152,8 +240,6 @@ if 'x060' in os.environ["RWKV_MY_TESTING"]:
                         x = self.drop0(x + self.att(self.ln1(x)))
                     x = self.drop1(x + self.ffn(self.ln2(x)))
 
-
-    
                 return x, BlockState(att_state, fnn_state)
         else:
             def forward(self, x, x_emb=None):
@@ -322,8 +408,19 @@ class RWKV(pl.LightningModule):
 
         self.emb = make_emb(args.vocab_size, args.n_embd)
 
-        self.ln_out = nn.LayerNorm(args.n_embd)
+
+        if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+            self.ln_out = Qwen2RMSNorm(args.n_embd)
+        else:
+            self.ln_out = nn.LayerNorm(args.n_embd)
+
+
+
         self.head = make_linear_head(args.n_embd, args.vocab_size, bias=False)
+
+        if args.zerocot:
+            self.clitic_head = nn.Linear(args.n_embd, 1, bias=False)
+
         if args.dropout > 0:
             self.drop0 = nn.Dropout(p = args.dropout)
         print('Make Blocks')
@@ -342,25 +439,54 @@ class RWKV(pl.LightningModule):
                 #print(LAYER_CONFIG)
 
                 if realtime_quant:
+
                     for name, m in self.blocks.named_modules():
+                        #print(name)
+                        #exit()
                         if hasattr(m, "quant") and callable(getattr(m, "quant")) and f'{str(i)}.' in name:
                                 m.quant(args.quant_mode,target_gpu)
                                 print(f'{name} Quant')
+
+                if LAYER_CONFIG[f'{str(i)}']['mode'] == 'dora':
+                    print('DoRA Mode Norm')
+                    for name, m in self.blocks.named_modules():
+                        if hasattr(m, "dora_init") and callable(getattr(m, "dora_init")) and f'{str(i)}.' in name:
+                                m.dora_init()
+                                print(f'{name} dora_init')
+                                #exit()
+
+
+
             self.load_element_weights(self,'emb',load_dict)
             self.load_element_weights(self,'ln_out',load_dict)
             self.load_element_weights(self,'head',load_dict)
             if realtime_quant:
                 for name, m in self.named_modules():
-                    print(f'pname = {name}')
+                    #print(f'pname = {name}')
+                    
                     if hasattr(m, "quant") and callable(getattr(m, "quant")) and f'head' in name:
                             m.quant(args.quant_mode,target_gpu)
                             print(f'{name} Quant')
+
+            if LAYER_CONFIG[f'head']['mode'] == 'dora':
+                    print('DoRA Mode Norm head')
+                    for name, m in self.named_modules():
+                        if hasattr(m, "dora_init") and callable(getattr(m, "dora_init")) and f'head' in name:
+                                m.dora_init()
+                                print(f'{name} dora_init')
+            #exit()
         else:
             self.blocks = nn.ModuleList([Block(args, i) for i in range(args.n_layer)])
         global NowCurrentlyGPUNo
         self.CurrentCudaNo = NowCurrentlyGPUNo
 
         print('finish blocks')
+
+        if args.zerocot:
+            zerocot_init(self)
+        if args.grpo:
+            grpo_init(self)
+
     def setup(self, stage):
 
         if self.device.type == 'cuda':
@@ -374,9 +500,8 @@ class RWKV(pl.LightningModule):
         keys_to_delete = []
 
         for key, value in load_dict.items():
-            #print(key)
             if key.startswith(block_prefix):
-                new_key = key[len(block_prefix):]  # block_prefixを除去
+                new_key = key[len(block_prefix):] 
                 block_state_dict[new_key] = value
 
 
@@ -389,7 +514,7 @@ class RWKV(pl.LightningModule):
 
         for key, value in load_dict.items():
             if key.startswith(block_prefix):
-                new_key = key#key[len(block_prefix):]  # block_prefixを除去
+                new_key = key
                 block_state_dict[new_key] = value
 
         element.load_state_dict(block_state_dict, strict=False)
@@ -406,8 +531,6 @@ class RWKV(pl.LightningModule):
             param_dict = {n: p for n, p in self.named_parameters()}
             optim_groups = []
 
- 
-
             for n, p in self.named_parameters():
                 print(f'LR Check {n}')
                 if ('emb' in n  or 'ln0' in n):# and LAYER_CONFIG['emb']['mode'] == 'full':
@@ -417,8 +540,7 @@ class RWKV(pl.LightningModule):
                                             'lr_final':float(LAYER_CONFIG['emb']['lr_final']) , 
                                             'weight_decay':float(LAYER_CONFIG['emb']['weight_decay']), 
                                             'pname':'emb'})
-                        print(optim_groups)
-                    #exit()
+
                 elif ('head' in n or 'ln_out' in n) and LAYER_CONFIG['head']['mode']:# != 'freeze':
                     if p.requires_grad:
                         optim_groups.append({"params":[param_dict[n]],
@@ -426,7 +548,6 @@ class RWKV(pl.LightningModule):
                                             'lr_final':float(LAYER_CONFIG['head']['lr_final']),
                                             'weight_decay':float(LAYER_CONFIG['head']['weight_decay']) ,
                                             'pname':'head'})
-                        print(optim_groups)
                 else:
                     print('Layer Check')
                     Found = False
@@ -435,17 +556,17 @@ class RWKV(pl.LightningModule):
                         if blockname in n:
                             print(n)
                         if blockname in n and 'time_state' in n and args.state:
-                            print(f"State-tuning {n} Set lr_init {float(LAYER_CONFIG[f'{str(i)}']['lr_init_state'])} lr_final {float(LAYER_CONFIG[f'{str(i)}']['lr_final_state'])}")
                             if p.requires_grad:
+                                print(f"State-tuning {n} Set lr_init {float(LAYER_CONFIG[f'{str(i)}']['lr_init_state'])} lr_final {float(LAYER_CONFIG[f'{str(i)}']['lr_final_state'])}")
+                            
                                 optim_groups.append({"params":[param_dict[n]], "weight_decay": 0.0,
                                                     'lr_init':float(LAYER_CONFIG[f'{str(i)}']['lr_init_state']), 
                                                     'lr_final':float(LAYER_CONFIG[f'{str(i)}']['lr_final_state']),  
                                                     'pname':n
                                                     })
-                            Found = True
+                                Found = True
                             break
                         elif blockname in n and LAYER_CONFIG[f'{str(i)}']['mode'] != 'freeze':
-                            #if n in  LAYER_CONFIG[f'{str(i)}']['RejectParts'] and len(LAYER_CONFIG[f'{str(i)}']['RejectParts']) > 0:
                             if any(word in n for word in LAYER_CONFIG[f'{str(i)}']['RejectParts']) and LAYER_CONFIG[f'{str(i)}']['RejectParts'][0] != '':
                                 print(f'Rejected {n}')
                                 Found = True
@@ -455,28 +576,35 @@ class RWKV(pl.LightningModule):
                             if 'time_decay' in n: # for x060
                                 lr_x = 2.0
 
-                            print(f"WeightParameter {n} Set lr_init {float(LAYER_CONFIG[f'{str(i)}']['lr_init'])} lr_final {float(LAYER_CONFIG[f'{str(i)}']['lr_final'])}")
                             if p.requires_grad:
+                                print(f"WeightParameter {n} Set lr_init {float(LAYER_CONFIG[f'{str(i)}']['lr_init'])} lr_final {float(LAYER_CONFIG[f'{str(i)}']['lr_final'])}")
                                 optim_groups.append({"params":[param_dict[n]], 
                                                     'lr_init':float(LAYER_CONFIG[f'{str(i)}']['lr_init'])*lr_x, 
                                                     'lr_final':float(LAYER_CONFIG[f'{str(i)}']['lr_final'])*lr_x,  
                                                     'weight_decay':float(LAYER_CONFIG[f'{str(i)}']['weight_decay']),
                                                     'pname':n
                                                     })
-                            Found = True
+                                Found = True
                             break
                     if Found==False:
                         print( f'{n} is not found optimizer strategy')
                         #exit()
 
             if self.deepspeed_offload:
-                return DeepSpeedCPUAdam(optim_groups, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=True, amsgrad=False)
+                if args.optim == 'lion':
+                    print('Deepspeed CPULion Mode')
+                    return DeepSpeedCPULion(optim_groups, betas=self.args.betas)
+                else:
+                    return DeepSpeedCPUAdam(optim_groups, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=True, amsgrad=False)
             if args.optim == 'Adam8bit':
                 print('Bitsandbytes Adam8bit Mode')
                 return Adam8bit(optim_groups,  betas=self.args.betas, eps=self.args.adam_eps)
             elif args.optim == 'AdamW8bit':
                 print('Bitsandbytes AdamW8bit Mode')
                 return AdamW8bit(optim_groups,  betas=self.args.betas, eps=self.args.adam_eps)
+            elif args.optim == 'lion':
+                print('Deepspeed Lion Mode')
+                return FusedLion(optim_groups, betas=self.args.betas)
             else:
                 return FusedAdam(optim_groups,  betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
 
@@ -517,16 +645,13 @@ class RWKV(pl.LightningModule):
             
             if args.layerwise_lr > 0:
                     optim_groups = [
-                        #{"params": [param_dict[n] for n in lr_1x], "weight_decay": 0.0, "my_lr_scale": 1.0},
                         {"params": [param_dict[n] for n in lr_2x], "weight_decay": 0.0, "my_lr_scale": 2.0},
-                        #{"params": [param_dict[n] for n in lr_3x], "weight_decay": 0.0, "my_lr_scale": 3.0},
                     ]
                     print(optim_groups)
                     #exit()
             else:
                 optim_groups = [{"params": [param_dict[n] for n in lr_1x], "weight_decay": 0.0, "my_lr_scale": 1.0}]
-                #print(f'optim_groups  {optim_groups}')
-                #raise optim_groups
+
 
             if args.weight_decay > 0:
                 optim_groups += [{"params": [param_dict[n] for n in lr_decay], "weight_decay": args.weight_decay, "my_lr_scale": 1.0}]
@@ -567,7 +692,7 @@ class RWKV(pl.LightningModule):
             if args.dropout > 0:
                 x = self.drop0(x)
 
-            if 'x070' in os.environ["RWKV_MY_TESTING"]:
+            if 'x070' in os.environ["RWKV_MY_TESTING"] or 'xa070' in os.environ["RWKV_MY_TESTING"]:
                 v_first = torch.empty_like(x)
                 
                 for i, (block, block_state) in enumerate(zip(self.blocks,
@@ -652,7 +777,15 @@ class RWKV(pl.LightningModule):
                     student_logits,new_shift_states, new_wkv_states = self(chunk_input_ids,last_shift_states, last_wkv_states)
 
                     # Label Smoothing Loss
-                    label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+
+                    #label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+                    if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+                        label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
+                    else:
+                        label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+
+
+
                     student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
                     smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
 
@@ -777,7 +910,16 @@ class RWKV(pl.LightningModule):
                     student_logits,new_shift_states, new_wkv_states = self(chunk_input_ids,last_shift_states, last_wkv_states)
                     print(f'logit sum0={torch.sum(student_logits)}')
                     # Label Smoothing Loss
-                    label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+
+
+                    #label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+                    if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+                        label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
+                    else:
+                        label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+
+
+
                     student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
                     #print(f'logit sum1={torch.sum(student_logits_shifted)}')
                     #smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
@@ -879,6 +1021,7 @@ class RWKV(pl.LightningModule):
                 smoothing = args.smoothing
 
                 input_ids = batch['input_ids']
+                
                 target = batch['target_ids']
                 attention_mask = batch['attention_mask'].float()
                 max_len = int(attention_mask.sum(dim=1).max().item())
@@ -893,35 +1036,6 @@ class RWKV(pl.LightningModule):
                 states = BlockStateList.create(args.n_layer, B, C, H, self.emb.weight.device,
                     self.emb.weight.dtype)
                 
-                # def robust_masked_mean(values, mask, clip_min=-100, clip_max=100):
-                #     EPSILON = 1e-8
-                #     assert torch.is_tensor(values), "values must be a tensor"
-                #     assert torch.is_tensor(mask), "mask must be a tensor"
-                #     assert values.shape == mask.shape, f"Shape mismatch: values {values.shape} vs mask {mask.shape}"
-                #     mask = mask.float()
-                #     if not ((mask == 0) | (mask == 1)).all():
-                #         print("Warning: mask contains values other than 0 and 1")
-                #         mask = (mask > 0.5).float()
-                #     clipped_values = torch.clamp(values, clip_min, clip_max)
-                #     scale = torch.max(torch.abs(clipped_values))
-                #     if scale > EPSILON:
-                #         scaled_values = clipped_values / scale
-                #     else:
-                #         scaled_values = clipped_values
-                #     sum_mask = torch.sum(mask)
-                #     if sum_mask <= EPSILON:
-                #         return torch.zeros_like(values.mean())
-                #     masked_sum = torch.sum(scaled_values * mask)
-                #     mean = masked_sum / (sum_mask + EPSILON)
-                #     if scale > EPSILON:
-                #         mean = mean * scale
-                #     if torch.isnan(mean) or torch.isinf(mean):
-                #         print("Warning: Result is NaN or Inf")
-                #         return torch.zeros_like(mean)
-                    
-                #     return mean
-
-
 
                 def checkpointed_step2(chunk_input_ids,chunk_target_ids,
                                     chunk_attention_mask,
@@ -949,7 +1063,14 @@ class RWKV(pl.LightningModule):
                     student_logits,new_shift_states, new_wkv_states = self(chunk_input_ids,last_shift_states, last_wkv_states)
                     #print(f'logit sum0={torch.sum(student_logits)}')
                     # Label Smoothing Loss
-                    label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+
+                    #label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+                    if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+                        label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
+                    else:
+                        label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+
+
                     student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1)).float()
 
                     smooth_loss = label_smoothing_loss(student_logits_shifted.float(), targets)
@@ -1047,47 +1168,7 @@ class RWKV(pl.LightningModule):
                 self.trainer.smooth_loss = float(smooth_loss)
                 self.trainer.realproceedtokens =float(proceedtokens)
 
-                #print(f'total_loss dtype = {total_loss.dtype}')
-
-                #print(f'totalloss = {total_loss}')
-
-                
-                # for i in range(math.ceil(T / T_train)):
-                #     print('loop start-------------------------------------------------------------------------------')
-                #     print(f'i = {i}')
-                #     print(f'T_train = {T_train}')
-                #     print(f'math.ceil(T / T_train) = {math.ceil(T / T_train)}')
-                #     chunk_start = i * T_train
-                #     chunk_end = (i + 1) * T_train#min((i + 1) * T_train, T)
-                #     print(f'chunk start = {chunk_start} chunk end = {chunk_end} diff = {chunk_end-chunk_start}')
-                #     total_loss, smooth_loss, new_shift_states, new_wkv_states, token_amount , status = torch_checkpoint(
-                #     #total_loss, smooth_loss, new_shift_states, new_wkv_states, token_amount , status = deepspeed.checkpointing.checkpoint(
-                #         checkpointed_step2,
-                #         input_ids[:, chunk_start:chunk_end],
-                #         target[:, chunk_start:chunk_end],
-                #         attention_mask[:, chunk_start:chunk_end],
-                #         total_loss,
-                #         smooth_loss,
-                #         states.shift_states,
-                #         states.wkv_states,
-                #         token_amount,
-                #         use_reentrant=False
-                #     )
-                #     if status == 'skip':
-                #         break
-                #     states = BlockStateList(new_shift_states, new_wkv_states)
-                #     #states.shift_states = new_shift_states
-                #     #states.wkv_states = new_wkv_states
-
-                #     if status == 'proceed':
-                #         proceedtokens = proceedtokens + (chunk_end-chunk_start)
-
-                
-                # self.trainer.smooth_loss = float(smooth_loss)
-                # #self.trainer.kl_loss = float(kl_loss)
-                # self.trainer.realproceedtokens =float(proceedtokens)
-
-                # #print(f'total_loss = {float(total_loss)}')
+          
 
                 return total_loss#, states
 
@@ -1141,14 +1222,52 @@ class RWKV(pl.LightningModule):
                 states = BlockStateList(new_shift_states, new_wkv_states)
 
             
-            print()
+            #print()
             return total_loss
         
 
     
     else: #Normal Trianing Mode = have limit context size 
 
-        def forward(self, idx):
+
+        def forward_rnn(self, idx,  last_shift_states: torch.Tensor,
+                last_wkv_states: torch.Tensor,passthrough=False):
+            args = self.args
+            B, T = idx.size()
+            #assert T <= args.chunk_ctx, "Cannot forward, model ctx_len is exhausted."  
+            #Autoregressive
+            C = args.n_embd
+            H =  args.dim_att // args.head_size_a
+            assert C==H*args.head_size_a
+            
+            x = self.emb(idx)
+            x_emb = x
+            new_states = BlockStateList.empty(args.n_layer, B, args.n_embd, H,
+                                            x.device, x.dtype)
+            if args.dropout > 0:
+                x = self.drop0(x)
+
+            if 'x070' in os.environ["RWKV_MY_TESTING"] or 'xa070' in os.environ["RWKV_MY_TESTING"]:
+                v_first = torch.empty_like(x)
+                
+                for i, (block, block_state) in enumerate(zip(self.blocks,
+                    BlockStateList(last_shift_states, last_wkv_states))):
+                  
+                    x, v_first, new_block_state = block.forward_rnn(x,v_first, block_state,passthrough)
+            
+                    new_states[i] = new_block_state 
+            else:
+                assert "currently only supported v7"
+
+            x = self.ln_out(x)
+
+            x = self.head(x,passthrough)
+
+            return x, new_states.shift_states, new_states.wkv_states
+        
+
+
+        def forward(self, idx,passthrough=False,frozen=False,clitic=False):
             args = self.args
             B, T = idx.size()
             assert T <= args.ctx_len, "Cannot forward, model ctx_len is exhausted."
@@ -1158,19 +1277,35 @@ class RWKV(pl.LightningModule):
 
             if args.dropout > 0:
                 x = self.drop0(x)
-            if 'x070' in os.environ["RWKV_MY_TESTING"]:
+            if 'x070' in os.environ["RWKV_MY_TESTING"] or 'xa070' in os.environ["RWKV_MY_TESTING"]:
                     v_first = torch.empty_like(x)
+                    moe_total_loss = 0
                     for block in self.blocks:
-                        if args.grad_cp == 1:
+                        if frozen:
+                            x, v_first = block(x, v_first,passthrough)
+
+                        elif args.grad_cp == 1:
                             layer_mode = LAYER_CONFIG[f'{str(block.layer_id)}']['mode']
                             if layer_mode == 'full' or layer_mode == 'freeze':
                                 #x, v_first = deepspeed.checkpointing.checkpoint(block, x, v_first)
-                                x, v_first = torch_checkpoint(block, x, v_first,use_reentrant=False)
+                                if os.environ["CustomModel"] == 'MoE':
+                                    x, v_first,moe_router_loss = torch_checkpoint(block, x, v_first, idx, use_reentrant=False)
+                                    moe_total_loss += (moe_router_loss+0.001) / float(args.n_layer)
+                                else:
+                                    x, v_first = torch_checkpoint(block, x, v_first,passthrough,use_reentrant=False)
                             else:
-                                x, v_first = torch_checkpoint(block, x, v_first ,use_reentrant=False)
+                                if os.environ["CustomModel"] == 'MoE':
+                                    x, v_first ,moe_router_loss = torch_checkpoint(block, x, v_first,idx,use_reentrant=False)
+                                    moe_total_loss += (moe_router_loss+0.001) / float(args.n_layer)
+                                else:
+                                    x, v_first = torch_checkpoint(block, x, v_first,passthrough, use_reentrant=False)
                                 #x, v_first = deepspeed.checkpointing.checkpoint(block, x, v_first )
                         else:
-                            x, v_first = block(x, v_first)
+                            if os.environ["CustomModel"] == 'MoE':
+                                x, v_first,moe_router_loss = block(x, v_first,idx)
+                                moe_total_loss += (moe_router_loss+0.001) / float(args.n_layer)
+                            else:
+                                x, v_first = block(x, v_first)
             else:
                 for block in self.blocks:
                     if args.grad_cp == 1:
@@ -1187,10 +1322,38 @@ class RWKV(pl.LightningModule):
 
             x = self.ln_out(x)
 
+            if clitic:
+                x= self.clitic_head(x)
+            else:
+                x = self.head(x)
 
-            x = self.head(x)
+            if os.environ["CustomModel"] == 'MoE':
+                #print(f'Moe Router_loss = {moe_router_loss}')
+                return x, moe_router_loss
+            return x, 0.0
+        
 
-            return x
+        def forward_head2(self, idx,passthrough=False,frozen=False,clitic=False):
+            
+            with torch.no_grad():
+                args = self.args
+                B, T = idx.size()
+                assert T <= args.ctx_len, "Cannot forward, model ctx_len is exhausted."
+
+                x = self.emb(idx)
+                x_emb = x
+                if 'x070' in os.environ["RWKV_MY_TESTING"]:
+                        v_first = torch.empty_like(x)
+                        moe_total_loss = 0
+                        for block in self.blocks:
+                            if frozen:
+                                x, v_first = block(x, v_first,passthrough)
+
+                x = self.ln_out(x)
+
+            x= self.clitic_head(x)
+
+            return x, 0.0
     
         def compute_logps_simple_mask(self, chosen_inputs, logits, attention_mask=None):
 
@@ -1228,6 +1391,11 @@ class RWKV(pl.LightningModule):
             
             args = self.args
 
+            if args.zerocot:
+                return training_step_zerocot(self,batch,batch_idx)
+            if args.grpo:
+                return training_step_grpo(self,batch,batch_idx)
+
             if args.distillation:
                 temperature = args.temperature
                 alpha = args.alpha
@@ -1250,7 +1418,7 @@ class RWKV(pl.LightningModule):
                     attention_mask = attention_mask[:, :max_len]
 
                 # Forward: input_ids[:, :-1]を使用
-                student_logits = self(input_ids)
+                student_logits,moe_loss = self(input_ids)
 
                 # 評価: input_ids[:, 1:]を使用
                 #targets = input_ids[:, 1:].contiguous().view(-1) #
@@ -1268,7 +1436,14 @@ class RWKV(pl.LightningModule):
                     return torch.tensor([0.0], requires_grad=True)
 
                 # Label Smoothing Loss
-                label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+                #label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+                if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+                    label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
+                else:
+                    label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+
+
+
                 student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
                 smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
 
@@ -1310,16 +1485,34 @@ class RWKV(pl.LightningModule):
                 target = batch['target_ids']
                 attention_mask = batch['attention_mask']
 
+                #print(input_ids)
+
                 #max_len = int(input_ids.shape[1])#int(attention_mask.sum(dim=1).max().item())
 
                 max_len = int(attention_mask.sum(dim=1).max().item())
+
+                def find_next_128_multiple(n):
+                    remainder = n % 128
+                    if remainder == 0:
+                        return n
+                    return n + (128 - remainder)
+
+                if 'x070' in os.environ["RWKV_MY_TESTING"] or 'xa070' in os.environ["RWKV_MY_TESTING"]:
+                    max_len = find_next_128_multiple(max_len)
+                    input_ids = input_ids[:, :max_len]
+                    target = target[:, :max_len]
+                    attention_mask = attention_mask[:, :max_len]
+
+
+
+
                 if 'x060' in os.environ["RWKV_MY_TESTING"]:
                     input_ids = input_ids[:, :max_len]
                     target = target[:, :max_len]
                     attention_mask = attention_mask[:, :max_len]
 
                 # Forward: input_ids[:, :-1]を使用
-                student_logits = self(input_ids)
+                student_logits,moe_loss = self(input_ids)
 
                 # 評価: input_ids[:, 1:]を使用
                 #targets = input_ids[:, 1:].contiguous().view(-1) #
@@ -1337,7 +1530,12 @@ class RWKV(pl.LightningModule):
                     return torch.tensor([0.0], requires_grad=True)
 
                 # Label Smoothing Loss
-                label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+                
+                
+                if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+                    label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
+                else:
+                    label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
                 student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
                 smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
 
@@ -1350,15 +1548,282 @@ class RWKV(pl.LightningModule):
                     #kl_loss = torch.sum(kl_loss.view(-1) * mask) / sum_mask
                     loss = smooth_loss# + (1 - alpha) * kl_loss
 
+                if os.environ["CustomModel"] == "MoE":
+                    loss = loss + args.moe_balance_alpha * moe_loss
+                    self.trainer.moe_router_loss = moe_loss
+
                 self.trainer.smooth_loss = float(smooth_loss.mean())
+
                 #self.trainer.kl_loss = float(kl_loss.mean())
                 self.trainer.realproceedtokens =float(max_len)
 
                 return L2Wrap.apply(loss, student_logits)
+            
+
+
+            
+            
 
 
 
 
+            if args.simpo:  
+                batch_orpo = batch
+
+                loss1 = 0.0
+                loss_simpo_only = 0.0
+
+                # 参考統計用
+                try:
+                    self.trainer.pref_match_percentage
+                except (NameError, AttributeError):
+                    self.trainer.pref_match_percentage = 0.0
+                pref_matches = 0
+
+                bsz = len(batch_orpo)
+                loss2 = 0.0
+
+                for s in range(bsz):
+                    if os.environ["H5_MODE"] == "1":
+                        chosen_input = batch_orpo[s]['chosen_input']
+                        chosen_output = batch_orpo[s]['chosen_target']
+                        length_chosen = batch_orpo[s]['chosen_token_len']
+                        chosen_ref_prob = batch_orpo[s]['chosen_base_prob']
+                        reject_input = batch_orpo[s]['reject_input']
+                        reject_output = batch_orpo[s]['reject_target']
+                        length_reject = batch_orpo[s]['reject_token_len']
+                        reject_ref_prob = batch_orpo[s]['reject_base_prob']
+                        chosen_token = batch_orpo[s]['chosentoken']
+                        reject_token = batch_orpo[s]['rejecttoken']
+                    else:
+                        chosen_input,chosen_output,length_chosen,chosen_ref_prob, reject_input,reject_output,length_reject,reject_ref_prob,chosen_token,reject_token = batch_orpo[s]
+
+
+                    # パディング用のマスク作成
+                    chosen_mask = (chosen_output != 0).float()
+                    reject_mask = (reject_output != 0).float()
+
+                    len1 = chosen_input.size(0)
+                    len2 = reject_input.size(0)
+                    max_len = max(len1, len2)
+
+                    # 必要に応じてパディング
+                    if 'x070' in os.environ.get("RWKV_MY_TESTING", "") or 'xa070' in os.environ.get("RWKV_MY_TESTING", ""):
+                        max_len = args.ctx_len
+
+                    if len1 < max_len:
+                        chosen_input = F.pad(chosen_input, (0, max_len - len1))
+                        chosen_output = F.pad(chosen_output, (0, max_len - len1))
+                        chosen_mask = F.pad(chosen_mask, (0, max_len - len1))
+                    if len2 < max_len:
+                        reject_input = F.pad(reject_input, (0, max_len - len2))
+                        reject_output = F.pad(reject_output, (0, max_len - len2))
+                        reject_mask = F.pad(reject_mask, (0, max_len - len2))
+
+                    # 選択応答(chosen)と却下応答(reject)をまとめてバッチ化してモデルに通す
+                    SFT_idx = torch.cat([chosen_input.unsqueeze(0), reject_input.unsqueeze(0)], dim=0)
+                    RT ,moe_loss= self(SFT_idx)
+                    outputs_pos = RT[0].unsqueeze(0)  # chosen応答用
+                    outputs_neg = RT[1].unsqueeze(0)  # reject応答用
+                    del SFT_idx
+
+                    # クロスエントロピー（SFTロス）用の関数
+                    def masked_cross_entropy(pred, target, mask):
+                        loss = F.cross_entropy(pred.view(-1, pred.size(-1)), target.view(-1), reduction='none')
+                        loss = loss * mask.view(-1)
+                        return loss.sum() / mask.sum()
+
+                    # SFTロス（chosen応答だけに対して計算する例）
+                    l2_pos_loss = masked_cross_entropy(outputs_pos, chosen_output, chosen_mask)
+
+                    # 実際に各トークンの対数確率を取り出す
+                    chosen_logits = outputs_pos[:, len1 - length_chosen : len1].squeeze(0)
+                    reject_logits = outputs_neg[:, len2 - length_reject : len2].squeeze(0)
+
+                    # トークンインデックスに対応する log-softmax を取得し、平均をとる
+                    chosen_loss = (F.log_softmax(chosen_logits, dim=-1))[torch.arange(len(chosen_token)), chosen_token]
+                    chosen_prob = chosen_loss.sum().float() / float(len(chosen_token))  # 平均対数確率
+                    reject_loss = (F.log_softmax(reject_logits, dim=-1))[torch.arange(len(reject_token)), reject_token]
+                    reject_prob = reject_loss.sum().float() / float(len(reject_token))
+
+                    # ====== SimPOの主部分 ======
+                    # 報酬: r(chosen) = β * chosen_prob, r(reject) = β * reject_prob
+                    # 差分: [r(chosen) - r(reject) - γ] をシグモイドの対数に通して損失化
+                    # chosenが勝ち応答なので、この差分を正にするよう学習 → -log( sigmoid( 差分 ) )
+                    diff = args.simpo_beta * (chosen_prob - reject_prob) - args.simpo_gamma
+
+                    # 統計用: 差分が正なら「正しい勝ち」になっているとみなす
+                    pref_matches += (diff > 0)
+
+                    # ロス計算
+                    pref_ratio = -F.logsigmoid(diff)
+
+                    # 最終損失 = (SFTロス × スケール) + SimPOロス
+                    final_loss = (l2_pos_loss * args.simpo_alpha) + pref_ratio*(1.0*args.simpo_alpha)
+
+                    # L2Wrapは元コードのHook等で必要なら
+                    final_loss = L2Wrap2.apply(final_loss, outputs_pos,outputs_neg)
+
+                    loss2 += final_loss
+                    loss1 += l2_pos_loss
+                    loss_simpo_only += pref_ratio
+
+                
+                loss2 /= bsz
+                loss1 /= bsz
+                loss_simpo_only /= bsz
+
+                
+                self.trainer.loss_2_dpo = float(loss_simpo_only)
+                self.trainer.loss_1_general_or_sft = float(loss1)
+                self.trainer.pref_match_percentage = 0.99 * self.trainer.pref_match_percentage + 0.01 * (pref_matches / bsz)
+
+                return loss2
+            
+
+            if self.args.wpo:
+                # ===== ここからWPO実装 =====
+                batch_wpo = batch
+
+                loss1 = 0.0  # いわゆるSFT部分の損失 (l2_pos_loss 累積)
+                loss_pref_part = 0.0  # pref_ratio（ペア間の好み）部分
+                total_loss = 0.0
+
+                try:
+                    self.trainer.pref_match_percentage
+                except (NameError, AttributeError):
+                    self.trainer.pref_match_percentage = 0.0
+
+                pref_matches = 0
+                bsz = len(batch_wpo)
+
+                for s in range(bsz):
+                    # データ取り出し
+                    if os.environ.get("H5_MODE", "0") == "1":
+                        chosen_input = batch_wpo[s]['chosen_input']
+                        chosen_output = batch_wpo[s]['chosen_target']
+                        length_chosen = batch_wpo[s]['chosen_token_len']
+                        chosen_ref_prob = batch_wpo[s]['chosen_base_prob']
+                        reject_input = batch_wpo[s]['reject_input']
+                        reject_output = batch_wpo[s]['reject_target']
+                        length_reject = batch_wpo[s]['reject_token_len']
+                        reject_ref_prob = batch_wpo[s]['reject_base_prob']
+                        chosen_token = batch_wpo[s]['chosentoken']
+                        reject_token = batch_wpo[s]['rejecttoken']
+                    else:
+                        chosen_input, chosen_output, length_chosen, chosen_ref_prob, \
+                            reject_input, reject_output, length_reject, reject_ref_prob = batch_wpo[s]
+
+                    # マスク作成（0をパディングとみなす）
+                    chosen_mask = (chosen_output != 0).float()
+                    reject_mask = (reject_output != 0).float()
+
+                    len1 = chosen_input.size(0)
+                    len2 = reject_input.size(0)
+                    max_len = max(len1, len2)
+
+                    # 必要に応じてパディング
+                    if 'x070' in os.environ.get("RWKV_MY_TESTING", "")or 'xa070' in os.environ.get("RWKV_MY_TESTING", ""):
+                        max_len = args.ctx_len
+
+                    # パディング処理（右側0埋め）
+                    if len1 < max_len:
+                        chosen_input = F.pad(chosen_input, (0, max_len - len1))
+                        chosen_output = F.pad(chosen_output, (0, max_len - len1))
+                        chosen_mask = F.pad(chosen_mask, (0, max_len - len1))
+                    if len2 < max_len:
+                        reject_input = F.pad(reject_input, (0, max_len - len2))
+                        reject_output = F.pad(reject_output, (0, max_len - len2))
+                        reject_mask = F.pad(reject_mask, (0, max_len - len2))
+
+                    # 一度にまとめて推論: chosenとrejectをバッチで入れる
+                    SFT_idx = torch.stack([chosen_input, reject_input], dim=0)  # shape [2, max_len]
+                    # ログits計算 [2, max_len, vocab_size]
+                    RT ,moe_loss= self(SFT_idx)
+
+                    outputs_pos = RT[0].unsqueeze(0)  # chosen
+                    outputs_neg = RT[1].unsqueeze(0)  # reject
+                    del SFT_idx
+
+
+                    def masked_cross_entropy(pred, target, mask):
+                        ce_loss = F.cross_entropy(
+                            pred.view(-1, pred.size(-1)),
+                            target.view(-1),
+                            reduction='none'
+                        )
+                        ce_loss = ce_loss * mask.view(-1)
+                        return ce_loss.sum() / (mask.sum() + 1e-9)
+
+                    l2_pos_loss = masked_cross_entropy(outputs_pos, chosen_output, chosen_mask)
+
+                    # (2) 好みの差分 (chosen vs reject) の対数確率を計算
+                    # logitsから実際に生成されたtokenだけ抜き出し
+                    chosen_logits = outputs_pos[:, len1 - length_chosen:len1].squeeze(0)
+                    reject_logits = outputs_neg[:, len2 - length_reject:len2].squeeze(0)
+
+                    chosen_loss = (F.log_softmax(chosen_logits, dim=-1))[
+                        torch.arange(len(chosen_token)),
+                        chosen_token
+                    ]
+                    reject_loss = (F.log_softmax(reject_logits, dim=-1))[
+                        torch.arange(len(reject_token)),
+                        reject_token
+                    ]
+
+                    # ここでは平均対数尤度の形
+                    chosen_prob = torch.sum(chosen_loss)/float(len(chosen_token))  # 平均log p(y_w)
+                    reject_prob = torch.sum(reject_loss)/float(len(reject_token))   # 平均log p(y_l)
+
+                    # (3) DPOタイプのpref_ratio（ただしWPOでも流用）
+                    pref_ratio = self.args.wpo_beta * (
+                        chosen_prob - reject_prob
+                        #- chosen_ref_prob + reject_ref_prob
+                    )
+                    # 好みを正にするときのシグモイド
+                    pref_matches += (pref_ratio > 0)
+                    pref_ratio = -F.logsigmoid(pref_ratio)
+
+                    # ============== ここが WPO のカギ ========================
+                    # WPO重み計算：
+                    # chosen_prob, reject_prob はそれぞれ「平均対数確率」なので
+                    # シーケンス全体の対数確率にするため length_chosen, length_reject を掛ける
+                    chosen_seq_logprob = chosen_prob# * float(length_chosen)
+                    reject_seq_logprob = reject_prob# * float(length_reject)
+
+                    print(f'chosen_seq_logprob = {chosen_seq_logprob}, reject_seq_logprob = {reject_seq_logprob}')
+
+                    # w_chosen, w_reject はそれぞれ e^(シーケンス全体のlog p)
+                    w_chosen = torch.exp(chosen_seq_logprob)
+                    w_reject = torch.exp(reject_seq_logprob)
+                    # 二つを掛け合わせたものを最終的なペアの重みとする
+                    w_pair = w_chosen * w_reject
+
+                    # (4) 最終loss: 通常の (SFT部分 + pref部分) にWPOの重み w_pair を掛ける
+                    print(f'w_pair = {w_pair}')
+                    final_loss = w_pair * (l2_pos_loss * self.args.wpo_alpha + pref_ratio)
+                    # ======================================================
+
+                    # もし勾配に対して特殊な処理(L2Wrap等)が必要ならここで
+                    final_loss = L2Wrap.apply(final_loss, outputs_pos)
+
+                    loss1 += l2_pos_loss
+                    loss_pref_part += pref_ratio
+                    total_loss += final_loss
+
+                # バッチサイズで割って平均
+                total_loss = total_loss / bsz
+                loss1 = loss1 / bsz
+                loss_pref_part = loss_pref_part / bsz
+
+                self.trainer.loss_2_dpo = float(loss_pref_part)
+                self.trainer.loss_1_general_or_sft = float(loss1)
+                self.trainer.pref_match_percentage = (
+                    0.9 * self.trainer.pref_match_percentage
+                    + 0.1 * (pref_matches / bsz)
+                )
+
+                return total_loss
 
             
 
@@ -1375,15 +1840,29 @@ class RWKV(pl.LightningModule):
                 bsz = len(batch_orpo)
                 loss2 = 0.0
 
+                #print(batch_orpo)
+
 
                 for s in range(bsz):
-                    chosen_input,chosen_output,length_chosen,chosen_ref_prob, reject_input,reject_output,length_reject,reject_ref_prob = batch_orpo[s]
+                    if os.environ["H5_MODE"] == "1":
+                        chosen_input = batch_orpo[s]['chosen_input']
+                        chosen_output = batch_orpo[s]['chosen_target']
+                        length_chosen = batch_orpo[s]['chosen_token_len']
+                        chosen_ref_prob = batch_orpo[s]['chosen_base_prob']
+                        reject_input = batch_orpo[s]['reject_input']
+                        reject_output = batch_orpo[s]['reject_target']
+                        length_reject = batch_orpo[s]['reject_token_len']
+                        reject_ref_prob = batch_orpo[s]['reject_base_prob']
+                        chosen_token = batch_orpo[s]['chosentoken']
+                        reject_token = batch_orpo[s]['rejecttoken']
+                    else:
+                        chosen_input,chosen_output,length_chosen,chosen_ref_prob, reject_input,reject_output,length_reject,reject_ref_prob,chosen_token,reject_token = batch_orpo[s]
 
                     # マスクの作成
                     chosen_mask = (chosen_output != 0).float()  # パディングは0と仮定
                     reject_mask = (reject_output != 0).float()
 
-                    
+                     
                     # 両方のテンソルの長さを取得
                     len1 = chosen_input.size(0)
                     len2 = reject_input.size(0)
@@ -1416,7 +1895,7 @@ class RWKV(pl.LightningModule):
                     SFT_idx = []
                     SFT_idx = torch.cat([chosen_input.unsqueeze(0), reject_input.unsqueeze(0)], dim=0) # make batch with Chosen and Reject  
 
-                    RT = self(SFT_idx)
+                    RT ,moe_loss= self(SFT_idx)
 
 
                     #print(RT)
@@ -1438,19 +1917,32 @@ class RWKV(pl.LightningModule):
 
                     l2_pos_loss = masked_cross_entropy(outputs_pos,chosen_output,chosen_mask)
 
-                    loss_chosen = cross_entropy(outputs_pos,chosen_output)
-                    loss_reject = cross_entropy(outputs_neg,reject_output)
+                    #loss_chosen = cross_entropy(outputs_pos,chosen_output)
+                    #loss_reject = cross_entropy(outputs_neg,reject_output)
+
+                    chosen_logits = outputs_pos[:,len1-length_chosen:len1].squeeze(0)
+                    reject_logits = outputs_neg[:,len2-length_reject:len2].squeeze(0)
+
+                    print(f'chosen logits shape = {chosen_logits.shape}')
 
 
-                    chosen_prob = -torch.sum(loss_chosen[len1-length_chosen:len1])
-                    reject_prob = -torch.sum(loss_reject[len2-length_reject:len2])
+
+                    chosen_loss = (F.log_softmax(chosen_logits, dim=-1))[torch.arange(len(chosen_token)), chosen_token]
+                    chosen_prob = (torch.sum(chosen_loss.view(-1))).float() / float(len(chosen_token))
+                    reject_loss = (F.log_softmax(reject_logits, dim=-1))[torch.arange(len(reject_token)), reject_token]
+                    reject_prob = (torch.sum(reject_loss.view(-1))).float() / float(len(reject_token))
+
+                    #chosen_prob = -torch.sum(loss_chosen[len1-length_chosen:len1])/float(length_chosen)
+                    #reject_prob = -torch.sum(loss_reject[len2-length_reject:len2])/float(length_reject)
+
+                    print(f'chosen_prob ={chosen_prob} reject_prob={reject_prob}')
 
 
                     #reject_prob = -torch.sum(loss_reject[-length_reject:])
                     pref_ratio = args.dpo_beta * (chosen_prob - reject_prob - chosen_ref_prob + reject_ref_prob)
                     pref_matches += (pref_ratio > 0)
-                    #pref_ratio = - F.logsigmoid(pref_ratio)
-                    pref_ratio = F.softplus(-pref_ratio)
+                    pref_ratio = - F.logsigmoid(pref_ratio)
+                    #pref_ratio = F.softplus(-pref_ratio)
                     
 
                     final_loss = (l2_pos_loss*args.dpo_alpha) + pref_ratio
@@ -1478,7 +1970,7 @@ class RWKV(pl.LightningModule):
                 batch_orpo = batch
 
                 loss1 = 0.0
-                lossorpoonly = 0.0
+                lossorpoonly = 0.0 
                 
                 try: self.trainer.pref_match_percentage
                 except (NameError, AttributeError): self.trainer.pref_match_percentage = 0.5
@@ -1489,7 +1981,19 @@ class RWKV(pl.LightningModule):
                 
                 #SFT_targets = []
                 for s in range(bsz):
-                    chosen_input,chosen_output,length_chosen,chosen_ref_prob, reject_input,reject_output,length_reject,reject_ref_prob = batch_orpo[s]
+                    if os.environ["H5_MODE"] == "1":
+                        chosen_input = batch_orpo[s]['chosen_input']
+                        chosen_output = batch_orpo[s]['chosen_target']
+                        length_chosen = batch_orpo[s]['chosen_token_len']
+                        chosen_ref_prob = batch_orpo[s]['chosen_base_prob']
+                        reject_input = batch_orpo[s]['reject_input']
+                        reject_output = batch_orpo[s]['reject_target']
+                        length_reject = batch_orpo[s]['reject_token_len']
+                        reject_ref_prob = batch_orpo[s]['reject_base_prob']
+                        chosen_token = batch_orpo[s]['chosentoken']
+                        reject_token = batch_orpo[s]['rejecttoken']
+                    else:
+                        chosen_input,chosen_output,length_chosen,chosen_ref_prob, reject_input,reject_output,length_reject,reject_ref_prob,chosen_token,reject_token = batch_orpo[s]
 
                     # マスクの作成
                     chosen_mask = (chosen_output != 0).float()  # パディングは0と仮定
@@ -1530,7 +2034,7 @@ class RWKV(pl.LightningModule):
                     SFT_idx = []
                     SFT_idx = torch.cat([chosen_input.unsqueeze(0), reject_input.unsqueeze(0)], dim=0) # make batch with Chosen and Reject  
 
-                    RT = self(SFT_idx)
+                    RT ,moe_loss= self(SFT_idx)
 
 
                     #print(RT)
@@ -1596,7 +2100,19 @@ class RWKV(pl.LightningModule):
                 
                 #SFT_targets = []
                 for s in range(bsz):
-                    chosen_input,chosen_output,length_chosen,chosen_ref_prob, reject_input,reject_output,length_reject,reject_ref_prob = batch_orpo[s]
+                    if os.environ["H5_MODE"] == "1":
+                        chosen_input = batch_orpo[s]['chosen_input']
+                        chosen_output = batch_orpo[s]['chosen_target']
+                        length_chosen = batch_orpo[s]['chosen_token_len']
+                        chosen_ref_prob = batch_orpo[s]['chosen_base_prob']
+                        reject_input = batch_orpo[s]['reject_input']
+                        reject_output = batch_orpo[s]['reject_target']
+                        length_reject = batch_orpo[s]['reject_token_len']
+                        reject_ref_prob = batch_orpo[s]['reject_base_prob']
+                        chosen_token = batch_orpo[s]['chosentoken']
+                        reject_token = batch_orpo[s]['rejecttoken']
+                    else:
+                        chosen_input,chosen_output,length_chosen,chosen_ref_prob, reject_input,reject_output,length_reject,reject_ref_prob,chosen_token,reject_token = batch_orpo[s]
 
                     # マスクの作成
                     chosen_mask = (chosen_output != 0).float()  # パディングは0と仮定
@@ -1637,7 +2153,7 @@ class RWKV(pl.LightningModule):
                     SFT_idx = []
                     SFT_idx = torch.cat([chosen_input.unsqueeze(0), reject_input.unsqueeze(0)], dim=0) # make batch with Chosen and Reject  
 
-                    RT = self(SFT_idx)
+                    RT ,moe_loss= self(SFT_idx)
 
 
                     #print(RT)

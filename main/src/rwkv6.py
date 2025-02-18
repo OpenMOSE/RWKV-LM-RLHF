@@ -225,32 +225,12 @@ if 'x060' in ModelGeneration:
 
             Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
 
-            LinearMode = 0
-
-            if Processing_Mode == 'full':
-                LinearMode = 0
-
-            elif Processing_Mode == 'freeze':
-                Quant_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['quant']
-                if Quant_Mode == 'none':
-                    LinearMode = 0
-                else:
-                    LinearMode = 1
-            else:
-                LinearMode = 1
             
-            if LinearMode == 0:
-                self.receptance = nn.Linear(args.n_embd, args.dim_att, bias=False)
-                self.key = nn.Linear(args.n_embd, args.dim_att, bias=False)
-                self.value = nn.Linear(args.n_embd, args.dim_att, bias=False)
-                self.output = nn.Linear(args.dim_att, args.n_embd, bias=False)
-                self.gate = nn.Linear(args.n_embd, args.dim_att, bias=False)
-            else:
-                self.receptance = make_linear_att(args.n_embd, args.dim_att, bias=False,n_layer=self.layer_id,pname='att.receptance')
-                self.key = make_linear_att(args.n_embd, args.dim_att, bias=False,n_layer=self.layer_id,pname='att.key')
-                self.value = make_linear_att(args.n_embd, args.dim_att, bias=False,n_layer=self.layer_id,pname='att.value')
-                self.output = make_linear_att(args.dim_att, args.n_embd, bias=False,n_layer=self.layer_id,pname='att.output')
-                self.gate = make_linear_att(args.n_embd, args.dim_att, bias=False,n_layer=self.layer_id,pname='att.gate')
+            self.receptance = make_linear_att(args.n_embd, args.dim_att, bias=False,n_layer=self.layer_id,pname='att.receptance')
+            self.key = make_linear_att(args.n_embd, args.dim_att, bias=False,n_layer=self.layer_id,pname='att.key')
+            self.value = make_linear_att(args.n_embd, args.dim_att, bias=False,n_layer=self.layer_id,pname='att.value')
+            self.output = make_linear_att(args.dim_att, args.n_embd, bias=False,n_layer=self.layer_id,pname='att.output')
+            self.gate = make_linear_att(args.n_embd, args.dim_att, bias=False,n_layer=self.layer_id,pname='att.gate')
 
 
 
@@ -323,28 +303,10 @@ if 'x060' in ModelGeneration:
 
             Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
 
-            LinearMode = 0
-
-            if Processing_Mode == 'full':
-                LinearMode = 0
-
-            elif Processing_Mode == 'freeze':
-                Quant_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['quant']
-                if Quant_Mode == 'none':
-                    LinearMode = 0
-                else:
-                    LinearMode = 1
-            else:
-                LinearMode = 1
-
-            if LinearMode == 0:
-                self.key = nn.Linear(args.n_embd, args.dim_ffn, bias=False)
-                self.receptance = nn.Linear(args.n_embd, args.n_embd, bias=False)
-                self.value = nn.Linear(args.dim_ffn, args.n_embd, bias=False)
-            else:
-                self.key = make_linear_ffn(args.n_embd, args.dim_ffn, bias=False,n_layer=self.layer_id,pname='ffn.key')
-                self.receptance = make_linear_ffn(args.n_embd, args.n_embd, bias=False,n_layer=self.layer_id,pname='ffn.receptance')
-                self.value = make_linear_ffn(args.dim_ffn, args.n_embd, bias=False,n_layer=self.layer_id,pname='ffn.value')
+            
+            self.key = make_linear_ffn(args.n_embd, args.dim_ffn, bias=False,n_layer=self.layer_id,pname='ffn.key')
+            self.receptance = make_linear_ffn(args.n_embd, args.n_embd, bias=False,n_layer=self.layer_id,pname='ffn.receptance')
+            self.value = make_linear_ffn(args.dim_ffn, args.n_embd, bias=False,n_layer=self.layer_id,pname='ffn.value')
 
         @MyFunction
         def forward(self, x):
@@ -413,33 +375,12 @@ if 'x060' in ModelGeneration:
 
             Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
 
-            LinearMode = 0
-
-            if Processing_Mode == 'full':
-                LinearMode = 0
-
-            elif Processing_Mode == 'freeze':
-                Quant_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['quant']
-                if Quant_Mode == 'none':
-                    LinearMode = 0
-                else:
-                    LinearMode = 1
-            else:
-                LinearMode = 1
-
-            if LinearMode == 0:
-                self.receptance = nn.Linear(args.n_embd, args.dim_att, bias=False)
-                self.key = nn.Linear(args.n_embd, args.dim_att, bias=False)
-                self.value = nn.Linear(args.n_embd, args.dim_att, bias=False)
-                self.output = nn.Linear(args.dim_att, args.n_embd, bias=False)
-                self.gate = nn.Linear(args.n_embd, args.dim_att, bias=False)
-
-            else:
-                self.receptance = make_linear_att(args.n_embd, args.dim_att, bias=False,n_layer=self.layer_id,pname='att.receptance')
-                self.key = make_linear_att(args.n_embd, args.dim_att, bias=False,n_layer=self.layer_id,pname='att.key')
-                self.value = make_linear_att(args.n_embd, args.dim_att, bias=False,n_layer=self.layer_id,pname='att.value')
-                self.output = make_linear_att(args.dim_att, args.n_embd, bias=False,n_layer=self.layer_id,pname='att.output')
-                self.gate = make_linear_att(args.n_embd, args.dim_att, bias=False,n_layer=self.layer_id,pname='att.gate')
+            
+            self.receptance = make_linear_att(args.n_embd, args.dim_att, bias=False,n_layer=self.layer_id,pname='att.receptance')
+            self.key = make_linear_att(args.n_embd, args.dim_att, bias=False,n_layer=self.layer_id,pname='att.key')
+            self.value = make_linear_att(args.n_embd, args.dim_att, bias=False,n_layer=self.layer_id,pname='att.value')
+            self.output = make_linear_att(args.dim_att, args.n_embd, bias=False,n_layer=self.layer_id,pname='att.output')
+            self.gate = make_linear_att(args.n_embd, args.dim_att, bias=False,n_layer=self.layer_id,pname='att.gate')
 
 
 
@@ -543,32 +484,12 @@ if 'x060' in ModelGeneration:
             self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
             Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
 
-            LinearMode = 0
-
-            if Processing_Mode == 'full':
-                LinearMode = 0
-
-            elif Processing_Mode == 'freeze':
-                Quant_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['quant']
-                if Quant_Mode == 'none':
-                    LinearMode = 0
-                else:
-                    LinearMode = 1
-            else:
-                LinearMode = 1 
             
-            if LinearMode == 0:
-                self.receptance = nn.Linear(args.n_embd, args.dim_att, bias=False)
-                self.key = nn.Linear(args.n_embd, args.dim_att, bias=False)
-                self.value = nn.Linear(args.n_embd, args.dim_att, bias=False)
-                self.output = nn.Linear(args.dim_att, args.n_embd, bias=False)
-                self.gate = nn.Linear(args.n_embd, args.dim_att, bias=False)
-            else:
-                self.receptance = make_linear_att(args.n_embd, args.dim_att, bias=False,n_layer=self.layer_id,pname='att.receptance')
-                self.key = make_linear_att(args.n_embd, args.dim_att, bias=False,n_layer=self.layer_id,pname='att.key')
-                self.value = make_linear_att(args.n_embd, args.dim_att, bias=False,n_layer=self.layer_id,pname='att.value')
-                self.output = make_linear_att(args.dim_att, args.n_embd, bias=False,n_layer=self.layer_id,pname='att.output')
-                self.gate = make_linear_att(args.n_embd, args.dim_att, bias=False,n_layer=self.layer_id,pname='att.gate')
+            self.receptance = make_linear_att(args.n_embd, args.dim_att, bias=False,n_layer=self.layer_id,pname='att.receptance')
+            self.key = make_linear_att(args.n_embd, args.dim_att, bias=False,n_layer=self.layer_id,pname='att.key')
+            self.value = make_linear_att(args.n_embd, args.dim_att, bias=False,n_layer=self.layer_id,pname='att.value')
+            self.output = make_linear_att(args.dim_att, args.n_embd, bias=False,n_layer=self.layer_id,pname='att.output')
+            self.gate = make_linear_att(args.n_embd, args.dim_att, bias=False,n_layer=self.layer_id,pname='att.gate')
             self.ln_x = nn.GroupNorm(self.n_head, args.dim_att, eps=(1e-5)*(args.head_size_divisor**2))
         #@torch.jit.script_method
         
@@ -636,28 +557,10 @@ if 'x060' in ModelGeneration:
 
             Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
 
-            LinearMode = 0
-
-            if Processing_Mode == 'full':
-                LinearMode = 0
-
-            elif Processing_Mode == 'freeze':
-                Quant_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['quant']
-                if Quant_Mode == 'none':
-                    LinearMode = 0
-                else:
-                    LinearMode = 1
-            else:
-                LinearMode = 1
-
-            if LinearMode == 0:
-                self.key = nn.Linear(args.n_embd, args.dim_ffn, bias=False)
-                self.receptance = nn.Linear(args.n_embd, args.n_embd, bias=False)
-                self.value = nn.Linear(args.dim_ffn, args.n_embd, bias=False)
-            else:
-                self.key = make_linear_ffn(args.n_embd, args.dim_ffn, bias=False,n_layer=self.layer_id,pname='ffn.key')
-                self.receptance = make_linear_ffn(args.n_embd, args.n_embd, bias=False,n_layer=self.layer_id,pname='ffn.receptance')
-                self.value = make_linear_ffn(args.dim_ffn, args.n_embd, bias=False,n_layer=self.layer_id,pname='ffn.value')
+            
+            self.key = make_linear_ffn(args.n_embd, args.dim_ffn, bias=False,n_layer=self.layer_id,pname='ffn.key')
+            self.receptance = make_linear_ffn(args.n_embd, args.n_embd, bias=False,n_layer=self.layer_id,pname='ffn.receptance')
+            self.value = make_linear_ffn(args.dim_ffn, args.n_embd, bias=False,n_layer=self.layer_id,pname='ffn.value')
 
         #@torch.compile
         def forward(self, x, last_state: ChannelMixState):

@@ -109,7 +109,7 @@ class train_callback(pl.Callback):
                     pass
                 trainer.my_log.flush()
                 if len(args.wandb) > 0:
-                    print("Login to wandb...")
+                    #print("Login to wandb...")
                     import wandb
                     wandb.init(
                         project=args.wandb,
@@ -157,11 +157,37 @@ class train_callback(pl.Callback):
                     try:
                         lll |= {"smooth_loss": trainer.smooth_loss, "kl_loss": trainer.kl_loss, "active_ctx":trainer.realproceedtokens}
                     except: pass
+                if args.zerocot:
+                    #
+                    try:
+                        lll |= {"advantage": trainer.advantage,
+                                "advantage_clipped": trainer.advantage_clipped,
+                                "actor_ppl":trainer.actor_ppl,
+                                "base_ppl":trainer.base_ppl,
+                                "actor_nll":trainer.actor_nll,
+                                "base_nll":trainer.base_nll,
+                                "entropy":trainer.entropy,
+                                "loss_rl":trainer.loss_rl,
+                                "loss_entropy":trainer.loss_entropy                                
+                                }
+                    except: pass
+                if args.grpo:
+                    #
+                    try:
+                        lll |= {"rewards_mean": trainer.rewards_mean,
+                                "rewards_std": trainer.rewards_std,
+                                "kl_value":trainer.kl_value,
+                                "loss_reinforce":trainer.loss_reinforce                                                           
+                                }
+                    except: pass
                 if args.sft:
                     try:
                         lll |= {"smooth_loss": trainer.smooth_loss, "active_ctx":trainer.realproceedtokens}
+                        if args.moe:
+                            #moe_router_loss
+                            lll |= {"moe_router_loss": trainer.moe_router_loss}
                     except: pass
-                if args.dpo:
+                if args.dpo or args.simpo or args.wpo:
                     try:
                         lll |= {"pref_percentage": trainer.pref_match_percentage, "loss_1": trainer.loss_1_general_or_sft, "loss_2_dpo": trainer.loss_2_dpo}
                     except: pass
@@ -188,7 +214,7 @@ class train_callback(pl.Callback):
             dataset = trainer.train_dataloader.dataset
         else:
             dataset = trainer.train_dataloader.dataset.datasets
-        assert "DPODataset" in str(dataset) or 'HDF5TopKTensorDataset' in str(dataset)
+        assert "DPODataset" in str(dataset) or 'HDF5TopKTensorDataset' in str(dataset) or 'RLHFDataset' in str(dataset)
         if args.dpo or args.orpo:
             dataset.global_rank = trainer.global_rank
             dataset.real_epoch = int(args.epoch_begin + trainer.current_epoch)
@@ -215,28 +241,37 @@ class train_callback(pl.Callback):
 
                 for name, state in to_save_dict.items():
                     #print(f'{name} {param_dict[name].requires_grad}')
-                    if param_dict[name].requires_grad:
-                        if LAYER_CONFIG['emb']['mode']=='full' and 'emb' in name:
-                            lora_dict[name] = state
-                        if LAYER_CONFIG['head']['mode']=='full' and 'head' in name:
-                            lora_dict[name] = state
-                        for i in range(args.n_layer):
-                            text = f'blocks.{str(i)}'
-                            if LAYER_CONFIG[f'{str(i)}']['mode']=='full' and text in name:
+                    try:
+                        if param_dict[name].requires_grad:
+                            if LAYER_CONFIG['emb']['mode']=='full' and 'emb' in name:
                                 lora_dict[name] = state
-                                break
-                        if '.time_state' in name and args.state_output_mode == 0:
+                            if LAYER_CONFIG['head']['mode']=='full' and 'head' in name:
                                 lora_dict[name] = state
-                        elif '.time_state' in name:
-                                lora_dict[name] = state
-                                state_dict[name] = state
-                        elif ('.bone' in name or '.lora_' in name or '.time' in name or 'ln' in name):
-                            lora_dict[name] = state
-                        elif args.limited_lora == 0:
-                            for targetname in v7_additional_parameters:
-                                if targetname in name and targetname != '' and name != '':
+                            for i in range(args.n_layer):
+                                text = f'blocks.{str(i)}'
+                                if LAYER_CONFIG[f'{str(i)}']['mode']=='full' and text in name:
                                     lora_dict[name] = state
                                     break
+                            if '.time_state' in name and args.state_output_mode == 0:
+                                    lora_dict[name] = state
+                            elif '.time_state' in name:
+                                    lora_dict[name] = state
+                                    state_dict[name] = state
+                            elif ('.bone' in name or '.lora_' in name or '.time' in name or 'ln' in name or 'router' in name):
+                                lora_dict[name] = state
+                            elif args.limited_lora == 0:
+                                for targetname in v7_additional_parameters:
+                                    if targetname in name and targetname != '' and name != '':
+                                        lora_dict[name] = state
+                                        break
+                        else:
+                            if '.moe_info' in name or '.moe_experts' in name:
+                                lora_dict[name] = state
+                                #print(f'Additional config saved {name}')
+                    except (KeyError, AttributeError):
+                        # キーが存在しない場合や、requires_gradプロパティがない場合の処理
+                        #print(f'{name} not found')
+                        pass
 
 
 

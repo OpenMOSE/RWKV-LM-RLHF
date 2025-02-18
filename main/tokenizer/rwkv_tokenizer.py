@@ -47,7 +47,7 @@ class TRIE:
         return ret
 
 class TRIE_TOKENIZER():
-    def __init__(self, file_name):
+    def __init__(self, file_name='tokenizer/rwkv_vocab_v20230424.txt'):
         self.idx2token = {}
         sorted = [] # must be already sorted
         with open(file_name, "r", encoding="utf-8") as f:
@@ -57,6 +57,7 @@ class TRIE_TOKENIZER():
             x = eval(l[l.index(' '):l.rindex(' ')])
             x = x.encode("utf-8") if isinstance(x, str) else x
             assert isinstance(x, bytes)
+            #print(f"len(x) {len(x)} int(l[l.rindex(' '):]) = {int(l[l.rindex(' '):])}")
             assert len(x) == int(l[l.rindex(' '):])
             sorted += [x]
             self.idx2token[idx] = x
@@ -99,5 +100,5 @@ class TRIE_TOKENIZER():
                 s = s.decode('utf-8')
             except:
                 pass
-            print(f'{repr(s)}{i}', end=' ')
+            print(f'{repr(s)}', end=' ')
         print()

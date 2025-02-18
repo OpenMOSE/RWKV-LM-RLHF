@@ -1,7 +1,7 @@
 #RWKV v7 Wind(CUDA,Triton),Flash-Linear-Attention(Triton)
 
 from .config import LAYER_CONFIG
-from .linears import make_linear_att,make_linear_ffn,make_linear_head,make_emb
+from .linears import make_linear_att,make_linear_ffn,make_linear_head,make_emb,make_linear_ffn_experts,QuantLinear
 
 import functools
 import os, math, gc, importlib
@@ -17,7 +17,7 @@ from einops import rearrange
 allow_ops_in_compiled_graph()
 
 # about FLA
-from fla.ops.rwkv7 import chunk_rwkv7
+from fla.ops.rwkv7 import chunk_rwkv7,fused_recurrent_rwkv7
 
 # for infctx
 from .infctx_module import *
@@ -39,7 +39,7 @@ MyFunction = __nop
 
 if 'x070' in ModelGeneration:
     print('RWKV v7 Mode')
-    if 'infctx' in TrainingType or 'state' in TrainingType or KernelMode == 1: #infctx or FLA Mode
+    if 'flatriton' in RunningDevice or 'infctx' in TrainingType or ('state' in TrainingType and KernelMode == 1): #infctx or FLA Mode
         print('x070 Flash-Linear-Attention Kernel Mode')
         @torch.jit.ignore
         def RUN_RWKV7_STATE(r, k, v, w, a, b, s, HEAD_SIZE=64): # for State-tuning, infctx
@@ -48,8 +48,10 @@ if 'x070' in ModelGeneration:
             H = HC//C
             w=-torch.exp(w)
             r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
-            s=s.unsqueeze(0).repeat(B, 1, 1, 1)
+            #s=s.unsqueeze(0).repeat(B, 1, 1, 1)
+            #s = s.permute(0,1,3,2).contiguous()
             o, state = chunk_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=s, output_final_state=True, head_first=False)
+            #state = state.permute(0,1,3,2).contiguous()
             return o, state
         def RUN_RWKV7_INFCTX(r, k, v, w, a, b, s, HEAD_SIZE=64): # for State-tuning, infctx
             B,T,HC = w.shape
@@ -59,16 +61,32 @@ if 'x070' in ModelGeneration:
             r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
             o, state = chunk_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=s, output_final_state=True, head_first=False)
             return o, state
-        @torch.jit.ignore
-        def RUN_CUDA_RWKV7g(r,w,k,v,a,b, HEAD_SIZE=64): #compatible with cuda implement
+        def RUN_RWKV7_RECURRENT(r, k, v, w, a, b, s, HEAD_SIZE=64): # for sampling
             B,T,HC = w.shape
             C = HEAD_SIZE
             H = HC//C
             w=-torch.exp(w)
+            #w = -w.float().exp().to(r)
             r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
-            o, state = chunk_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=None, output_final_state=False, head_first=False)
-            #print(state.shape)
-            #exit()
+            o, state = fused_recurrent_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=s, output_final_state=True, head_first=False)
+            #o = rearrange(o, 'b h l d -> b l (h d)')
+            return o, state
+        # def RUN_CUDA_RWKV7g(r, log_neglog_w, k, v, a, b, num_heads:int) -> torch.Tensor:
+        #     B,T,_ = r.shape
+        #     r,log_neglog_w,k,v,a,b = [i.view(B,T,num_heads,-1) for i in [r,log_neglog_w,k,v,a,b]]
+        #     log_w = -log_neglog_w.float().exp().to(r)
+        #     output, state = fused_recurrent_rwkv7(r=r, log_w=log_w, k=k, v=v, a=a, b=b, output_final_state=False)
+        #     return output, state
+        @torch.jit.ignore
+        def RUN_CUDA_RWKV7g(r,w,k,v,a,b, HEAD_SIZE=64): #compatible with cuda implement
+            print('FLA chunk_wkv7')
+            B,T,HC = w.shape
+            C = HEAD_SIZE
+            H = HC//C
+            #w=-torch.exp(w)
+            r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
+            w = -w.float().exp().to(r)
+            o, _ = chunk_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=None, output_final_state=False, head_first=False)
             return o
     else:
         if 'cuda' in RunningDevice:
@@ -128,6 +146,17 @@ if 'x070' in ModelGeneration:
                 B,T,HC = q.shape
                 q,w,k,v,a,b = [i.view(B,T,HC//HEAD_SIZE,HEAD_SIZE) for i in [q,w,k,v,a,b]]
                 return WindBackstepping.apply(w,q,k,v,a,b).view(B,T,HC)
+            
+            def RUN_RWKV7_RECURRENT(r, k, v, w, a, b, s, HEAD_SIZE=64): # for sampling
+                B,T,HC = w.shape
+                C = HEAD_SIZE
+                H = HC//C
+                w=-torch.exp(w)
+                #w = -w.float().exp().to(r)
+                r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
+                o, state = fused_recurrent_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=s, output_final_state=True, head_first=False)
+                #o = rearrange(o, 'b h l d -> b l (h d)')
+                return o, state
             
         else:
             print('x070 Wind Triton Kernel Mode')
@@ -328,8 +357,13 @@ if 'x070' in ModelGeneration:
                 r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
                 s0 = th.zeros(B,H,C,C, dtype=th.bfloat16,device=w.device)
                 return TritonRWKV7.apply(w,r,k,v,a,b,s0,dot_prec)[0].view(B,T,HC)
-            def RUN_RWKV7_STATE(r, k, v, w, a, b, s):
-                assert "Triton Wind kernel currently not supported state. please set --fla 1 :)"
+            def RUN_RWKV7_STATE(r, k, v, w, a, b, s, HEAD_SIZE=64, dot_prec = 'fp32'):
+                B,T,HC = w.shape
+                C = HEAD_SIZE
+                H = HC//C
+                r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
+                s0 = s
+                return TritonRWKV7.apply(w,r,k,v,a,b,s0,dot_prec)[0].view(B,T,HC), None
 
 
     
@@ -429,37 +463,18 @@ if 'x070' in ModelGeneration:
 
                 Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
 
-                LinearMode = 0
-
-                if Processing_Mode == 'full':
-                    LinearMode = 0
-
-                elif Processing_Mode == 'freeze':
-                    Quant_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['quant']
-                    if Quant_Mode == 'none':
-                        LinearMode = 0
-                    else:
-                        LinearMode = 1
-                else:
-                    LinearMode = 1
-
-                if LinearMode == 0:
-                    self.receptance = nn.Linear(C, C, bias=False)
-                    self.key = nn.Linear(C, C, bias=False)
-                    self.value = nn.Linear(C, C, bias=False)
-                    self.output = nn.Linear(C, C, bias=False)
-                else:
-                    self.receptance = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.receptance')
-                    self.key = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.key')
-                    self.value = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.value')
-                    self.output = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.output')
+               
+                self.receptance = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.receptance')
+                self.key = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.key')
+                self.value = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.value')
+                self.output = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.output')
 
 
                 self.ln_x = nn.GroupNorm(H, C, eps=(1e-5)*(args.head_size_divisor**2)) # !!! notice eps value !!!
 
 
 
-        def forward(self, x, v_first):
+        def forward(self, x, v_first,passthrough = False):
             B, T, C = x.size()
             H = self.n_head
             xx = self.time_shift(x) - x
@@ -471,10 +486,12 @@ if 'x070' in ModelGeneration:
             xa = x + xx * self.x_a
             xg = x + xx * self.x_g
 
-            r = self.receptance(xr)
+            
+
+            r = self.receptance(xr,passthrough)
             w = -F.softplus(-(self.w0 + torch.tanh(xw @ self.w1) @ self.w2)) - 0.5 # soft-clamp to (-inf, -0.5)
-            k = self.key(xk)
-            v = self.value(xv)
+            k = self.key(xk,passthrough)
+            v = self.value(xv,passthrough)
             if self.layer_id == 0:
                 v_first = v # store the v of the first layer
             else:
@@ -486,13 +503,63 @@ if 'x070' in ModelGeneration:
             kk = F.normalize(kk.view(B,T,H,-1), dim=-1, p=2.0).view(B,T,C)
             k = k * (1 + (a-1) * self.k_a)
 
-            x = RUN_CUDA_RWKV7g(r, w, k, v, -kk, kk*a)
+            x = RUN_CUDA_RWKV7g(r, w, k, v, -kk, kk*a,HEAD_SIZE=self.head_size)
 
             x = self.ln_x(x.view(B * T, C)).view(B, T, C)
 
             x = x + ((r.view(B,T,H,-1)*k.view(B,T,H,-1)*self.r_k).sum(dim=-1, keepdim=True) * v.view(B,T,H,-1)).view(B,T,C)
-            x = self.output(x * g)
+            x = self.output(x * g,passthrough)
             return x, v_first
+        
+        #@torch.no_grad() # for sampling ppo
+        @torch.compile
+        def forward_rnn(self, x, v_first, last_state: TimeMixState,passthrough=False):
+            
+            B, T, C = x.size()
+            H = self.n_head
+            #xx = self.time_shift(x) - x
+
+            shift_state = last_state.shift_state
+            wkv_state = last_state.wkv_state.clone().contiguous() 
+
+            xx = torch.concat((shift_state.unsqueeze(1), x[:, :-1]), dim=1) - x
+
+            xr = x + xx * self.x_r
+            xw = x + xx * self.x_w
+            xk = x + xx * self.x_k
+            xv = x + xx * self.x_v
+            xa = x + xx * self.x_a
+            xg = x + xx * self.x_g
+
+            shift_state = x[:, -1]
+
+            r = self.receptance(xr,passthrough)
+            w = -F.softplus(-(self.w0 + torch.tanh(xw @ self.w1) @ self.w2)) - 0.5 # soft-clamp to (-inf, -0.5)
+            k = self.key(xk,passthrough)
+            v = self.value(xv,passthrough)
+            if self.layer_id == 0:
+                v_first = v # store the v of the first layer
+            else:
+                v = v + (v_first - v) * torch.sigmoid(self.v0 + (xv @ self.v1) @ self.v2) # add value residual
+            a = torch.sigmoid(self.a0 + (xa @ self.a1) @ self.a2) # a is "in-context learning rate"
+            g = torch.sigmoid(xg @ self.g1) @ self.g2
+
+            kk = k * self.k_k
+            kk = F.normalize(kk.view(B,T,H,-1), dim=-1, p=2.0).view(B,T,C)
+            k = k * (1 + (a-1) * self.k_a)
+
+            x, wkv_state = RUN_RWKV7_RECURRENT(r,k,v,w,-kk, kk*a,s=wkv_state)
+
+            #x = x.view(B,T,-1).to(dtype=r.dtype)
+            #x = x.permute(0, 2, 1).contiguous()  # (B,H*N,T)
+
+            x = self.ln_x(x.view(B * T, C)).view(B, T, C)
+
+            x = x + ((r.view(B,T,H,-1)*k.view(B,T,H,-1)*self.r_k).sum(dim=-1, keepdim=True) * v.view(B,T,H,-1)).view(B,T,C)
+            x = self.output(x * g,passthrough)
+
+            return x, v_first,TimeMixState(shift_state,wkv_state)
+        
     
     class RWKV_Tmix_x070_state(nn.Module):
         def __init__(self, args, layer_id):
@@ -593,37 +660,18 @@ if 'x070' in ModelGeneration:
 
                 Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
 
-                LinearMode = 0
-
-                if Processing_Mode == 'full':
-                    LinearMode = 0
-
-                elif Processing_Mode == 'freeze':
-                    Quant_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['quant']
-                    if Quant_Mode == 'none':
-                        LinearMode = 0
-                    else:
-                        LinearMode = 1
-                else:
-                    LinearMode = 1
-
-                if LinearMode == 0:
-                    self.receptance = nn.Linear(C, C, bias=False)
-                    self.key = nn.Linear(C, C, bias=False)
-                    self.value = nn.Linear(C, C, bias=False)
-                    self.output = nn.Linear(C, C, bias=False)
-                else:
-                    self.receptance = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.receptance')
-                    self.key = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.key')
-                    self.value = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.value')
-                    self.output = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.output')
+                
+                self.receptance = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.receptance')
+                self.key = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.key')
+                self.value = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.value')
+                self.output = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.output')
 
 
                 self.ln_x = nn.GroupNorm(H, C, eps=(1e-5)*(args.head_size_divisor**2)) # !!! notice eps value !!!
 
 
 
-        def forward(self, x, v_first):
+        def forward(self, x, v_first,passthrough):
             B, T, C = x.size()
             H = self.n_head
             xx = self.time_shift(x) - x
@@ -635,10 +683,10 @@ if 'x070' in ModelGeneration:
             xa = x + xx * self.x_a
             xg = x + xx * self.x_g
 
-            r = self.receptance(xr)
+            r = self.receptance(xr,passthrough)
             w = -F.softplus(-(self.w0 + torch.tanh(xw @ self.w1) @ self.w2)) - 0.5 # soft-clamp to (-inf, -0.5)
-            k = self.key(xk)
-            v = self.value(xv)
+            k = self.key(xk,passthrough)
+            v = self.value(xv,passthrough)
             if self.layer_id == 0:
                 v_first = v # store the v of the first layer
             else:
@@ -655,7 +703,7 @@ if 'x070' in ModelGeneration:
             x = self.ln_x(x.view(B * T, C)).view(B, T, C)
 
             x = x + ((r.view(B,T,H,-1)*k.view(B,T,H,-1)*self.r_k).sum(dim=-1, keepdim=True) * v.view(B,T,H,-1)).view(B,T,C)
-            x = self.output(x * g)
+            x = self.output(x * g,passthrough)
             return x, v_first
         
 
@@ -758,30 +806,11 @@ if 'x070' in ModelGeneration:
 
                 Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
 
-                LinearMode = 0
-
-                if Processing_Mode == 'full':
-                    LinearMode = 0
-
-                elif Processing_Mode == 'freeze':
-                    Quant_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['quant']
-                    if Quant_Mode == 'none':
-                        LinearMode = 0
-                    else:
-                        LinearMode = 1
-                else:
-                    LinearMode = 1
-
-                if LinearMode == 0:
-                    self.receptance = nn.Linear(C, C, bias=False)
-                    self.key = nn.Linear(C, C, bias=False)
-                    self.value = nn.Linear(C, C, bias=False)
-                    self.output = nn.Linear(C, C, bias=False)
-                else:
-                    self.receptance = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.receptance')
-                    self.key = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.key')
-                    self.value = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.value')
-                    self.output = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.output')
+                
+                self.receptance = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.receptance')
+                self.key = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.key')
+                self.value = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.value')
+                self.output = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.output')
 
 
                 self.ln_x = nn.GroupNorm(H, C, eps=(1e-5)*(args.head_size_divisor**2)) # !!! notice eps value !!!
@@ -852,40 +881,34 @@ if 'x070' in ModelGeneration:
 
             Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
 
-            LinearMode = 0
-
-            if Processing_Mode == 'full':
-                LinearMode = 0
-
-            elif Processing_Mode == 'freeze':
-                Quant_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['quant']
-                if Quant_Mode == 'none':
-                    LinearMode = 0
-                else:
-                    LinearMode = 1
-            else:
-                LinearMode = 1
-
-            if LinearMode == 0:
-                self.key = nn.Linear(args.n_embd, args.dim_ffn, bias=False)
-                self.value = nn.Linear(args.dim_ffn, args.n_embd, bias=False)
-            else:
-                self.key = make_linear_ffn(args.n_embd, args.dim_ffn, bias=False,n_layer=self.layer_id,pname='ffn.key')
-                self.value = make_linear_ffn(args.dim_ffn, args.n_embd, bias=False,n_layer=self.layer_id,pname='ffn.value')
+     
+            self.key = make_linear_ffn(args.n_embd, args.dim_ffn, bias=False,n_layer=self.layer_id,pname='ffn.key')
+            self.value = make_linear_ffn(args.dim_ffn, args.n_embd, bias=False,n_layer=self.layer_id,pname='ffn.value')
 
             # !!! initialize if you are using RWKV_Tmix_x070 in your code !!!
             # self.key.weight.data.uniform_(-0.5/(args.n_embd**0.5), 0.5/(args.n_embd**0.5))
             # self.value.weight.data.zero_()
 
-        def forward(self, x):
+        def forward(self, x,passthrough=False):
             xx = self.time_shift(x) - x
             #xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]), dim=1) - x
             
             
             k = x + xx * self.x_k
-            k = torch.relu(self.key(k)) ** 2
+            k = torch.relu(self.key(k,passthrough)) ** 2
 
-            return self.value(k)#,ChannelMixState(x[:, -1])
+            return self.value(k,passthrough)#,ChannelMixState(x[:, -1])
+        
+        @torch.no_grad() # for sampling ppo
+        def forward_rnn(self, x,last_state: ChannelMixState,passthrough = False):
+            #xx = self.time_shift(x) - x
+            xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]), dim=1) - x
+            
+            
+            k = x + xx * self.x_k
+            k = torch.relu(self.key(k,passthrough)) ** 2
+
+            return self.value(k,passthrough),ChannelMixState(x[:, -1])
         
     class RWKV_CMix_x070_infctx(nn.Module):
         def __init__(self, args, layer_id):
@@ -903,26 +926,9 @@ if 'x070' in ModelGeneration:
 
             Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
 
-            LinearMode = 0
 
-            if Processing_Mode == 'full':
-                LinearMode = 0
-
-            elif Processing_Mode == 'freeze':
-                Quant_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['quant']
-                if Quant_Mode == 'none':
-                    LinearMode = 0
-                else:
-                    LinearMode = 1
-            else:
-                LinearMode = 1
-
-            if LinearMode == 0:
-                self.key = nn.Linear(args.n_embd, args.dim_ffn, bias=False)
-                self.value = nn.Linear(args.dim_ffn, args.n_embd, bias=False)
-            else:
-                self.key = make_linear_ffn(args.n_embd, args.dim_ffn, bias=False,n_layer=self.layer_id,pname='ffn.key')
-                self.value = make_linear_ffn(args.dim_ffn, args.n_embd, bias=False,n_layer=self.layer_id,pname='ffn.value')
+            self.key = make_linear_ffn(args.n_embd, args.dim_ffn, bias=False,n_layer=self.layer_id,pname='ffn.key')
+            self.value = make_linear_ffn(args.dim_ffn, args.n_embd, bias=False,n_layer=self.layer_id,pname='ffn.value')
 
             # !!! initialize if you are using RWKV_Tmix_x070 in your code !!!
             # self.key.weight.data.uniform_(-0.5/(args.n_embd**0.5), 0.5/(args.n_embd**0.5))
@@ -937,7 +943,221 @@ if 'x070' in ModelGeneration:
             k = torch.relu(self.key(k)) ** 2
 
             return self.value(k),ChannelMixState(x[:, -1])
+        
+    #---------------------------------------------------------
+    # Router層の定義：hiddenベクトルから各Expertへのスコアを出す
+    #---------------------------------------------------------
+    class Router(nn.Module):
+        def __init__(self, input_dim, num_experts):
+            super().__init__()
+            self.linear = nn.Linear(input_dim, num_experts,bias=False)
+            nn.init.kaiming_uniform_(getattr(self,'linear').weight, a=math.sqrt(5))
+            #nn.init.zeros_(self.linear.bias)
+            #nn.init.normal_(self.linear.weight, mean=0, std=0.01)
 
+        def forward(self, x):
+            # x: (batch*seq, input_dim)
+            # 出力: (batch*seq, num_experts)
+            return self.linear(x)
+        
+    class RWKV_CMix_x070_LoRAExperts(nn.Module):
+        def __init__(self, args, layer_id, Shared_key,Shared_value,ExpertNo=0):
+            # 最初にsuper().__init__()を呼び出す
+            super().__init__()
+            self.layer_id = layer_id
+            self.key = make_linear_ffn_experts(args.n_embd, args.dim_ffn, shared_weight = Shared_key,bias=False,n_layer=self.layer_id,pname='ffn.key',ExpertNo = ExpertNo)
+            self.value = make_linear_ffn_experts(args.dim_ffn, args.n_embd, shared_weight = Shared_value, bias=False,n_layer=self.layer_id,pname='ffn.value',ExpertNo=ExpertNo)
+        def forward(self, hidden):
+            k = torch.relu(self.key(hidden)) ** 2
+            return self.value(k)
+      
+
+    class RWKV_CMix_x070_MoLE_(nn.Module):
+        def __init__(self, args, layer_id, num_experts=4):
+            super().__init__()
+            self.args = args
+            self.layer_id = layer_id
+            self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
+
+            self.ActiveExperts = args.moe_active  
+            self.num_experts = num_experts
+
+            #for save in checkpoint
+            
+
+            self.shared_expert = True
+
+            with torch.no_grad():
+                ratio_1_to_almost0 = 1.0 - (layer_id / args.n_layer)  # 1 からほぼ0へ
+                ddd = torch.ones(1, 1, args.n_embd)
+                for i in range(args.n_embd):
+                    ddd[0, 0, i] = i / args.n_embd
+                self.x_k = nn.Parameter(1.0 - torch.pow(ddd, ratio_1_to_almost0**4))
+                self.moe_info = nn.Parameter(torch.tensor([float(num_experts), float(args.moe_active)]))
+
+            Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
+
+            # baseweight is frozen permanently
+            self.key = QuantLinear(args.n_embd, args.dim_ffn, bias=False, n_layer=self.layer_id)
+            self.value = QuantLinear(args.dim_ffn, args.n_embd, bias=False, n_layer=self.layer_id)
+
+
+            for i in range(self.num_experts):
+                setattr(self, f"expert_{i}", RWKV_CMix_x070_LoRAExperts(self.args, self.layer_id, self.key, self.value))
+
+
+            if self.shared_expert:
+                self.router = Router(args.n_embd, self.num_experts - 1)
+            else:
+                self.router = Router(args.n_embd, self.num_experts)
+
+            nn.init.kaiming_uniform_(self.router.weight, a=math.sqrt(5))
+
+        def forward(self, hidden, input_ids): # input_ids for hashrouter. but currently not use.
+
+
+            # time-shift 処理
+            shifted = self.time_shift(hidden)
+            if len(shifted.size()) == 2:
+                shifted = shifted.unsqueeze(1)
+            delta_hidden_to_shifted = shifted - hidden
+            hidden_with_tokenshift = hidden + delta_hidden_to_shifted * self.x_k
+            # [B, S, n_embd] => [B*S, n_embd]
+            flat_hidden = hidden_with_tokenshift.reshape(-1, hidden_with_tokenshift.size(-1))
+            B = flat_hidden.size(0)  # B*S のトータルトークン数
+
+            flat_value = torch.zeros_like(flat_hidden)  
+
+            out_0 = getattr(self, f"expert_{0}")(flat_hidden)  
+            flat_value += out_0  # ゲーティングなしで全量加算
+
+            router_scores = self.router(flat_hidden)  
+            AdaptiveActiveExperts = self.ActiveExperts - 1
+            router_scores_others = router_scores
+            topk_values, topk_experts = torch.topk(router_scores_others, k=AdaptiveActiveExperts, dim=-1)
+            gating = F.softmax(topk_values, dim=-1)  # 同じshape [B, (AdaptiveActiveExperts)]
+            gating_full = torch.zeros_like(router_scores_others)  # [B, num_experts-1]
+            gating_full.scatter_(dim=1, index=topk_experts, src=gating)
+            usage = gating_full.mean(dim=0)  # -> (num_experts-1,)
+            load_balance_loss = ((usage - (1.0 / (self.num_experts - 1))) ** 2).sum()
+
+            topk_experts_flat = topk_experts.reshape(-1)  # 各トークンが割り当てられたexpert番号(=0〜(num_experts-2))
+            gating_flat = gating.reshape(-1)              # そのトークンのゲーティング値
+
+            source_indices = torch.arange(B, device=flat_hidden.device).unsqueeze(1).expand(B, AdaptiveActiveExperts).reshape(-1)
+            real_expert_id = topk_experts_flat  # [0..(num_experts-2)]
+
+ 
+
+            for e in range(1, self.num_experts):
+                mask_e = (real_expert_id == e)
+                if not mask_e.any():
+                    continue
+                indices_e = mask_e.nonzero(as_tuple=True)[0]
+                input_e = flat_hidden[source_indices[indices_e]]
+                out_e = getattr(self, f"expert_{e}")(input_e)
+                out_e = out_e * gating_flat[indices_e].unsqueeze(-1)
+                flat_value.index_add_(0, source_indices[indices_e], out_e)
+
+            # (B*S, n_embd) => [B_, S_, n_embd] に戻す
+            kv = flat_value.view(hidden.size(0), hidden.size(1), hidden.size(2))
+            return kv, load_balance_loss
+        
+    class RWKV_CMix_x070_MoLE(nn.Module):
+        def __init__(self, args, layer_id, num_experts=4):
+            super().__init__()
+            self.args = args
+            self.layer_id = layer_id
+            self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
+
+            # 利用する active expert の数
+            self.ActiveExperts = args.moe_active  
+            self.num_experts = num_experts
+            self.shared_expert = True  # expert_0 は全トークンに対して必ず呼ばれる
+
+            with torch.no_grad():
+                ratio_1_to_almost0 = 1.0 - (layer_id / args.n_layer)  # 1 からほぼ0へ
+                ddd = torch.ones(1, 1, args.n_embd)
+                for i in range(args.n_embd):
+                    ddd[0, 0, i] = i / args.n_embd
+                # time-shift 用の重み
+                self.x_k = nn.Parameter(1.0 - torch.pow(ddd, ratio_1_to_almost0**4))
+                # MoE 情報（チェックポイント保存用）
+                self.moe_info = nn.Parameter(torch.tensor([float(num_experts), float(args.moe_active)]))
+
+            # layer の処理モード（必要に応じて）
+            Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
+
+            # 元の Dense FFN の重みを使って各 expert を初期化する
+            self.key = QuantLinear(args.n_embd, args.dim_ffn, bias=False, n_layer=self.layer_id)
+            self.value = QuantLinear(args.dim_ffn, args.n_embd, bias=False, n_layer=self.layer_id)
+            for i in range(self.num_experts):
+                setattr(self, f"expert_{i}", RWKV_CMix_x070_LoRAExperts(self.args, self.layer_id, self.key, self.value))
+
+            # shared_expert==True の場合、router は expert_1 以降のスコアのみを出す
+            if self.shared_expert:
+                self.router = Router(args.n_embd, self.num_experts - 1)
+            else:
+                self.router = Router(args.n_embd, self.num_experts)
+
+        def forward(self, hidden, input_ids):  # input_ids は現状使用していません
+            # 1. time-shift 処理
+            shifted = self.time_shift(hidden)
+            if len(shifted.size()) == 2:
+                shifted = shifted.unsqueeze(1)
+            delta_hidden_to_shifted = shifted - hidden
+            hidden_with_tokenshift = hidden + delta_hidden_to_shifted * self.x_k
+
+            # [B, S, n_embd] -> [B*S, n_embd]
+            flat_hidden = hidden_with_tokenshift.reshape(-1, hidden_with_tokenshift.size(-1))
+            B = flat_hidden.size(0)
+
+            # 2. 各 expert へのルーティングスコアを生成
+            if self.shared_expert:
+                # router は expert_1～expert_(num_experts-1) のスコアを出すので、expert_0 のスコアは 0 とする
+                router_scores_shared = self.router(flat_hidden)  # shape: [B, num_experts-1]
+                expert0_score = torch.zeros(B, 1, device=flat_hidden.device, dtype=router_scores_shared.dtype)
+                router_scores_all = torch.cat([expert0_score, router_scores_shared], dim=-1)  # [B, num_experts]
+            else:
+                router_scores_all = self.router(flat_hidden)  # [B, num_experts]
+
+            # 3. トークンごとに active expert を top-k 選択し、正規化する
+            if self.ActiveExperts < self.num_experts:
+                topk_values, topk_indices = torch.topk(router_scores_all, k=self.ActiveExperts, dim=-1)
+                gating_active = F.softmax(topk_values, dim=-1)  # shape: [B, ActiveExperts]
+                gating_full = torch.zeros_like(router_scores_all)
+                gating_full.scatter_(1, topk_indices, gating_active)
+            else:
+                gating_full = F.softmax(router_scores_all, dim=-1)
+                topk_indices = torch.arange(self.num_experts, device=flat_hidden.device).unsqueeze(0).expand(B, self.num_experts)
+                gating_active = gating_full
+
+            # load balance loss（各 expert の利用が均等になるように）
+            usage = gating_full.mean(dim=0)  # [num_experts]
+            load_balance_loss = ((usage - (1.0 / self.num_experts)) ** 2).sum()
+
+            # 4. 各 expert の出力を、対応する gating 重みで加重平均する
+            flat_value = torch.zeros_like(flat_hidden)
+            for e in range(self.num_experts):
+                # 各トークンに対し、top-k 選択された expert が e である箇所を抽出
+                mask = (topk_indices == e)  # shape: [B, ActiveExperts]（ActiveExperts == num_experts の場合は [B, num_experts]）
+                if mask.sum() == 0:
+                    continue
+                token_indices = torch.nonzero(mask, as_tuple=False)  # 各行：[トークン番号, topk内の位置]
+                tokens = token_indices[:, 0]  # flat_hidden 内のトークンインデックス
+                gating_weights = gating_active[tokens, token_indices[:, 1]]  # 該当する gating 重み
+
+                # 該当トークンに対して expert_e の出力を計算
+                input_e = flat_hidden[tokens]
+                out_e = getattr(self, f"expert_{e}")(input_e)
+                out_e = out_e * gating_weights.unsqueeze(-1)
+                # 型を flat_value と合わせる（BFloat16 ならここで変換）
+                out_e = out_e.to(flat_value.dtype)
+                flat_value.index_add_(0, tokens, out_e)
+
+            # [B*S, n_embd] -> [B, S, n_embd] に変形して出力
+            kv = flat_value.view(hidden.size(0), hidden.size(1), hidden.size(2))
+            return kv, load_balance_loss
 
 
 
