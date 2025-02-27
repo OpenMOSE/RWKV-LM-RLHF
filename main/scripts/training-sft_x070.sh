@@ -1,6 +1,6 @@
-python train.py --load_model "myfolder/models/rwkv-x070-2b9-world-v3-25%trained-20250103-ctx4k.pth" \
+python train.py --load_model "myfolder/models/rwkv-x070-2b9-world-v3-preview-20250210-ctx4k.pth" \
  --wandb "RWKV-LM-RLHF x070 2.9B SFT CoT" --proj_dir "myfolder/Outputs/x070-cot-25p" \
- --vocab_size 65536 --ctx_len 8192 \
+ --vocab_size 65536 --ctx_len 4096 \
  --epoch_steps 1000 --epoch_count 200 --epoch_begin 0 --epoch_save 1 \
  --micro_bsz 1 --n_layer 32 --n_embd 2560 \
  --lr_init 1e-4 --lr_final 1e-6 \
@@ -14,9 +14,11 @@ python train.py --load_model "myfolder/models/rwkv-x070-2b9-world-v3-25%trained-
  --gpu_arch 'cuda' \
  --limited_lora 0 \
  --sft 1 \
+ --sft_jsonmode 1 \
+ --sft_jsonmode_tokenizermode 'world' \
  --smoothing 0.005 \
  --random_mode 1 \
  --infctx_dataset_multiplier 16 \
  --optim '' \
- --train_data_file 'myfolder/2024_dataset/General-dataset.h5' \
+ --train_data_file 'myfolder/new_dataset_format/Output' \
  --accumulate_grad_batches 8

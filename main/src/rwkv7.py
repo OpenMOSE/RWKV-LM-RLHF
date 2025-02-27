@@ -46,7 +46,7 @@ if 'x070' in ModelGeneration:
             B,T,HC = w.shape
             C = HEAD_SIZE
             H = HC//C
-            w=-torch.exp(w)
+            w = -w.float().exp().to(r)
             r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
             #s=s.unsqueeze(0).repeat(B, 1, 1, 1)
             #s = s.permute(0,1,3,2).contiguous()
@@ -57,7 +57,7 @@ if 'x070' in ModelGeneration:
             B,T,HC = w.shape
             C = HEAD_SIZE
             H = HC//C
-            w=-torch.exp(w)
+            w = -w.float().exp().to(r)
             r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
             o, state = chunk_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=s, output_final_state=True, head_first=False)
             return o, state

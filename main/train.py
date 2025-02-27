@@ -146,6 +146,8 @@ if __name__ == "__main__":
 
     #Hyper Parameters SFT(masked)
     parser.add_argument("--sft", default=0, type=int)
+    parser.add_argument("--sft_jsonmode", default=0, type=int)
+    parser.add_argument("--sft_jsonmode_tokenizermode", default='world', type=str)
     parser.add_argument("--train_data_file", default='datasets/test_jp_logits.h5', type=str)
     parser.add_argument("--random_mode", default=1, type=int)
 
@@ -335,13 +337,21 @@ if __name__ == "__main__":
         from src.distillationdataset import HDF5TopKTensorDataset,collate_fn
         distillation_data = HDF5TopKTensorDataset(args,args.train_data_file,args.top_k,args.ctx_len)
     elif args.sft:
-        from src.sftdataset import HDF5TopKTensorDataset,collate_fn
-        filename = ''
-        if os.path.isfile(args.train_data_file):
-            filename = args.train_data_file
-        elif os.path.isfile(args.rlhf_train_file) and '.h5' in args.rlhf_train_file:
-            filename = args.rlhf_train_file
-        sft_data = HDF5TopKTensorDataset(args,filename,args.ctx_len)
+
+        if args.sft_jsonmode:
+            from src.jsonldataset import JSONLOnDemandOffsetDataset,collate_fn
+            sft_data = JSONLOnDemandOffsetDataset(args,args.train_data_file,args.sft_jsonmode_tokenizermode,args.ctx_len)
+        else:
+            from src.sftdataset import HDF5TopKTensorDataset,collate_fn
+            filename = ''
+            if os.path.isfile(args.train_data_file):
+                filename = args.train_data_file
+            elif os.path.isfile(args.rlhf_train_file) and '.h5' in args.rlhf_train_file:
+                filename = args.rlhf_train_file
+            sft_data = HDF5TopKTensorDataset(args,filename,args.ctx_len)
+
+
+
     #else:
     #    train_data = MyDataset(args)
 

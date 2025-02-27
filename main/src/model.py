@@ -38,7 +38,7 @@ from bitsandbytes.optim import Adam8bit,AdamW8bit
 if 'x070' in os.environ["RWKV_MY_TESTING"]:
     from .rwkv7 import LAYER_CONFIG,RWKV_Tmix_x070,RWKV_Tmix_x070_state,RWKV_Tmix_x070_infctx,RWKV_CMix_x070,RWKV_CMix_x070_MoLE,RWKV_CMix_x070_infctx,make_linear_head,make_emb
 if 'xa070' in os.environ["RWKV_MY_TESTING"]:
-    from .arwkv7 import LAYER_CONFIG,ARWKV_Tmix_x070,ARWKV_Tmix_x070_state,ARWKV_Tmix_x070_infctx,Qwen2MLP,Qwen2MLP_infctx,Qwen2RMSNorm,make_linear_head,make_emb
+    from .arwkv7 import LAYER_CONFIG,ARWKV_Tmix_x070,ARWKV_Tmix_x070_state,ARWKV_Tmix_x070_infctx,Qwen2MLP,Qwen2MLP_infctx,Qwen2RMSNorm,Phi35MLP,make_linear_head,make_emb
 elif 'x060' in os.environ["RWKV_MY_TESTING"]:
     from .rwkv6 import LAYER_CONFIG,RWKV_Tmix_x060,RWKV_Tmix_x060_state,RWKV_Tmix_x060_infctx,RWKV_CMix_x060,RWKV_CMix_x060_infctx,make_linear_head,make_emb
 else:
@@ -152,7 +152,10 @@ if 'xa070' in os.environ["RWKV_MY_TESTING"]:
             if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
                 self.ffn = Qwen2MLP_infctx(args, layer_id)
             else:
-                self.ffn = Qwen2MLP(args, layer_id)
+                if 'pxa070' in os.environ["RWKV_MY_TESTING"]:
+                    self.ffn = Phi35MLP(args,layer_id)
+                else:
+                    self.ffn = Qwen2MLP(args, layer_id)
 
 
         if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
@@ -779,10 +782,12 @@ class RWKV(pl.LightningModule):
                     # Label Smoothing Loss
 
                     #label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
-                    if 'xa070' in os.environ["RWKV_MY_TESTING"]:
-                        label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
-                    else:
-                        label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+                    # if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+                    #     label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
+                    # else:
+                    #     label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+
+                    label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
 
 
 
@@ -913,10 +918,12 @@ class RWKV(pl.LightningModule):
 
 
                     #label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
-                    if 'xa070' in os.environ["RWKV_MY_TESTING"]:
-                        label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
-                    else:
-                        label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+                    # if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+                    #     label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
+                    # else:
+                    #     label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+
+                    label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
 
 
 
@@ -1065,10 +1072,12 @@ class RWKV(pl.LightningModule):
                     # Label Smoothing Loss
 
                     #label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
-                    if 'xa070' in os.environ["RWKV_MY_TESTING"]:
-                        label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
-                    else:
-                        label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+                    # if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+                    #     label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
+                    # else:
+                    #     label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+
+                    label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
 
 
                     student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1)).float()
@@ -1148,8 +1157,8 @@ class RWKV(pl.LightningModule):
                         attention_mask[:, chunk_start:chunk_end],
                         total_loss,
                         smooth_loss,
-                        states.shift_states.clone().detach(),
-                        states.wkv_states.clone().detach(),
+                        states.shift_states,#.clone().detach(),
+                        states.wkv_states,#.clone().detach(),
                         token_amount,
                         use_reentrant=False
                     )
@@ -1437,10 +1446,12 @@ class RWKV(pl.LightningModule):
 
                 # Label Smoothing Loss
                 #label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
-                if 'xa070' in os.environ["RWKV_MY_TESTING"]:
-                    label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
-                else:
-                    label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+                # if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+                #     label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
+                # else:
+                #     label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+
+                label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
 
 
 
@@ -1532,10 +1543,13 @@ class RWKV(pl.LightningModule):
                 # Label Smoothing Loss
                 
                 
-                if 'xa070' in os.environ["RWKV_MY_TESTING"]:
-                    label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
-                else:
-                    label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+                # if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+                #     label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
+                # else:
+                #     label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+
+                label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
+
                 student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
                 smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
 

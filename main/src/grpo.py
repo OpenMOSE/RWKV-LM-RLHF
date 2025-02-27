@@ -279,9 +279,6 @@ def correctness_reward_func(prompt, completions, answer, **kwargs) -> list[float
     responses = [completion for completion in completions]
     q = prompt
     extracted_responses = [extract_xml_answer(r) for r in responses]
-
-    #print(f'Extracted Response = {extracted_responses}')
-    #print('-'*20, f"Question:\n{q}", f"\nAnswer:\n{answer}", f"\nResponse:\n{responses[0]}", f"\nExtracted:\n{extracted_responses[0]}")
     return [2.0 if r == a else 0.0 for r, a in zip(extracted_responses, answer)]
 
 def int_reward_func(completions, **kwargs) -> list[float]:
@@ -302,7 +299,6 @@ def soft_format_reward_func(completions, **kwargs) -> list[float]:
     responses = [completion for completion in completions]
     matches = [re.match(pattern, r) for r in responses]
     return [0.5 if match else 0.0 for match in matches]
-
 def repetition_penalty_reward_func(completions, **kwargs) -> list[float]:
     matches = []
     for text in completions:

@@ -214,7 +214,7 @@ class train_callback(pl.Callback):
             dataset = trainer.train_dataloader.dataset
         else:
             dataset = trainer.train_dataloader.dataset.datasets
-        assert "DPODataset" in str(dataset) or 'HDF5TopKTensorDataset' in str(dataset) or 'RLHFDataset' in str(dataset)
+        assert "DPODataset" in str(dataset) or 'HDF5TopKTensorDataset' in str(dataset) or 'RLHFDataset' in str(dataset) or 'JSONLOnDemandOffsetDataset' in str(dataset)
         if args.dpo or args.orpo:
             dataset.global_rank = trainer.global_rank
             dataset.real_epoch = int(args.epoch_begin + trainer.current_epoch)
