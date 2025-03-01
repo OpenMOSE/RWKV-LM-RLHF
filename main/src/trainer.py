@@ -180,9 +180,16 @@ class train_callback(pl.Callback):
                                 "loss_reinforce":trainer.loss_reinforce                                                           
                                 }
                     except: pass
-                if args.sft:
+                if args.sft and args.sft_kl_mode == 0:
                     try:
                         lll |= {"smooth_loss": trainer.smooth_loss, "active_ctx":trainer.realproceedtokens}
+                        if args.moe:
+                            #moe_router_loss
+                            lll |= {"moe_router_loss": trainer.moe_router_loss}
+                    except: pass
+                if args.sft and args.sft_kl_mode == 1:
+                    try:
+                        lll |= {"smooth_loss": trainer.smooth_loss, "active_ctx":trainer.realproceedtokens, "kl_loss": trainer.kl_loss, "teacher_loss": trainer.teacher_loss, }
                         if args.moe:
                             #moe_router_loss
                             lll |= {"moe_router_loss": trainer.moe_router_loss}

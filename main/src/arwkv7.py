@@ -485,7 +485,7 @@ if 'xa070' in ModelGeneration:
                 #self.ln_x = nn.GroupNorm(H, C, eps=(1e-5)*(args.head_size_divisor**2)) # !!! notice eps value !!!
 
 
-        @torch.compile
+        #@torch.compile
         def forward(self, x, v_first,passthrough = False):
             #print('arwkv tmix')
             B, T, C = x.size()
@@ -908,7 +908,7 @@ if 'xa070' in ModelGeneration:
             self.gate_up = make_linear_ffn(self.hidden_size, self.intermediate_size*2, bias=False,n_layer=self.layer_id,pname='ffn.gate')
             #self.up = make_linear_ffn(self.hidden_size, self.intermediate_size, bias=False,n_layer=self.layer_id,pname='ffn.up')
             self.down = make_linear_ffn(self.intermediate_size, self.hidden_size, bias=False,n_layer=self.layer_id,pname='ffn.down')
-        @torch.compile()
+        #@torch.compile()
         def forward(self, x,passthrough=False):
             up_states = self.gate_up(x,passthrough)
 

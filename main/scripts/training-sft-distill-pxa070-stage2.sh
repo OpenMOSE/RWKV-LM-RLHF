@@ -1,0 +1,31 @@
+python train.py --load_model "myfolder/models/rwkv-phi4-mini-instruct.pth" \
+ --wandb "RWKV-LM-RLHF pxa070 RWKV-Phi4-mini stage2" --proj_dir "myfolder/Outputs/pxa070-phi4-mini" \
+ --vocab_size 200064 --ctx_len 2048 \
+ --epoch_steps 500 --epoch_count 200 --epoch_begin 0 --epoch_save 1 \
+ --micro_bsz 1 --n_layer 32 --n_embd 3072 --dim_ffn 8192 \
+ --lr_init 1e-4 --lr_final 1e-6 \
+ --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
+ --accelerator gpu --devices 1 --precision 'bf16' \
+ --grad_cp 1 --my_testing "pxa070" \
+ --strategy deepspeed_stage_2_offload \
+ --layer_profile 'layerprofile/32_TEST_phi35.csv' \
+ --quant 1 \
+ --quant_mode 'nf4'\
+ --gpu_arch 'cuda' \
+ --limited_lora 0 \
+ --sft 1 \
+ --sft_jsonmode 1 \
+ --sft_jsonmode_tokenizermode 'phi4-mini' \
+ --sft_kl_mode 1 \
+ --sft_kl_accesspoint 'http://localhost:10000' \
+ --sft_kl_targetmodel 'myfolder/Phi-4-mini-instruct' \
+ --sft_kl_loadin4bit 0 \
+ --sft_kl_temperature 2.0 \
+ --sft_kl_alpha 0.5 \
+ --sft_kl_topk 2000 \
+ --smoothing 0.001 \
+ --random_mode 1 \
+ --infctx_dataset_multiplier 4 \
+ --optim '' \
+ --train_data_file 'myfolder/new_dataset_format' \
+ --accumulate_grad_batches 2

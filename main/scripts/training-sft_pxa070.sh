@@ -1,8 +1,9 @@
 python train.py --load_model "myfolder/models/rwkv-phi3.5-instruct.pth" \
- --wandb "RWKV-LM-RLHF pxa070 RWKV-Phi3.5-mini" --proj_dir "myfolder/Outputs/pxa070-phi35-mini" \
+ --wandb "RWKV-LM-RLHF pxa070 RWKV-Phi3.5-mini" --proj_dir "myfolder/Outputs/pxa070-phi35-mini2" \
+ --load_adapter "myfolder/Outputs/pxa070-phi35-mini/rwkv-0.pth" \
  --vocab_size 32064 --ctx_len 4096 \
  --epoch_steps 500 --epoch_count 200 --epoch_begin 0 --epoch_save 1 \
- --micro_bsz 6 --n_layer 32 --n_embd 3072 --dim_ffn 8192 \
+ --micro_bsz 4 --n_layer 32 --n_embd 3072 --dim_ffn 8192 \
  --lr_init 1e-4 --lr_final 1e-6 \
  --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
  --accelerator gpu --devices 1 --precision 'bf16' \

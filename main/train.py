@@ -4,6 +4,8 @@
 
 import logging
 logging.basicConfig(level=logging.INFO)
+import requests
+import json
 
 if __name__ == "__main__":
     from argparse import ArgumentParser
@@ -144,12 +146,25 @@ if __name__ == "__main__":
     parser.add_argument("--smoothing", default=0.001, type=float)
     parser.add_argument("--top_k", default=100, type=int)
 
+    
+
+
     #Hyper Parameters SFT(masked)
     parser.add_argument("--sft", default=0, type=int)
     parser.add_argument("--sft_jsonmode", default=0, type=int)
     parser.add_argument("--sft_jsonmode_tokenizermode", default='world', type=str)
     parser.add_argument("--train_data_file", default='datasets/test_jp_logits.h5', type=str)
     parser.add_argument("--random_mode", default=1, type=int)
+
+    # QRWKV,ARWKV,PRWKV Stage2 Distillation Compatible 
+    # for more Anarchy Training :)
+    parser.add_argument("--sft_kl_mode", default=0, type=int)
+    parser.add_argument("--sft_kl_accesspoint", default='http://localhost:10000', type=str)
+    parser.add_argument("--sft_kl_targetmodel", default='myfolder/Phi-4-mini-instruct', type=str)
+    parser.add_argument("--sft_kl_loadin4bit", default=1, type=int)
+    parser.add_argument("--sft_kl_temperature", default=2.0, type=float)
+    parser.add_argument("--sft_kl_alpha", default=0.5, type=float)
+    parser.add_argument("--sft_kl_topk", default=2000, type=int)
 
     #new optim
     parser.add_argument("--optim", default="", type=str)
@@ -551,6 +566,30 @@ if __name__ == "__main__":
                 print(f"{str(shape[0]).ljust(5)} {str(shape[1]).ljust(5)} {n}")
             else:
                 print(f"{str(shape[0]).ljust(5)}       {n}")
+
+
+        if args.sft_kl_mode == 1:
+            LOAD_MODEL_URL = f"{args.sft_kl_accesspoint}/LoadModel"
+            #PROCESS_LOGITS_URL = f"{args.sft_kl_accesspoint}/ProcessLogits"
+
+            def test_load_model(LOAD_MODEL_URL,model_name="myfolder/Phi-4-mini-instruct", use_4bit=True, use_cuda=True):
+                """LoadModelエンドポイントをテスト"""
+                payload = {
+                    "modelname": model_name,
+                    "use_4bit": use_4bit,
+                    "use_cuda": use_cuda
+                }
+                response = requests.post(LOAD_MODEL_URL, json=payload)
+                print(f"LoadModelレスポンス (ステータス: {response.status_code}):")
+                print(json.dumps(response.json(), indent=2))
+                return response.status_code == 200
+            
+            use_4bit = False
+            if args.sft_kl_loadin4bit:
+                use_4bit = True
+            model_name = args.sft_kl_targetmodel
+
+            test_load_model(LOAD_MODEL_URL,model_name,use_4bit,True) # Load in GPU0 CUDA
 
     print(trainer.strategy.config)
     #exit()
