@@ -180,9 +180,16 @@ class train_callback(pl.Callback):
                                 "loss_reinforce":trainer.loss_reinforce                                                           
                                 }
                     except: pass
-                if args.sft:
+                if args.sft and args.sft_kl_mode == 0:
                     try:
                         lll |= {"smooth_loss": trainer.smooth_loss, "active_ctx":trainer.realproceedtokens}
+                        if args.moe:
+                            #moe_router_loss
+                            lll |= {"moe_router_loss": trainer.moe_router_loss}
+                    except: pass
+                if args.sft and args.sft_kl_mode == 1:
+                    try:
+                        lll |= {"smooth_loss": trainer.smooth_loss, "active_ctx":trainer.realproceedtokens, "kl_loss": trainer.kl_loss, "teacher_loss": trainer.teacher_loss, }
                         if args.moe:
                             #moe_router_loss
                             lll |= {"moe_router_loss": trainer.moe_router_loss}
@@ -214,7 +221,7 @@ class train_callback(pl.Callback):
             dataset = trainer.train_dataloader.dataset
         else:
             dataset = trainer.train_dataloader.dataset.datasets
-        assert "DPODataset" in str(dataset) or 'HDF5TopKTensorDataset' in str(dataset) or 'RLHFDataset' in str(dataset)
+        assert "DPODataset" in str(dataset) or 'HDF5TopKTensorDataset' in str(dataset) or 'RLHFDataset' in str(dataset) or 'JSONLOnDemandOffsetDataset' in str(dataset)
         if args.dpo or args.orpo:
             dataset.global_rank = trainer.global_rank
             dataset.real_epoch = int(args.epoch_begin + trainer.current_epoch)

@@ -485,7 +485,7 @@ if 'xa070' in ModelGeneration:
                 #self.ln_x = nn.GroupNorm(H, C, eps=(1e-5)*(args.head_size_divisor**2)) # !!! notice eps value !!!
 
 
-
+        #@torch.compile
         def forward(self, x, v_first,passthrough = False):
             #print('arwkv tmix')
             B, T, C = x.size()
@@ -895,6 +895,36 @@ if 'xa070' in ModelGeneration:
         def forward_rnn(self, x,last_state: ChannelMixState,passthrough=False):
             down_proj = self.down(F.silu(self.gate(x,passthrough)) * self.up(x,passthrough),passthrough)
             return down_proj, last_state
+        
+    class Phi35MLP(nn.Module):
+        def __init__(self, args, layer_id):
+            super().__init__()
+            self.args = args
+            self.layer_id = layer_id
+
+            self.hidden_size = args.n_embd
+            self.intermediate_size = args.dim_ffn
+
+            self.gate_up = make_linear_ffn(self.hidden_size, self.intermediate_size*2, bias=False,n_layer=self.layer_id,pname='ffn.gate')
+            #self.up = make_linear_ffn(self.hidden_size, self.intermediate_size, bias=False,n_layer=self.layer_id,pname='ffn.up')
+            self.down = make_linear_ffn(self.intermediate_size, self.hidden_size, bias=False,n_layer=self.layer_id,pname='ffn.down')
+        #@torch.compile()
+        def forward(self, x,passthrough=False):
+            up_states = self.gate_up(x,passthrough)
+
+            gate, up_states = up_states.chunk(2, dim=-1)
+            up_states = up_states * F.silu(gate)
+
+            return self.down(up_states,passthrough)
+        
+        def forward_rnn(self, x,last_state: ChannelMixState,passthrough=False):
+            up_states = self.gate_up(x,passthrough)
+
+            gate, up_states = up_states.chunk(2, dim=-1)
+            up_states = up_states * F.silu(gate)
+
+            return self.down(up_states,passthrough), last_state
+
         
         
     class Qwen2MLP_infctx(nn.Module):

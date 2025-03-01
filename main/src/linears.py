@@ -416,7 +416,7 @@ class HeadLoraLinear(nn.Module):
             with torch.no_grad():
                     # self.weight は shape (out_features, in_features)
                     # 各列の L2 ノルムを計算（shape: (1, in_features)）
-                    m_init = temporal_weight.norm(dim=0, keepdim=True)
+                    m_init = self.weight.norm(dim=0, keepdim=True)
             self.lora_M = nn.Parameter(m_init) #momemtum
 
 
@@ -529,7 +529,7 @@ class LoraLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :) Chaos Modified
             with torch.no_grad():
                     # self.weight は shape (out_features, in_features)
                     # 各列の L2 ノルムを計算（shape: (1, in_features)）
-                    m_init = temporal_weight.norm(dim=0, keepdim=True)
+                    m_init = self.weight.norm(dim=0, keepdim=True)
             self.lora_M = nn.Parameter(m_init) #momemtum
 
  

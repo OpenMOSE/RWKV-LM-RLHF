@@ -6,6 +6,11 @@ import functools
 import os, math, gc, importlib
 import torch
 import time
+import requests
+import json
+import time
+import threading
+
 from torch.nn.utils.rnn import pad_sequence
 
 import torch.nn as nn
@@ -38,7 +43,7 @@ from bitsandbytes.optim import Adam8bit,AdamW8bit
 if 'x070' in os.environ["RWKV_MY_TESTING"]:
     from .rwkv7 import LAYER_CONFIG,RWKV_Tmix_x070,RWKV_Tmix_x070_state,RWKV_Tmix_x070_infctx,RWKV_CMix_x070,RWKV_CMix_x070_MoLE,RWKV_CMix_x070_infctx,make_linear_head,make_emb
 if 'xa070' in os.environ["RWKV_MY_TESTING"]:
-    from .arwkv7 import LAYER_CONFIG,ARWKV_Tmix_x070,ARWKV_Tmix_x070_state,ARWKV_Tmix_x070_infctx,Qwen2MLP,Qwen2MLP_infctx,Qwen2RMSNorm,make_linear_head,make_emb
+    from .arwkv7 import LAYER_CONFIG,ARWKV_Tmix_x070,ARWKV_Tmix_x070_state,ARWKV_Tmix_x070_infctx,Qwen2MLP,Qwen2MLP_infctx,Qwen2RMSNorm,Phi35MLP,make_linear_head,make_emb
 elif 'x060' in os.environ["RWKV_MY_TESTING"]:
     from .rwkv6 import LAYER_CONFIG,RWKV_Tmix_x060,RWKV_Tmix_x060_state,RWKV_Tmix_x060_infctx,RWKV_CMix_x060,RWKV_CMix_x060_infctx,make_linear_head,make_emb
 else:
@@ -152,7 +157,10 @@ if 'xa070' in os.environ["RWKV_MY_TESTING"]:
             if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
                 self.ffn = Qwen2MLP_infctx(args, layer_id)
             else:
-                self.ffn = Qwen2MLP(args, layer_id)
+                if 'pxa070' in os.environ["RWKV_MY_TESTING"]:
+                    self.ffn = Phi35MLP(args,layer_id)
+                else:
+                    self.ffn = Qwen2MLP(args, layer_id)
 
 
         if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
@@ -779,10 +787,12 @@ class RWKV(pl.LightningModule):
                     # Label Smoothing Loss
 
                     #label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
-                    if 'xa070' in os.environ["RWKV_MY_TESTING"]:
-                        label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
-                    else:
-                        label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+                    # if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+                    #     label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
+                    # else:
+                    #     label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+
+                    label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
 
 
 
@@ -913,10 +923,12 @@ class RWKV(pl.LightningModule):
 
 
                     #label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
-                    if 'xa070' in os.environ["RWKV_MY_TESTING"]:
-                        label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
-                    else:
-                        label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+                    # if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+                    #     label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
+                    # else:
+                    #     label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+
+                    label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
 
 
 
@@ -1065,10 +1077,12 @@ class RWKV(pl.LightningModule):
                     # Label Smoothing Loss
 
                     #label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
-                    if 'xa070' in os.environ["RWKV_MY_TESTING"]:
-                        label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
-                    else:
-                        label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+                    # if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+                    #     label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
+                    # else:
+                    #     label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+
+                    label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
 
 
                     student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1)).float()
@@ -1148,8 +1162,8 @@ class RWKV(pl.LightningModule):
                         attention_mask[:, chunk_start:chunk_end],
                         total_loss,
                         smooth_loss,
-                        states.shift_states.clone().detach(),
-                        states.wkv_states.clone().detach(),
+                        states.shift_states,#.clone().detach(),
+                        states.wkv_states,#.clone().detach(),
                         token_amount,
                         use_reentrant=False
                     )
@@ -1417,53 +1431,32 @@ class RWKV(pl.LightningModule):
                     top_k_indices = top_k_indices[:, :max_len, :]
                     attention_mask = attention_mask[:, :max_len]
 
-                # Forward: input_ids[:, :-1]を使用
                 student_logits,moe_loss = self(input_ids)
 
-                # 評価: input_ids[:, 1:]を使用
-                #targets = input_ids[:, 1:].contiguous().view(-1) #
-
                 targets = target.contiguous().view(-1)
-                #del input_ids
 
-                # マスクの調整
-                #mask = attention_mask[:, 1:].contiguous().view(-1) #.contiguous()
                 mask = attention_mask.contiguous().view(-1)
-                #del attention_mask
+
                 sum_mask = torch.sum(mask).item()
 
                 if sum_mask == 0:
                     return torch.tensor([0.0], requires_grad=True)
 
-                # Label Smoothing Loss
-                #label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
-                if 'xa070' in os.environ["RWKV_MY_TESTING"]:
-                    label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
-                else:
-                    label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+
+                label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
 
 
 
                 student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
                 smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
 
-                # Top-k teacher logitsを使用したKL-divergence loss
                 teacher_probs = top_k_values#[:, :-1]
                 teacher_indices = top_k_indices#[:, :-1]
 
-                #print(f'teacher_probs shape = {teacher_probs.shape}')
-
-                
-                # 学生モデルのlogitsからTop-k値を取得
                 student_top_k_logits = torch.gather(student_logits, -1, teacher_indices)
 
-                #print(f'student_top_k_logits shape = {student_top_k_logits.shape}')
-                
                 kl_loss = self.kl_divergence_loss(student_top_k_logits, teacher_probs, temperature)
 
-                #del student_top_k_logits
-
-                # Lossの計算
                 if sum_mask == mask.shape[0]:
                     loss = alpha * smooth_loss.mean() + (1 - alpha) * kl_loss.mean()
                 else:
@@ -1478,16 +1471,13 @@ class RWKV(pl.LightningModule):
                 return L2Wrap.apply(loss, student_logits)
             
 
-            if args.sft:
+            if args.sft and args.sft_kl_mode == 0:
                 smoothing = args.smoothing
 
                 input_ids = batch['input_ids']
                 target = batch['target_ids']
                 attention_mask = batch['attention_mask']
 
-                #print(input_ids)
-
-                #max_len = int(input_ids.shape[1])#int(attention_mask.sum(dim=1).max().item())
 
                 max_len = int(attention_mask.sum(dim=1).max().item())
 
@@ -1504,49 +1494,35 @@ class RWKV(pl.LightningModule):
                     attention_mask = attention_mask[:, :max_len]
 
 
-
-
                 if 'x060' in os.environ["RWKV_MY_TESTING"]:
                     input_ids = input_ids[:, :max_len]
                     target = target[:, :max_len]
                     attention_mask = attention_mask[:, :max_len]
 
-                # Forward: input_ids[:, :-1]を使用
                 student_logits,moe_loss = self(input_ids)
 
-                # 評価: input_ids[:, 1:]を使用
-                #targets = input_ids[:, 1:].contiguous().view(-1) #
 
                 targets = target.contiguous().view(-1)
-                #del input_ids
 
-                # マスクの調整
-                #mask = attention_mask[:, 1:].contiguous().view(-1) #.contiguous()
                 mask = attention_mask.contiguous().view(-1)
-                #del attention_mask
+
                 sum_mask = torch.sum(mask).item()
 
                 if sum_mask == 0:
                     return torch.tensor([0.0], requires_grad=True)
 
-                # Label Smoothing Loss
-                
-                
-                if 'xa070' in os.environ["RWKV_MY_TESTING"]:
-                    label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
-                else:
-                    label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+                label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
+
                 student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
                 smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
 
 
                 # Lossの計算
                 if sum_mask == mask.shape[0]:
-                    loss = smooth_loss.mean()# + (1 - alpha) * kl_loss.mean()
+                    loss = smooth_loss.mean()
                 else:
                     smooth_loss = torch.sum(smooth_loss * mask) / sum_mask
-                    #kl_loss = torch.sum(kl_loss.view(-1) * mask) / sum_mask
-                    loss = smooth_loss# + (1 - alpha) * kl_loss
+                    loss = smooth_loss
 
                 if os.environ["CustomModel"] == "MoE":
                     loss = loss + args.moe_balance_alpha * moe_loss
@@ -1554,11 +1530,139 @@ class RWKV(pl.LightningModule):
 
                 self.trainer.smooth_loss = float(smooth_loss.mean())
 
-                #self.trainer.kl_loss = float(kl_loss.mean())
                 self.trainer.realproceedtokens =float(max_len)
 
                 return L2Wrap.apply(loss, student_logits)
             
+
+
+            # Hybrid Distillation for QRWKV,ARWKV,PRWKV Stage2(Token Distillation)
+            #
+            #
+            def convert_to_array_with_mask(input_ids, attention_mask):
+                """
+                input_idsをattention_maskに基づいて変換する関数
+                
+                Parameters:
+                -----------
+                input_ids : torch.Tensor or list
+                    変換したい入力ID
+                attention_mask : torch.Tensor or list
+                    マスク情報（1は保持、0は削除）
+                
+                Returns:
+                --------
+                list
+                    attention_maskで1の部分だけを保持したinput_idsの配列
+                """
+                # Tensorの場合はnumpy配列に変換
+                if isinstance(input_ids, torch.Tensor):
+                    input_ids = input_ids.cpu().numpy().tolist()
+                if isinstance(attention_mask, torch.Tensor):
+                    attention_mask = attention_mask.float().cpu().numpy().tolist()
+                
+                # バッチごとに処理
+                result = []
+                for i in range(len(input_ids)):
+                    # attention_maskが1の部分だけを抽出
+                    masked_ids = [input_ids[i][j] for j in range(len(input_ids[i])) if j < len(attention_mask[i]) and attention_mask[i][j] == 1]
+                    result.append(masked_ids)
+                
+                return result
+            if args.sft and args.sft_kl_mode == 1:
+                temperature = args.sft_kl_temperature
+                alpha = args.sft_kl_alpha
+                smoothing = args.smoothing
+
+                input_ids = batch['input_ids']
+                target = batch['target_ids']
+                #top_k_values = batch['top_k_values']
+                #top_k_indices = batch['top_k_indices']
+                attention_mask = batch['attention_mask']
+
+                with torch.no_grad():
+                    arraywmask = convert_to_array_with_mask(input_ids, attention_mask)
+
+                    #print(arraywmask)
+
+
+                    payload = {
+                        "input_ids": arraywmask,
+                        "topk": args.sft_kl_topk
+                    }
+                    PROCESS_LOGITS_URL = f"{args.sft_kl_accesspoint}/ProcessLogits"
+                    
+
+                    while True:
+                        try:
+                            teacher_response = requests.post(PROCESS_LOGITS_URL, json=payload)
+                            if teacher_response.status_code == 200:
+                                teacher_result = teacher_response.json()
+                                logits_numpy_array = np.array(teacher_result['logits'],dtype=np.float32)
+                                indices_numpy_array = np.array(teacher_result['indices'],dtype=np.int64)
+                                teacher_loss = teacher_result['loss']
+                                # print(f"Loss: {teacher_result['loss']}")
+                                # print(f"バッチ数: {len(teacher_result['indices'])}")
+                                # print(f"シーケンス長: {[len(batch) for batch in teacher_result['indices']]}")
+                                # print(f"Topkサイズ: {len(teacher_result['indices'][0][0])}")
+                                break
+                        except Exception as e:
+                            print('retry')
+                            print(f"エラーが発生しました: {e}")
+                            print(f"エラーの型: {type(e).__name__}")
+                            time.sleep(1)
+
+                    top_k_values = torch.tensor(logits_numpy_array, dtype=torch.bfloat16).to(device=input_ids.device)
+                    top_k_indices = torch.tensor(indices_numpy_array, dtype=torch.int64).to(device=input_ids.device)
+
+
+
+                #max_len = int(input_ids.shape[1])#int(attention_mask.sum(dim=1).max().item())
+
+                max_len = int(attention_mask.sum(dim=1).max().item())
+                if 'x060' in os.environ["RWKV_MY_TESTING"]:
+                    input_ids = input_ids[:, :max_len]
+                    target = target[:, :max_len]
+                    top_k_values = top_k_values[:, :max_len]
+                    top_k_indices = top_k_indices[:, :max_len, :]
+                    attention_mask = attention_mask[:, :max_len]
+
+                student_logits,moe_loss = self(input_ids)
+                targets = target.contiguous().view(-1)
+                mask = attention_mask.contiguous().view(-1)
+                sum_mask = torch.sum(mask).item()
+
+                if sum_mask == 0:
+                    return torch.tensor([0.0], requires_grad=True)
+
+
+                label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
+
+
+
+                student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
+                smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
+
+                teacher_probs = top_k_values#[:, :-1]
+                teacher_indices = top_k_indices#[:, :-1]
+
+                student_top_k_logits = torch.gather(student_logits, -1, teacher_indices)
+
+                kl_loss = self.kl_divergence_loss(student_top_k_logits, teacher_probs, temperature)
+
+                if sum_mask == mask.shape[0]:
+                    loss = alpha * smooth_loss.mean() + (1 - alpha) * kl_loss.mean()
+                else:
+                    smooth_loss = torch.sum(smooth_loss * mask) / sum_mask
+                    kl_loss = torch.sum(kl_loss.view(-1) * mask) / sum_mask
+                    loss = alpha * smooth_loss + (1 - alpha) * kl_loss
+
+                self.trainer.teacher_loss = float(teacher_loss)
+                self.trainer.smooth_loss = float(smooth_loss.mean())
+                self.trainer.kl_loss = float(kl_loss.mean())
+                self.trainer.realproceedtokens =float(max_len)
+
+                return L2Wrap.apply(loss, student_logits)
 
 
             

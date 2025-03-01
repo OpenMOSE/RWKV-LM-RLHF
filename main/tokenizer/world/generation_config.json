@@ -1,0 +1,11 @@
+{
+    "bos_token_id": 0,
+    "eos_token_id": 0,
+    "pad_token_id": 0,
+    "max_window_size": 2147483647,
+    "do_sample": true,
+    "top_k": 65536,
+    "top_p": 1.0,
+    "temperature": 1.0,
+    "transformers_version": "4.48.0"
+}

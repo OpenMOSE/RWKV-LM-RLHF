@@ -1,0 +1,5 @@
+{
+  "bos_token": "<|rwkv_tokenizer_end_of_text|>",
+  "eos_token": "<|rwkv_tokenizer_end_of_text|>",
+  "unk_token": "<|rwkv_tokenizer_end_of_text|>"
+}
