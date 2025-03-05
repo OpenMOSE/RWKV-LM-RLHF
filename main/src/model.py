@@ -31,6 +31,7 @@ from .infctx_module import *
 from .trainutils import *
 
 from .adam_mini import Adam_mini
+from .mudamw import MuAdamW
 
 from .zerocot import *
 from .grpo import grpo_init,training_step_grpo
@@ -43,7 +44,7 @@ from bitsandbytes.optim import Adam8bit,AdamW8bit
 if 'x070' in os.environ["RWKV_MY_TESTING"]:
     from .rwkv7 import LAYER_CONFIG,RWKV_Tmix_x070,RWKV_Tmix_x070_state,RWKV_Tmix_x070_infctx,RWKV_CMix_x070,RWKV_CMix_x070_MoLE,RWKV_CMix_x070_infctx,make_linear_head,make_emb
 if 'xa070' in os.environ["RWKV_MY_TESTING"]:
-    from .arwkv7 import LAYER_CONFIG,ARWKV_Tmix_x070,ARWKV_Tmix_x070_state,ARWKV_Tmix_x070_infctx,Qwen2MLP,Qwen2MLP_infctx,Qwen2RMSNorm,Phi35MLP,make_linear_head,make_emb
+    from .arwkv7 import LAYER_CONFIG,ARWKV_Tmix_x070,ARWKV_Tmix_x070_state,ARWKV_Tmix_x070_infctx,Qwen2MLP,Qwen2MLP_infctx,Qwen2RMSNorm,Phi35MLP,Phi35MLP_infctx,make_linear_head,make_emb
 elif 'x060' in os.environ["RWKV_MY_TESTING"]:
     from .rwkv6 import LAYER_CONFIG,RWKV_Tmix_x060,RWKV_Tmix_x060_state,RWKV_Tmix_x060_infctx,RWKV_CMix_x060,RWKV_CMix_x060_infctx,make_linear_head,make_emb
 else:
@@ -155,7 +156,10 @@ if 'xa070' in os.environ["RWKV_MY_TESTING"]:
                 self.att = ARWKV_Tmix_x070(args, layer_id)  
 
             if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
-                self.ffn = Qwen2MLP_infctx(args, layer_id)
+                if 'pxa070' in os.environ["RWKV_MY_TESTING"]:
+                    self.ffn = Phi35MLP_infctx(args,layer_id)
+                else:
+                    self.ffn = Qwen2MLP_infctx(args, layer_id)
             else:
                 if 'pxa070' in os.environ["RWKV_MY_TESTING"]:
                     self.ffn = Phi35MLP(args,layer_id)
@@ -613,6 +617,9 @@ class RWKV(pl.LightningModule):
             elif args.optim == 'lion':
                 print('Deepspeed Lion Mode')
                 return FusedLion(optim_groups, betas=self.args.betas)
+            elif args.optim == 'muon':
+                print('Muon')
+                return MuAdamW(optim_groups, betas=self.args.betas)
             else:
                 return FusedAdam(optim_groups,  betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
 
@@ -1073,14 +1080,7 @@ class RWKV(pl.LightningModule):
                         return prev_loss,prev_smooth_loss,last_shift_states, last_wkv_states, prev_token_amount, status
                     
                     student_logits,new_shift_states, new_wkv_states = self(chunk_input_ids,last_shift_states, last_wkv_states)
-                    #print(f'logit sum0={torch.sum(student_logits)}')
-                    # Label Smoothing Loss
-
-                    #label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
-                    # if 'xa070' in os.environ["RWKV_MY_TESTING"]:
-                    #     label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
-                    # else:
-                    #     label_smoothing_loss = LabelSmoothingLoss(smoothing=smoothing)
+          
 
                     label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing,reduction="none")
 
@@ -1088,8 +1088,6 @@ class RWKV(pl.LightningModule):
                     student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1)).float()
 
                     smooth_loss = label_smoothing_loss(student_logits_shifted.float(), targets)
-                    #smooth_loss = F.cross_entropy(student_logits.view(-1, student_logits.size(-1)), targets.reshape(-1), reduction='none')
-
 
                     current_token_amount = chunk_input_ids.shape[1]#sum_mask
 
@@ -1569,6 +1567,80 @@ class RWKV(pl.LightningModule):
                     result.append(masked_ids)
                 
                 return result
+            def pad_kl_loss_to_match_attention_mask(kl_loss, attention_mask):
+                """
+                KL損失をアテンションマスクと同じサイズにパディングする関数
+                
+                Parameters:
+                -----------
+                kl_loss : torch.Tensor
+                    KL損失テンソル [Batch, Size1]
+                attention_mask : torch.Tensor
+                    アテンションマスクテンソル [Batch, Size2]
+                    
+                Returns:
+                --------
+                torch.Tensor
+                    パディングされたKL損失テンソル [Batch, Size2]
+                """
+                batch_size = kl_loss.size(0)
+                kl_size = kl_loss.size(1)
+                mask_size = attention_mask.size(1)
+                
+                # KL損失のサイズがマスクより小さい場合、パディングが必要
+                if kl_size < mask_size:
+                    # 必要なパディングサイズを計算
+                    padding_size = mask_size - kl_size
+                    
+                    # 0パディングを作成（バッチサイズ × パディングサイズ）
+                    padding = torch.zeros(batch_size, padding_size, device=kl_loss.device, dtype=kl_loss.dtype)
+                    
+                    # KL損失と0パディングを結合
+                    padded_kl_loss = torch.cat([kl_loss, padding], dim=1)
+                    
+                    return padded_kl_loss
+                
+                # KL損失のサイズがマスクより大きい場合、切り取りが必要
+                elif kl_size > mask_size:
+                    return kl_loss[:, :mask_size]
+                
+                # サイズが同じ場合はそのまま返す
+                else:
+                    return kl_loss
+
+            # Hybrid Distillation for QRWKV,ARWKV,PRWKV Stage2(Token Distillation)
+            #
+            #
+            def convert_to_array_with_mask(input_ids, attention_mask):
+                """
+                input_idsをattention_maskに基づいて変換する関数
+                
+                Parameters:
+                -----------
+                input_ids : torch.Tensor or list
+                    変換したい入力ID
+                attention_mask : torch.Tensor or list
+                    マスク情報（1は保持、0は削除）
+                
+                Returns:
+                --------
+                list
+                    attention_maskで1の部分だけを保持したinput_idsの配列
+                """
+                # Tensorの場合はnumpy配列に変換
+                if isinstance(input_ids, torch.Tensor):
+                    input_ids = input_ids.cpu().numpy().tolist()
+                if isinstance(attention_mask, torch.Tensor):
+                    attention_mask = attention_mask.int().cpu().numpy().tolist()
+                
+                # バッチごとに処理
+                result = []
+                for i in range(len(input_ids)):
+                    # attention_maskが1の部分だけを抽出
+                    masked_ids = [input_ids[i][j] for j in range(len(input_ids[i])) if j < len(attention_mask[i]) and attention_mask[i][j] == 1]
+                    result.append(masked_ids)
+                
+                return result
             if args.sft and args.sft_kl_mode == 1:
                 temperature = args.sft_kl_temperature
                 alpha = args.sft_kl_alpha
@@ -1615,22 +1687,25 @@ class RWKV(pl.LightningModule):
                     top_k_values = torch.tensor(logits_numpy_array, dtype=torch.bfloat16).to(device=input_ids.device)
                     top_k_indices = torch.tensor(indices_numpy_array, dtype=torch.int64).to(device=input_ids.device)
 
+                    
+
+
+
 
 
                 #max_len = int(input_ids.shape[1])#int(attention_mask.sum(dim=1).max().item())
 
                 max_len = int(attention_mask.sum(dim=1).max().item())
-                if 'x060' in os.environ["RWKV_MY_TESTING"]:
-                    input_ids = input_ids[:, :max_len]
-                    target = target[:, :max_len]
-                    top_k_values = top_k_values[:, :max_len]
-                    top_k_indices = top_k_indices[:, :max_len, :]
-                    attention_mask = attention_mask[:, :max_len]
+               
 
                 student_logits,moe_loss = self(input_ids)
                 targets = target.contiguous().view(-1)
+                kl_mask = attention_mask.contiguous().view(-1) #[:,:-1]
+                sum_kl_mask = torch.sum(kl_mask).item()
                 mask = attention_mask.contiguous().view(-1)
                 sum_mask = torch.sum(mask).item()
+
+                #print(f'mask = {mask}')
 
                 if sum_mask == 0:
                     return torch.tensor([0.0], requires_grad=True)
@@ -1643,18 +1718,20 @@ class RWKV(pl.LightningModule):
                 student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
                 smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
 
-                teacher_probs = top_k_values#[:, :-1]
+                teacher_logits = top_k_values#[:, :-1]
                 teacher_indices = top_k_indices#[:, :-1]
 
                 student_top_k_logits = torch.gather(student_logits, -1, teacher_indices)
 
-                kl_loss = self.kl_divergence_loss(student_top_k_logits, teacher_probs, temperature)
+                kl_loss = self.kl_divergence_loss(student_top_k_logits, teacher_logits, temperature)
+
+                kl_loss = pad_kl_loss_to_match_attention_mask(kl_loss,attention_mask)
 
                 if sum_mask == mask.shape[0]:
                     loss = alpha * smooth_loss.mean() + (1 - alpha) * kl_loss.mean()
                 else:
                     smooth_loss = torch.sum(smooth_loss * mask) / sum_mask
-                    kl_loss = torch.sum(kl_loss.view(-1) * mask) / sum_mask
+                    kl_loss = torch.sum(kl_loss.view(-1) * kl_mask) / sum_kl_mask
                     loss = alpha * smooth_loss + (1 - alpha) * kl_loss
 
                 self.trainer.teacher_loss = float(teacher_loss)
