@@ -38,7 +38,7 @@ class HDF5TopKTensorDataset(Dataset):
         if self.args.random_mode == 0:
             idx = self.Count
             self.Count = self.Count + 1
-            if self.max_seq_length - 1 < self.Count:
+            if self.dataset_length - 1 < self.Count:
                 self.Count = 0
                 idx = 0
             random_indices = [idx]

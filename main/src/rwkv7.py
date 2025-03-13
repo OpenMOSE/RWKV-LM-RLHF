@@ -656,7 +656,16 @@ if 'x070' in ModelGeneration:
                 self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
 
                 #for State-tuning
-                self.time_state = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
+                if self.args.suffix_offset and args.prefix_tuning == 0:
+                    #self.time_offset = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
+                    self.time_offset = nn.Parameter(torch.zeros(args.n_embd))
+                elif self.args.suffix_offset and args.prefix_tuning == 1:
+                    #self.time_offset = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
+                    self.time_offset = nn.Parameter(torch.zeros(args.n_embd))
+                    self.time_offset_y = nn.Parameter(torch.zeros(args.n_embd))
+                    self.time_state = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
+                else:
+                    self.time_state = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
 
                 Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
 
@@ -698,12 +707,21 @@ if 'x070' in ModelGeneration:
             kk = F.normalize(kk.view(B,T,H,-1), dim=-1, p=2.0).view(B,T,C)
             k = k * (1 + (a-1) * self.k_a)
 
-            x , _ = RUN_RWKV7_STATE(r,k,v,w,-kk, kk*a,self.time_state)
+            if self.args.suffix_offset and self.args.prefix_tuning == 0:
+                x = RUN_CUDA_RWKV7g(r , w, k, v, -kk, kk*a,HEAD_SIZE=self.head_size)# + self.time_offset
+            else:
+                x , _ = RUN_RWKV7_STATE(r,k,v,w,-kk, kk*a,self.time_state)
+                if self.args.suffix_offset:
+                    x = x  * (1 + self.time_offset_y)
 
             x = self.ln_x(x.view(B * T, C)).view(B, T, C)
 
             x = x + ((r.view(B,T,H,-1)*k.view(B,T,H,-1)*self.r_k).sum(dim=-1, keepdim=True) * v.view(B,T,H,-1)).view(B,T,C)
             x = self.output(x * g,passthrough)
+
+            if self.args.suffix_offset:
+                x = x + x * self.time_offset
+
             return x, v_first
         
 
