@@ -43,6 +43,8 @@ if __name__ == "__main__":
     parser.add_argument("--chunk_ctx", default=512, type=int)
 
     parser.add_argument("--state", default=0, type=int) #for state-tuning x060
+    parser.add_argument("--suffix_offset", default=0, type=int) #for offset state-tuning on x070 
+    parser.add_argument("--prefix_tuning", default=0, type=int) #for offset state-tuning on x070 
     parser.add_argument("--state_output_mode", default=1, type=int) #0: state in MainAdapter, 1: Separate MainAdapter,State 2: Separate state in MainAdapter, State
 
     parser.add_argument("--fla", default=0, type=int)
@@ -508,7 +510,7 @@ if __name__ == "__main__":
                 if LAYER_CONFIG[f'{str(i)}']['mode'] == 'full' and text in pname:
                     print(f'  FullParameter additionally training parameter {pname}')
                     param.requires_grad = True
-                elif LAYER_CONFIG[f'{str(i)}']['mode'] == 'freeze' and text in pname and 'time_state' in pname:
+                elif LAYER_CONFIG[f'{str(i)}']['mode'] == 'freeze' and text in pname and ('time_state' in pname or 'time_offset' in pname) :
                     print(f'  State-tuning additionally training parameter {pname}')
                     param.requires_grad = True
                 elif LAYER_CONFIG[f'{str(i)}']['mode'] == 'freeze' and text in pname:

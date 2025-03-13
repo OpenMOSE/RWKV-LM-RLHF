@@ -545,7 +545,7 @@ class RWKV(pl.LightningModule):
 
             for n, p in self.named_parameters():
                 print(f'LR Check {n}')
-                if ('emb' in n  or 'ln0' in n):# and LAYER_CONFIG['emb']['mode'] == 'full':
+                if ('emb' in n  or 'ln0' in n) and LAYER_CONFIG['emb']['mode'] == 'full':
                     if p.requires_grad:
                         optim_groups.append({"params":[param_dict[n]],
                                             'lr_init':float(LAYER_CONFIG['emb']['lr_init']), 
@@ -553,7 +553,7 @@ class RWKV(pl.LightningModule):
                                             'weight_decay':float(LAYER_CONFIG['emb']['weight_decay']), 
                                             'pname':'emb'})
 
-                elif ('head' in n or 'ln_out' in n) and LAYER_CONFIG['head']['mode']:# != 'freeze':
+                elif ('head' in n or 'ln_out' in n) and LAYER_CONFIG['head']['mode'] != 'freeze':
                     if p.requires_grad:
                         optim_groups.append({"params":[param_dict[n]],
                                             'lr_init':float(LAYER_CONFIG['head']['lr_init']),
@@ -567,7 +567,7 @@ class RWKV(pl.LightningModule):
                         blockname = f'blocks.{i}.'
                         if blockname in n:
                             print(n)
-                        if blockname in n and 'time_state' in n and args.state:
+                        if blockname in n and ('time_state' in n or 'time_offset' in n) and args.state:
                             if p.requires_grad:
                                 print(f"State-tuning {n} Set lr_init {float(LAYER_CONFIG[f'{str(i)}']['lr_init_state'])} lr_final {float(LAYER_CONFIG[f'{str(i)}']['lr_final_state'])}")
                             

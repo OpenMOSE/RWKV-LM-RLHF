@@ -259,9 +259,9 @@ class train_callback(pl.Callback):
                                 if LAYER_CONFIG[f'{str(i)}']['mode']=='full' and text in name:
                                     lora_dict[name] = state
                                     break
-                            if '.time_state' in name and args.state_output_mode == 0:
+                            if ('.time_state' in name or '.time_offset' in name ) and args.state_output_mode == 0:
                                     lora_dict[name] = state
-                            elif '.time_state' in name:
+                            elif ('.time_state' in name or '.time_offset' in name ):
                                     lora_dict[name] = state
                                     state_dict[name] = state
                             elif ('.bone' in name or '.lora_' in name or '.time' in name or 'ln' in name or 'router' in name):
