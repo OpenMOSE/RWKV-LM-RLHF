@@ -394,17 +394,54 @@ if __name__ == "__main__":
     update_layer_config(LAYER_CONFIG)
 
     print(LAYER_CONFIG)
+
+    def load_split_safetensors(model_dir, device="cpu"):
+        from safetensors import safe_open
+        from safetensors.torch import load_file
+        """
+        分割されたSafeTensorファイルを読み込む関数
+        
+        Args:
+            model_dir: 分割されたSafeTensorファイルが格納されているディレクトリパス
+            device: ロード先のデバイス（デフォルトは"cpu"）
+        
+        Returns:
+            dict: 統合されたモデルの状態辞書
+        """
+        # ディレクトリから全てのsafetensorファイルを取得
+        files = sorted([f for f in os.listdir(model_dir) if f.endswith('.safetensors')])
+        
+        if not files:
+            raise ValueError(f"No safetensors files found in {model_dir}")
+        
+        # 状態辞書を初期化
+        state_dict = {}
+        
+        # 各ファイルを読み込んで統合
+        for file in files:
+            file_path = os.path.join(model_dir, file)
+            # load_fileはtorch形式で読み込む
+            file_state_dict = load_file(file_path, device=device)
+            state_dict.update(file_state_dict)
+        
+        return state_dict
     
 
 
     rank_zero_info(f"########## Loading {args.load_model}... ##########")
     try:
-        load_dict = torch.load(args.load_model, map_location="cpu", mmap=True)
-        load_keys = list(load_dict.keys())
-        for k in load_keys:
-            if k.startswith('_forward_module.'):
-                load_dict[k.replace('_forward_module.','')] = load_dict[k]
-                del load_dict[k]
+        if ".pth" in args.load_model:
+            load_dict = torch.load(args.load_model, map_location="cpu", mmap=True)
+            load_keys = list(load_dict.keys())
+            for k in load_keys:
+                if k.startswith('_forward_module.'):
+                    load_dict[k.replace('_forward_module.','')] = load_dict[k]
+                    del load_dict[k]
+        else:
+            load_dict = load_split_safetensors(args.load_model)
+            load_keys = list(load_dict.keys())
+
+
     except:
         raise "Please check model correctly"
     
