@@ -117,7 +117,7 @@ if 'x070' in os.environ["RWKV_MY_TESTING"]:
                 x  = x + ffn_out
                 return x, v_first,moe_router_loss
         else:
-            def forward(self, x, v_first,passthrough = False):
+            def forward(self, x, v_first,passthrough = False,x_emb=None):
                 if self.layer_id == 0:
                     x = self.ln0(x)
 
@@ -145,8 +145,8 @@ if 'xa070' in os.environ["RWKV_MY_TESTING"]:
             self.args = args
             self.layer_id = layer_id
 
-            self.ln1 = Qwen2RMSNorm(args.n_embd)
-            self.ln2 = Qwen2RMSNorm(args.n_embd)
+            self.ln1 = Qwen2RMSNorm(args.n_embd,args.rms_norm_eps)
+            self.ln2 = Qwen2RMSNorm(args.n_embd,args.rms_norm_eps)
 
             if os.environ["RWKV_TRAIN_TYPE"] == 'state':
                 self.att = ARWKV_Tmix_x070_state(args, layer_id) 
@@ -179,7 +179,7 @@ if 'xa070' in os.environ["RWKV_MY_TESTING"]:
                 x = x + ffn_out
                 return x, v_first ,BlockState(att_state, ffn_state)
         else:
-            def forward(self, x, v_first,passthrough = False):
+            def forward(self, x, v_first,passthrough = False,x_emb=None):
       
 
                 x_attn, v_first = self.att(self.ln1(x), v_first, passthrough)
@@ -422,7 +422,7 @@ class RWKV(pl.LightningModule):
 
 
         if 'xa070' in os.environ["RWKV_MY_TESTING"]:
-            self.ln_out = Qwen2RMSNorm(args.n_embd)
+            self.ln_out = Qwen2RMSNorm(args.n_embd,args.rms_norm_eps)
         else:
             self.ln_out = nn.LayerNorm(args.n_embd)
 
@@ -1304,13 +1304,13 @@ class RWKV(pl.LightningModule):
                                     x, v_first,moe_router_loss = torch_checkpoint(block, x, v_first, idx, use_reentrant=False)
                                     moe_total_loss += (moe_router_loss+0.001) / float(args.n_layer)
                                 else:
-                                    x, v_first = torch_checkpoint(block, x, v_first,passthrough,use_reentrant=False)
+                                    x, v_first = torch_checkpoint(block, x, v_first,passthrough,x_emb,use_reentrant=False)
                             else:
                                 if os.environ["CustomModel"] == 'MoE':
                                     x, v_first ,moe_router_loss = torch_checkpoint(block, x, v_first,idx,use_reentrant=False)
                                     moe_total_loss += (moe_router_loss+0.001) / float(args.n_layer)
                                 else:
-                                    x, v_first = torch_checkpoint(block, x, v_first,passthrough, use_reentrant=False)
+                                    x, v_first = torch_checkpoint(block, x, v_first,passthrough,x_emb, use_reentrant=False)
                                 #x, v_first = deepspeed.checkpointing.checkpoint(block, x, v_first )
                         else:
                             if os.environ["CustomModel"] == 'MoE':

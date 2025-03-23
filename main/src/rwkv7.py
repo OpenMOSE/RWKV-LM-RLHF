@@ -657,10 +657,8 @@ if 'x070' in ModelGeneration:
 
                 #for State-tuning
                 if self.args.suffix_offset and args.prefix_tuning == 0:
-                    #self.time_offset = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
                     self.time_offset = nn.Parameter(torch.zeros(args.n_embd))
                 elif self.args.suffix_offset and args.prefix_tuning == 1:
-                    #self.time_offset = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
                     self.time_offset = nn.Parameter(torch.zeros(args.n_embd))
                     self.time_offset_y = nn.Parameter(torch.zeros(args.n_embd))
                     self.time_state = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
