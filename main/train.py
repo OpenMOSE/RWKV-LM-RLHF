@@ -154,6 +154,7 @@ if __name__ == "__main__":
     #Hyper Parameters SFT(masked)
     parser.add_argument("--sft", default=0, type=int)
     parser.add_argument("--sft_jsonmode", default=0, type=int)
+    parser.add_argument("--sft_jsonmode_overlap_tokenshift", default=1, type=int)
     parser.add_argument("--sft_jsonmode_tokenizermode", default='world', type=str)
     parser.add_argument("--train_data_file", default='datasets/test_jp_logits.h5', type=str)
     parser.add_argument("--random_mode", default=1, type=int)
@@ -173,7 +174,7 @@ if __name__ == "__main__":
 
     #parser.add_argument("--accelerator", default="gpu", type=str)
 
-    
+    parser.add_argument("--rms_norm_eps", default=1e-6, type=float)
 
     if pl.__version__[0]=='2':
         parser.add_argument("--accelerator", default="gpu", type=str)

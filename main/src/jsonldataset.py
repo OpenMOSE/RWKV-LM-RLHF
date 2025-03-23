@@ -78,7 +78,7 @@ class JSONLOnDemandOffsetDataset(Dataset):
         )
 
         # tokenshift が有効かどうか。元コードに合わせて True/False を設定
-        self.tokenshift = True
+        self.tokenshift = self.args.sft_jsonmode_overlap_tokenshift
         # tokenshiftで余ったトークンを次に持ち越す領域
         self.CurrentExcessToken = None
 
