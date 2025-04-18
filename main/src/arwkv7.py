@@ -700,7 +700,7 @@ if 'xa070' in ModelGeneration:
             xv = x + xx * self.x_v
             xa = x + xx * self.x_a
             xg = x + xx * self.x_g
-
+ 
             r = self.receptance(xr,passthrough)
             w = -F.softplus(-(self.w0 + torch.tanh(xw @ self.w1) @ self.w2)) - 0.5 # soft-clamp to (-inf, -0.5)
             k = self.key(xk,passthrough)

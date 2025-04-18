@@ -1,0 +1,28 @@
+{
+  "additional_special_tokens": [
+    "<|endoftext|>",
+    "<|fim_prefix|>",
+    "<|fim_middle|>",
+    "<|fim_suffix|>",
+    "<|endofprompt|>",
+    "<|_unuse_missing_100256|>",
+    "<|_unuse_missing_100261|>",
+    "<|_unuse_missing_100262|>",
+    "<|_unuse_missing_100263|>",
+    "<|_unuse_missing_100264|>",
+    "<|_unuse_missing_100265|>",
+    "<|_unuse_missing_100266|>",
+    "<|_unuse_missing_100267|>",
+    "<|_unuse_missing_100268|>",
+    "<|_unuse_missing_100269|>",
+    "<|_unuse_missing_100270|>",
+    "<|_unuse_missing_100271|>",
+    "<|_unuse_missing_100272|>",
+    "<|_unuse_missing_100273|>",
+    "<|_unuse_missing_100274|>",
+    "<|_unuse_missing_100275|>"
+  ],
+  "bos_token": "<|endoftext|>",
+  "eos_token": "<|endoftext|>",
+  "unk_token": "<|endoftext|>"
+}

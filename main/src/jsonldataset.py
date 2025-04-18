@@ -33,6 +33,13 @@ def generate_prompt_from_config(tokenizer_config: dict, messages: list, add_gene
     # テンプレートを読み込む
     template = Template(chat_template_str)
 
+    from datetime import datetime
+
+    def strftime_now(format_string):
+            return datetime.now().strftime(format_string)
+        
+    template.globals['strftime_now'] = strftime_now
+
     # テンプレート変数を指定してレンダリング
     rendered_text = template.render(
         messages=messages,

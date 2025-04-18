@@ -1,6 +1,6 @@
 python train.py --load_model "myfolder/models/RWKV-x070-World-1.5B-v3-20250127-ctx4096.pth" \
- --wandb "RWKV-LM-RLHF x070 1.5B Hidden Offset" --proj_dir "myfolder/Outputs/x070-1b5-hidden-offset" \
- --vocab_size 65536 --ctx_len 1024 \
+ --wandb "RWKV-LM-RLHF x070 1.5B Hidden Offset" --proj_dir "myfolder/Outputs/x070-1b5-prefix" \
+ --vocab_size 65536 --ctx_len 512 \
  --epoch_steps 1000 --epoch_count 200 --epoch_begin 0 --epoch_save 1 \
  --micro_bsz 1 --n_layer 24 --n_embd 2048 \
  --lr_init 1e-4 --lr_final 1e-6 \
@@ -14,8 +14,8 @@ python train.py --load_model "myfolder/models/RWKV-x070-World-1.5B-v3-20250127-c
  --gpu_arch 'triton' \
  --limited_lora 0 \
  --state 1 \
- --suffix_offset 0 \
  --prefix_tuning 1 \
+ --suffix_tuning 1 \
  --sft 1 \
  --sft_jsonmode 0 \
  --sft_jsonmode_tokenizermode 'world' \
