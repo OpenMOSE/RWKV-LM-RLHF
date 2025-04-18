@@ -1,0 +1,203 @@
+{
+  "add_prefix_space": false,
+  "added_tokens_decoder": {
+    "100256": {
+      "content": "<|_unuse_missing_100256|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "100257": {
+      "content": "<|endoftext|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "100258": {
+      "content": "<|fim_prefix|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "100259": {
+      "content": "<|fim_middle|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "100260": {
+      "content": "<|fim_suffix|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "100261": {
+      "content": "<|_unuse_missing_100261|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "100262": {
+      "content": "<|_unuse_missing_100262|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "100263": {
+      "content": "<|_unuse_missing_100263|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "100264": {
+      "content": "<|_unuse_missing_100264|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "100265": {
+      "content": "<|_unuse_missing_100265|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "100266": {
+      "content": "<|_unuse_missing_100266|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "100267": {
+      "content": "<|_unuse_missing_100267|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "100268": {
+      "content": "<|_unuse_missing_100268|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "100269": {
+      "content": "<|_unuse_missing_100269|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "100270": {
+      "content": "<|_unuse_missing_100270|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "100271": {
+      "content": "<|_unuse_missing_100271|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "100272": {
+      "content": "<|_unuse_missing_100272|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "100273": {
+      "content": "<|_unuse_missing_100273|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "100274": {
+      "content": "<|_unuse_missing_100274|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "100275": {
+      "content": "<|_unuse_missing_100275|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "100276": {
+      "content": "<|endofprompt|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    }
+  },
+  "additional_special_tokens": [
+    "<|endoftext|>",
+    "<|fim_prefix|>",
+    "<|fim_middle|>",
+    "<|fim_suffix|>",
+    "<|endofprompt|>",
+    "<|_unuse_missing_100256|>",
+    "<|_unuse_missing_100261|>",
+    "<|_unuse_missing_100262|>",
+    "<|_unuse_missing_100263|>",
+    "<|_unuse_missing_100264|>",
+    "<|_unuse_missing_100265|>",
+    "<|_unuse_missing_100266|>",
+    "<|_unuse_missing_100267|>",
+    "<|_unuse_missing_100268|>",
+    "<|_unuse_missing_100269|>",
+    "<|_unuse_missing_100270|>",
+    "<|_unuse_missing_100271|>",
+    "<|_unuse_missing_100272|>",
+    "<|_unuse_missing_100273|>",
+    "<|_unuse_missing_100274|>",
+    "<|_unuse_missing_100275|>"
+  ],
+  "bos_token": "<|endoftext|>",
+  "chat_template": "{% if messages[0]['role'] == 'system' %}{% set merged_content = messages[0]['content'] + ' ' + messages[1]['content'] %}{% set merged_messages = [{'role': messages[1]['role'], 'content': merged_content}] + messages[2:] %}{% else %}{% set merged_messages = messages %}{% endif %}{% for message in merged_messages %}{{('human' if message['role'] == 'user' else message['role']) + ': ' + (message['content'].split('<reasoning>')|first + message['content'].split('</reasoning>')|last if message['role'] == 'assistant' and '</reasoning>' in message['content'] else message['content'])}}{% if (loop.last and add_generation_prompt and merged_messages[-1]['role'] != 'assistant') or not loop.last %}{{ ' <sep> ' }}{% endif %}{% endfor %}{% if add_generation_prompt and merged_messages[-1]['role'] != 'assistant' %}{{ 'assistant:' }}{% else %}{{ ' <sep> ' + eos_token }}{% endif %}",
+  "clean_up_tokenization_spaces": true,
+  "eos_token": "<|endoftext|>",
+  "model_max_length": 32768,
+  "tokenizer_class": "GPT2Tokenizer",
+  "unk_token": "<|endoftext|>"
+}

@@ -33,8 +33,6 @@ if __name__ == "__main__":
     parser.add_argument("--proj_dir", default="out", type=str)
     parser.add_argument("--random_seed", default="-1", type=int)
 
-    #parser.add_argument("--data_file", default="default_text_document", type=str)
-    #parser.add_argument("--data_type", default="binidx", type=str)
     parser.add_argument("--vocab_size", default=0, type=int)  # vocab_size = 0 means auto (for char-level LM and .txt data)
 
     parser.add_argument("--ctx_len", default=2048, type=int) #maximum context size
@@ -43,8 +41,10 @@ if __name__ == "__main__":
     parser.add_argument("--chunk_ctx", default=512, type=int)
 
     parser.add_argument("--state", default=0, type=int) #for state-tuning x060
-    parser.add_argument("--suffix_offset", default=0, type=int) #for offset state-tuning on x070 
-    parser.add_argument("--prefix_tuning", default=0, type=int) #for offset state-tuning on x070 
+    parser.add_argument("--prefix_tuning", default=0, type=int) #for prefix state-tuning on x070 Dynamic State 
+    parser.add_argument("--post_wkv_tuning", default=0, type=int) #for suffix state-tuning on x070 Fixed Hidden offset Tuning
+
+    
     parser.add_argument("--state_output_mode", default=1, type=int) #0: state in MainAdapter, 1: Separate MainAdapter,State 2: Separate state in MainAdapter, State
 
     parser.add_argument("--fla", default=0, type=int)
@@ -101,6 +101,12 @@ if __name__ == "__main__":
     parser.add_argument("--ds_bucket_mb", default=64, type=int)  # deepspeed bucket size in MB. 200 seems enough
 
     parser.add_argument("--head_size_a", default=64, type=int) # can try larger values for larger models
+
+    parser.add_argument("--gqa_kv_heads", default=8, type=int) 
+
+
+
+
     parser.add_argument("--head_size_divisor", default=8, type=int)
 
     parser.add_argument("--magic_prime", default=0, type=int)
@@ -224,6 +230,8 @@ if __name__ == "__main__":
     os.environ["RWKV_MY_ARCHITECTURE"] = args.gpu_arch
     os.environ["RWKV_CTXLEN"] = str(args.ctx_len)
     os.environ["RWKV_HEAD_SIZE_A"] = str(args.head_size_a)
+    os.environ["RWKV_HEAD"] = str(args.n_embd // args.head_size_a)
+    os.environ["RWKV_MIRCO_BSZ"] = str(args.micro_bsz)
 
     if args.infctx:
         os.environ["RWKV_TRAIN_TYPE"]='infctx'

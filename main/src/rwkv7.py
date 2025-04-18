@@ -656,14 +656,30 @@ if 'x070' in ModelGeneration:
                 self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
 
                 #for State-tuning
-                if self.args.suffix_offset and args.prefix_tuning == 0:
-                    self.time_offset = nn.Parameter(torch.zeros(args.n_embd))
-                elif self.args.suffix_offset and args.prefix_tuning == 1:
-                    self.time_offset = nn.Parameter(torch.zeros(args.n_embd))
-                    self.time_offset_y = nn.Parameter(torch.zeros(args.n_embd))
+                if self.args.prefix_tuning:
                     self.time_state = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
-                else:
-                    self.time_state = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
+                if self.args.post_wkv_tuning:
+                    #self.time_state_offset = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
+                    self.time_offset = nn.Parameter(torch.zeros(args.n_embd))
+
+                
+
+                #for State-tuning
+                # if self.args.suffix_offset and args.prefix_tuning == 0:
+                #     self.time_offset_y = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
+                #     if args.suffix_offset_mode == 2:
+                #         self.time_offset = nn.Parameter(torch.zeros(args.n_embd))
+                #     #self.time_offset = nn.Parameter(torch.zeros(args.n_embd))
+                # elif self.args.suffix_offset and args.prefix_tuning == 1:
+                #     if args.suffix_offset_mode == 2:
+                #         self.time_offset = nn.Parameter(torch.zeros(args.n_embd))
+                #     if args.suffix_offset_mode == 1:
+                #         self.time_offset_y = nn.Parameter(torch.zeros(args.n_embd))
+                #     else:
+                #         self.time_offset_y = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
+                #     self.time_state = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
+                # else:
+                #     self.time_state = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
 
                 Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
 
@@ -698,6 +714,10 @@ if 'x070' in ModelGeneration:
                 v_first = v # store the v of the first layer
             else:
                 v = v + (v_first - v) * torch.sigmoid(self.v0 + (xv @ self.v1) @ self.v2) # add value residual
+
+            if self.args.suffix_tuning:
+                xa = xa * (1 + self.time_offset2)
+
             a = torch.sigmoid(self.a0 + (xa @ self.a1) @ self.a2) # a is "in-context learning rate"
             g = torch.sigmoid(xg @ self.g1) @ self.g2
 
@@ -705,20 +725,26 @@ if 'x070' in ModelGeneration:
             kk = F.normalize(kk.view(B,T,H,-1), dim=-1, p=2.0).view(B,T,C)
             k = k * (1 + (a-1) * self.k_a)
 
-            if self.args.suffix_offset and self.args.prefix_tuning == 0:
-                x = RUN_CUDA_RWKV7g(r , w, k, v, -kk, kk*a,HEAD_SIZE=self.head_size)# + self.time_offset
-            else:
+
+            
+
+            if self.args.prefix_tuning:
                 x , _ = RUN_RWKV7_STATE(r,k,v,w,-kk, kk*a,self.time_state)
-                if self.args.suffix_offset:
-                    x = x  * (1 + self.time_offset_y)
+            else:
+                x     = RUN_CUDA_RWKV7g(r , w, k, v, -kk, kk*a,HEAD_SIZE=self.head_size)
+
+            if self.args.post_wkv_tuning:
+                x = x * (1 + self.time_offset)
+
+            
+
 
             x = self.ln_x(x.view(B * T, C)).view(B, T, C)
 
             x = x + ((r.view(B,T,H,-1)*k.view(B,T,H,-1)*self.r_k).sum(dim=-1, keepdim=True) * v.view(B,T,H,-1)).view(B,T,C)
             x = self.output(x * g,passthrough)
 
-            if self.args.suffix_offset:
-                x = x + x * self.time_offset
+ 
 
             return x, v_first
         
@@ -1178,6 +1204,318 @@ if 'x070' in ModelGeneration:
 
 
 ##########################################################################################################
+
+
+
+
+def parallel_ema(write: torch.Tensor, decay: float) -> torch.Tensor:
+    B, T, C = write.shape
+    device = write.device
+    power = torch.arange(T, device=device).unsqueeze(0).unsqueeze(-1)
+    decay_factors = decay ** power
+    weighted = write * decay_factors
+    ema = torch.cumsum(weighted.flip(dims=[1]), dim=1).flip(dims=[1])
+    return ema
+from typing import Tuple, Optional
+
+def parallel_ema_stateful(
+    write: torch.Tensor,           # (B, T, C)
+    decay: float,
+    prev_ema: Optional[torch.Tensor] = None  # (B, C)
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    数値的に安定で、prev_ema = 0 でも通常のEMAと一致する設計
+    """
+    B, T, C = write.shape
+    device = write.device
+    dtype = write.dtype
+
+    # 初期状態：prev_ema or 0
+    if prev_ema is None:
+        ema0 = torch.zeros(B, 1, C, dtype=dtype, device=device)
+    else:
+        ema0 = prev_ema.unsqueeze(1)  # (B, 1, C)
+
+    # 系列 t=0～T-1 用に積み重ねる
+    decay_tensor = torch.full((1, T, 1), decay, dtype=dtype, device=device)
+    decay_factors = torch.cumprod(decay_tensor, dim=1)  # (1, T, 1)
+
+    weighted = write * torch.flip(decay_factors, dims=[1])  # weight decay^{T-t-1}
+    weighted = torch.cat([ema0 * decay_factors[:, :1, :], weighted], dim=1)  # 初期値込み
+
+    # 加算して逆に戻す
+    ema = torch.cumsum(weighted, dim=1)[:, 1:, :]  # (B, T, C)
+
+    return ema, ema[:, -1, :].detach()
+import time
+import torch
+from torch.autograd import Function
+import triton
+import triton.language as tl
+from typing import Optional, Tuple
+@triton.jit
+def _ema_kernel(
+    B, T, C, decay,
+    write_ptr, ema_ptr, state_ptr,
+    stride_bw, stride_tw, stride_cw,
+    stride_be, stride_te, stride_ce,
+    stride_bs, stride_cs,
+):
+    pid = tl.program_id(0)
+    b = pid // C
+    c = pid % C
+    # load initial state
+    s = tl.load(state_ptr + b * stride_bs + c * stride_cs)
+    # compute EMA over time
+    for t in range(T):
+        w = tl.load(write_ptr + b * stride_bw + t * stride_tw + c * stride_cw)
+        s = decay * s + w
+        tl.store(ema_ptr + b * stride_be + t * stride_te + c * stride_ce, s)
+    # store final state
+    tl.store(state_ptr + b * stride_bs + c * stride_cs, s)
+
+# ---------------- Triton backward kernel ----------------
+@triton.jit
+def _ema_bwd_kernel(
+    B, T, C, decay,
+    grad_ema_ptr, grad_state_ptr, grad_write_ptr,
+    stride_bw, stride_tw, stride_cw,
+    stride_ge_b, stride_ge_t, stride_ge_c,
+    stride_gs_b, stride_gs_c,
+):
+    pid = tl.program_id(0)
+    b = pid // C
+    c = pid % C
+    # load gradient of final state
+    s_grad = tl.load(grad_state_ptr + b * stride_gs_b + c * stride_gs_c)
+    # reverse time loop
+    for t in range(T - 1, -1, -1):
+        g = tl.load(grad_ema_ptr + b * stride_ge_b + t * stride_ge_t + c * stride_ge_c)
+        # at last step, add grad_state without decay scaling
+        s_grad = g + (decay * s_grad if t != T - 1 else s_grad)
+        tl.store(grad_write_ptr + b * stride_bw + t * stride_tw + c * stride_cw, s_grad)
+
+class EMAFunction(Function):
+    @staticmethod
+    def forward(ctx, write: torch.Tensor, decay: float, prev_ema: Optional[torch.Tensor]):
+        B, T, C = write.shape
+        ema = torch.empty_like(write)
+        state = prev_ema.clone() if prev_ema is not None else torch.zeros(B, C, device=write.device, dtype=write.dtype)
+        grid = (B * C,)
+        _ema_kernel[grid](
+            B, T, C, decay,
+            write, ema, state,
+            write.stride(0), write.stride(1), write.stride(2),
+            ema.stride(0), ema.stride(1), ema.stride(2),
+            state.stride(0), state.stride(1),
+        )
+        ctx.decay = decay
+        ctx.save_for_backward(write)
+        return ema, state
+
+    @staticmethod
+    def backward(ctx, grad_ema: torch.Tensor, grad_state: torch.Tensor):
+        write, = ctx.saved_tensors
+        decay = ctx.decay
+        B, T, C = write.shape
+        grad_write = torch.zeros_like(write)
+        grid = (B * C,)
+        _ema_bwd_kernel[grid](
+            B, T, C, decay,
+            grad_ema, grad_state, grad_write,
+            write.stride(0), write.stride(1), write.stride(2),
+            grad_ema.stride(0), grad_ema.stride(1), grad_ema.stride(2),
+            grad_state.stride(0), grad_state.stride(1),
+        )
+        return grad_write, None, None
+
+# wrapper
+def parallel_ema_stateful_triton_autograd(write: torch.Tensor, decay: float, prev_ema: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+    if prev_ema is not None:
+        prev_ema = prev_ema.to(dtype=torch.float32)
+    return EMAFunction.apply(write.float(), decay, prev_ema)
+class RWKV_Tmix_x070m(torch.nn.Module):
+    def __init__(self, args, layer_id):
+        super().__init__()
+        self.args = args
+        self.layer_id = layer_id
+        self.my_testing = args.my_testing
+
+        self.head_size = args.head_size_a
+        self.n_head = args.dim_att // self.head_size
+        assert args.dim_att % self.n_head == 0
+        H = self.n_head
+        C = args.n_embd
+
+        with torch.no_grad():
+            ratio_0_to_1 = layer_id / (args.n_layer - 1)
+            ratio_1_to_almost0 = 1.0 - (layer_id / args.n_layer)
+            ddd = torch.ones(1, 1, C)
+            for i in range(C):
+                ddd[0, 0, i] = i / C
+
+            self.x_r = nn.Parameter(1.0 - torch.pow(ddd, 0.2 * ratio_1_to_almost0))
+            self.x_w = nn.Parameter(1.0 - torch.pow(ddd, 0.9 * ratio_1_to_almost0))
+            self.x_k = nn.Parameter(1.0 - (torch.pow(ddd, 0.9 * ratio_1_to_almost0) + 0.4 * ratio_0_to_1))
+            self.x_v = nn.Parameter(1.0 - (torch.pow(ddd, 0.4 * ratio_1_to_almost0) + 0.6 * ratio_0_to_1))
+            self.x_a = nn.Parameter(1.0 - torch.pow(ddd, 0.9 * ratio_1_to_almost0))
+            self.x_g = nn.Parameter(1.0 - torch.pow(ddd, 0.2 * ratio_1_to_almost0))
+
+        def ortho_init(x, scale):
+            with torch.no_grad():
+                shape = x.shape
+                if len(shape) == 2:
+                    gain = math.sqrt(shape[0] / shape[1]) if shape[0] > shape[1] else 1
+                    nn.init.orthogonal_(x, gain=gain * scale)
+                elif len(shape) == 3:
+                    gain = math.sqrt(shape[1] / shape[2]) if shape[1] > shape[2] else 1
+                    for i in range(shape[0]):
+                        nn.init.orthogonal_(x[i], gain=gain * scale)
+                return x
+
+
+        D_DECAY_LORA = max(32, int(round(  (1.8*(C**0.5))  /32)*32)) # suggestion
+        D_AAA_LORA = max(32, int(round(  (1.8*(C**0.5))  /32)*32)) # suggestion
+        D_MV_LORA = max(32, int(round(  (1.3*(C**0.5))  /32)*32)) # suggestion
+        D_GATE_LORA = 128#max(32, int(round(  (0.6*(C**0.8))  /32)*32)) # suggestion
+
+        self.w1 = nn.Parameter(torch.zeros(C, D_DECAY_LORA))
+        self.w2 = nn.Parameter(ortho_init(torch.zeros(D_DECAY_LORA, C), 0.1))
+        self.w0 = nn.Parameter(torch.ones(1, 1, C))
+
+        self.a1 = nn.Parameter(torch.zeros(C, D_AAA_LORA))
+        self.a2 = nn.Parameter(ortho_init(torch.zeros(D_AAA_LORA, C), 0.1))
+        self.a0 = nn.Parameter(torch.zeros(1, 1, C))
+
+        self.g1 = nn.Parameter(torch.zeros(C, D_GATE_LORA))
+        self.g2 = nn.Parameter(ortho_init(torch.zeros(D_GATE_LORA, C), 0.1))
+
+        self.v1 = nn.Parameter(torch.zeros(C, D_MV_LORA))
+        self.v2 = nn.Parameter(ortho_init(torch.zeros(D_MV_LORA, C), 0.1))
+        self.v0 = nn.Parameter(torch.ones(1, 1, C))
+
+        self.k_k = nn.Parameter(torch.ones(1, 1, C) * 0.85)
+        self.k_a = nn.Parameter(torch.ones(1, 1, C))
+        self.r_k = nn.Parameter(torch.zeros(self.n_head, self.head_size))
+
+
+
+        self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
+
+        self.receptance = make_linear_att(C, C, bias=False, n_layer=layer_id, pname='att.receptance')
+        self.key = make_linear_att(C, C, bias=False, n_layer=layer_id, pname='att.key')
+        self.value = make_linear_att(C, C, bias=False, n_layer=layer_id, pname='att.value')
+        self.output = make_linear_att(C, C, bias=False, n_layer=layer_id, pname='att.output')
+
+        self.ln_x = nn.GroupNorm(self.n_head, C, eps=64e-5)
+
+        D_NM = 64
+        self.nm_A = nn.Parameter(torch.zeros(C, D_NM))
+        self.nm_B = nn.Parameter(ortho_init(torch.zeros(D_NM, C), 0.1))
+        self.nm_alpha = nn.Parameter(torch.ones(1, 1, C) * 0.1)
+        self.nm_decay = 0.98
+
+        #for memory tuning
+        #self.nm_init_mem = nn.Parameter(torch.zeros(1, C))
+
+    def forward(self, x, v_first, passthrough=False):
+        B, T, C = x.size()
+        H = self.n_head
+        xx = self.time_shift(x) - x
+
+        #Neural Memory
+        delta = (x @ self.nm_A) @ self.nm_B
+        gate = torch.sigmoid(delta)
+        write = gate * delta
+        #init_mem = self.nm_init_mem.expand(B, -1)  # (B, C)
+        init_mem = None
+
+        #for MemoryTuning + Gate
+        # この init_mem を parallel_ema_stateful に入れる
+        mem_stack, next_mem = parallel_ema_stateful_triton_autograd(write, decay=self.nm_decay, prev_ema=init_mem)
+
+        #print(self.nm_alpha)
+        
+
+        #Gate only
+        #mem_stack = parallel_ema(write, self.nm_decay).to(dtype=torch.bfloat16)
+
+        #xr = x + (xx + mem_stack.to(dtype=torch.bfloat16)) * self.x_r * self.nm_alpha
+        xr = x + xx * self.x_r + mem_stack.to(dtype=torch.bfloat16) * self.nm_alpha
+        xw = x + xx * self.x_w
+        xk = x + xx * self.x_k
+        xv = x + xx * self.x_v
+        xa = x + xx * self.x_a
+        xg = x + xx * self.x_g
+
+        r = self.receptance(xr, passthrough)
+        w = -F.softplus(-(self.w0 + torch.tanh(xw @ self.w1) @ self.w2)) - 0.5
+        k = self.key(xk, passthrough)
+        v = self.value(xv, passthrough)
+
+        if self.layer_id == 0:
+            v_first = v
+        else:
+            v = v + (v_first - v) * torch.sigmoid(self.v0 + (xv @ self.v1) @ self.v2)
+
+        a = torch.sigmoid(self.a0 + (xa @ self.a1) @ self.a2)
+        g = torch.sigmoid(xg @ self.g1) @ self.g2
+
+        kk = k * self.k_k
+        kk = F.normalize(kk.view(B, T, H, -1), dim=-1, p=2.0).view(B, T, C)
+        k = k * (1 + (a - 1) * self.k_a)
+
+        x = RUN_CUDA_RWKV7g(r, w, k, v, -kk, kk * a, HEAD_SIZE=self.head_size)
+        x = self.ln_x(x.view(B * T, C)).view(B, T, C)
+
+        x = x + ((r.view(B, T, H, -1) * k.view(B, T, H, -1) * self.r_k).sum(dim=-1, keepdim=True) * v.view(B, T, H, -1)).view(B, T, C)
+        x = self.output(x * g, passthrough)
+
+        return x, v_first
+
+    def forward_rnn(self, x, v_first, shift_state, nm_mem, wkv_state, passthrough=False):
+        B, T, C = x.size()
+        H = self.n_head
+
+        xx = torch.cat([shift_state.unsqueeze(1), x[:, :-1]], dim=1) - x
+        delta = (x @ self.nm_A) @ self.nm_B
+        gate = torch.sigmoid(delta)
+        write = gate * delta
+        nm_mem = self.nm_decay * nm_mem + write
+
+        xr = x + (xx + nm_mem) * self.x_r * self.nm_alpha
+        xw = x + xx * self.x_w
+        xk = x + xx * self.x_k
+        xv = x + xx * self.x_v
+        xa = x + xx * self.x_a
+        xg = x + xx * self.x_g
+
+        shift_state = x[:, -1]
+
+        r = self.receptance(xr, passthrough)
+        w = -F.softplus(-(self.w0 + torch.tanh(xw @ self.w1) @ self.w2)) - 0.5
+        k = self.key(xk, passthrough)
+        v = self.value(xv, passthrough)
+
+        if self.layer_id == 0:
+            v_first = v
+        else:
+            v = v + (v_first - v) * torch.sigmoid(self.v0 + (xv @ self.v1) @ self.v2)
+
+        a = torch.sigmoid(self.a0 + (xa @ self.a1) @ self.a2)
+        g = torch.sigmoid(xg @ self.g1) @ self.g2
+
+        kk = k * self.k_k
+        kk = F.normalize(kk.view(B, T, H, -1), dim=-1, p=2.0).view(B, T, C)
+        k = k * (1 + (a - 1) * self.k_a)
+
+        x, wkv_state = RUN_RWKV7_RECURRENT(r, k, v, w, -kk, kk * a, s=wkv_state)
+        x = self.ln_x(x.view(B * T, C)).view(B, T, C)
+
+        x = x + ((r.view(B, T, H, -1) * k.view(B, T, H, -1) * self.r_k).sum(dim=-1, keepdim=True) * v.view(B, T, H, -1)).view(B, T, C)
+        x = self.output(x * g, passthrough)
+
+        return x, v_first, shift_state, nm_mem, wkv_state
 
 
 
