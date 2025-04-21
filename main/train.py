@@ -41,7 +41,7 @@ if __name__ == "__main__":
     parser.add_argument("--chunk_ctx", default=512, type=int)
 
     parser.add_argument("--state", default=0, type=int) #for state-tuning x060
-    parser.add_argument("--prefix_tuning", default=0, type=int) #for prefix state-tuning on x070 Dynamic State 
+    parser.add_argument("--prefix_tuning", default=1, type=int) #for prefix state-tuning on x070 Dynamic State 
     parser.add_argument("--post_wkv_tuning", default=0, type=int) #for suffix state-tuning on x070 Fixed Hidden offset Tuning
 
     
@@ -257,7 +257,7 @@ if __name__ == "__main__":
         args.dim_att = args.n_embd
     if args.dim_ffn <= 0:
         args.dim_ffn = int((args.n_embd * 3.5) // 32 * 32) # default = 3.5x emb size
-        if 'x070' in args.my_testing:
+        if '07' in args.my_testing:
             args.dim_ffn = int((args.n_embd * 4.0))
 
      
@@ -535,7 +535,7 @@ if __name__ == "__main__":
 
 
         
-        if 'x070' in os.environ["RWKV_MY_TESTING"] or 'xa070' in os.environ["RWKV_MY_TESTING"]:# and args.limited_lora == 0:
+        if '07' in os.environ["RWKV_MY_TESTING"] or 'xa07' in os.environ["RWKV_MY_TESTING"]:# and args.limited_lora == 0:
             #print('x070 Additional Parameters')
             for i in range(args.n_layer):
                 text = f'blocks.{str(i)}.'

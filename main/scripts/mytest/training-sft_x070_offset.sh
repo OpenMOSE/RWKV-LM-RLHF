@@ -1,0 +1,27 @@
+python train.py --load_model "myfolder/models/RWKV-x070-World-1.5B-v3-20250127-ctx4096.pth" \
+ --wandb "RWKV-LM-RLHF x070 1.5B Hidden Offset" --proj_dir "myfolder/Outputs/x070-1b5-prefix" \
+ --vocab_size 65536 --ctx_len 512 \
+ --epoch_steps 1000 --epoch_count 200 --epoch_begin 0 --epoch_save 1 \
+ --micro_bsz 1 --n_layer 24 --n_embd 2048 \
+ --lr_init 1e-4 --lr_final 1e-6 \
+ --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
+ --accelerator gpu --devices 1 --precision 'bf16' \
+ --grad_cp 1 --my_testing "x070" \
+ --strategy deepspeed_stage_1 \
+ --layer_profile 'layerprofile/24_TEST_offset.csv' \
+ --quant 0 \
+ --quant_mode 'int8'\
+ --gpu_arch 'triton' \
+ --limited_lora 0 \
+ --state 1 \
+ --prefix_tuning 1 \
+ --suffix_tuning 1 \
+ --sft 1 \
+ --sft_jsonmode 0 \
+ --sft_jsonmode_tokenizermode 'world' \
+ --smoothing 0.005 \
+ --random_mode 0 \
+ --infctx_dataset_multiplier 1 \
+ --optim '' \
+ --train_data_file 'myfolder/datasets/may_tweets01.h5' \
+ --accumulate_grad_batches 1

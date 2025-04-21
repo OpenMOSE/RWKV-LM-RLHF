@@ -38,7 +38,7 @@ MyModule = nn.Module
 MyFunction = __nop
 
 
-if 'xa070' in ModelGeneration:
+if 'xa07' in ModelGeneration:
     print('ARWKV v7 Mode')
     if 'flatriton' in RunningDevice or 'infctx' in TrainingType or ('state' in TrainingType and KernelMode == 1): #infctx or FLA Mode
         print('ax070 Flash-Linear-Attention Kernel Mode')
