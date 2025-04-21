@@ -368,7 +368,11 @@ class HeadLoraLinear(nn.Module):
         super().__init__()
 
         self.weight = nn.Parameter(torch.empty((out_features, in_features)))
-        assert bias == False, "Biased LoraLinear not supported"
+        if bias == True:
+            self.bias = nn.Parameter(torch.empty((out_features)))
+            self.biasmode = True
+        else:
+            self.biasmode = False
 
         if LAYER_CONFIG[f'head']['mode'] == 'bone':
             print('bone mode')
@@ -427,7 +431,10 @@ class HeadLoraLinear(nn.Module):
         self.weight = None # Because Latest Pytorch-lightning forced to BF16 type. thats why delete
     #@torch.jit.ignore
     def forward(self, x,passthrough=False):
-        return LinearForward(self,x,passthrough)
+        if self.biasmode == True:
+            return LinearForward(self,x,passthrough) + self.bias
+        else:
+            return LinearForward(self,x,passthrough)
 
         
 @torch.jit.ignore
@@ -459,25 +466,46 @@ class NormalLinear(nn.Module):
         super().__init__()
 
         self.weight = nn.Parameter(torch.empty((out_features, in_features)))
-        assert bias == False, "Biased LoraLinear not supported"
+        #assert bias == False, "Biased LoraLinear not supported"
+        if bias == True:
+            self.bias = nn.Parameter(torch.empty((out_features)))
+            self.biasmode = True
+        else:
+            self.biasmode = False
     def forward(self, x,passthrough = False):
-        return F.linear(x,self.weight)
+        if self.biasmode == True:
+            return F.linear(x,self.weight) + self.bias
+        else:
+            return F.linear(x,self.weight)
     
 class NormalLinear_h(nn.Module):
     def __init__(self, in_features: int, out_features: int, bias: bool):
         super().__init__()
 
         self.weight = nn.Parameter(torch.empty((out_features, in_features)))
-        assert bias == False, "Biased LoraLinear not supported"
+        #assert bias == False, "Biased LoraLinear not supported"
+        if bias == True:
+            self.bias = nn.Parameter(torch.empty((out_features)))
+            self.biasmode = True
+        else:
+            self.biasmode = False
     def forward(self, x,passthrough = False):
-        return F.linear(x,self.weight)
+        if self.biasmode == True:
+            return F.linear(x,self.weight) + self.bias
+        else:
+            return F.linear(x,self.weight)
 class LoraLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :) Chaos Modified
     #@torch.jit.unused
     def __init__(self, in_features: int, out_features: int, bias: bool, n_layer: int, pname=''):
         super().__init__()
 
         self.weight = nn.Parameter(torch.empty((out_features, in_features)))
-        assert bias == False, "Biased LoraLinear not supported"
+        #assert bias == False, "Biased LoraLinear not supported"
+        if bias == True:
+            self.bias = nn.Parameter(torch.empty((out_features)))
+            self.biasmode = True
+        else:
+            self.biasmode = False
 
         if LAYER_CONFIG[f'{str(n_layer)}']['mode'] == 'bone':
             print('bone mode')
@@ -541,7 +569,10 @@ class LoraLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :) Chaos Modified
         self.weight = None # Because Latest Pytorch-lightning forced to BF16 type. thats why delete
     #@torch.jit.ignore
     def forward(self, x,passthrough = False):
-        return LinearForward(self,x,passthrough)
+        if self.biasmode == True:
+            return LinearForward(self,x,passthrough) + self.bias
+        else:
+            return LinearForward(self,x,passthrough)
     
 class Shared_LoraLinear(nn.Module): # for Mixture of LoRA Experts
 
@@ -552,6 +583,7 @@ class Shared_LoraLinear(nn.Module): # for Mixture of LoRA Experts
 
         self.weight = shared_weight
         assert bias == False, "Biased LoraLinear not supported"
+        
 
         if LAYER_CONFIG[f'{str(n_layer)}']['mode'] == 'bone':
             print('bone mode')
@@ -591,7 +623,13 @@ class QuantLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :)
         super().__init__()
 
         self.weight = nn.Parameter(torch.empty((out_features, in_features)))
-        assert bias == False, "Biased QuantLinear not supported"
+        #assert bias == False, "Biased QuantLinear not supported"
+        if bias == True:
+            self.bias = nn.Parameter(torch.empty((out_features)))
+            self.biasmode = True
+        else:
+            self.biasmode = False
+            
         self.is_quant = False
     #@torch.jit.ignore
     def quant(self, quant_type,target_gpu):
@@ -602,14 +640,24 @@ class QuantLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :)
     #@torch.jit.ignore
     def forward(self, x,passthrough=False):
 
-        if self.is_quant:
-            if self.quant_type == 'fp8':
-                return fp8_matmul(x,self.Qweight.t())
-            elif self.quant_type == 'fp6ao':
-                return fp6ao_matmul(x,self.Qweight.t(),self.qstate)
-            return F.linear(x, rwkv_dequantize(self.quant_type, self.Qweight, self.qstate))
+        if self.biasmode == True:
+            if self.is_quant:
+                if self.quant_type == 'fp8':
+                    return fp8_matmul(x,self.Qweight.t()) + self.bias
+                elif self.quant_type == 'fp6ao':
+                    return fp6ao_matmul(x,self.Qweight.t(),self.qstate) + self.bias
+                return F.linear(x, rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)) + self.bias
+            else:
+                return F.linear(x, self.weight) + self.bias
         else:
-            return F.linear(x, self.weight)
+            if self.is_quant:
+                if self.quant_type == 'fp8':
+                    return fp8_matmul(x,self.Qweight.t())
+                elif self.quant_type == 'fp6ao':
+                    return fp6ao_matmul(x,self.Qweight.t(),self.qstate)
+                return F.linear(x, rwkv_dequantize(self.quant_type, self.Qweight, self.qstate))
+            else:
+                return F.linear(x, self.weight)
         
 @functools.wraps(LoraLinear)
 def make_linear_att(*args, **kwargs):
@@ -659,23 +707,16 @@ def make_linear_ffn_experts(*args, **kwargs):
 
 @functools.wraps(HeadLoraLinear)
 def make_linear_head(*args, **kwargs):
-    #layer_id = kwargs.get('n_layer')
-    #print(f'ffn layerid = {layer_id}')
-    # if LAYER_CONFIG[f'head']['mode'] == 'full':
-    #     return HeadLoraLinear(*args, **kwargs)
     if LAYER_CONFIG[f'head']['mode'] == 'full':
         return NormalLinear_h(*args, **kwargs)    
     elif LAYER_CONFIG[f'head']['mode'] == 'freeze':
         return NormalLinear_h(*args, **kwargs)
-        #return nn.Linear(*args, **kwargs)
     else:
         return HeadLoraLinear(*args, **kwargs)
     
 
 @functools.wraps(LoraEmbedding)
 def make_emb(*args, **kwargs):
-    #layer_id = kwargs.get('n_layer')
-    #print(f'ffn layerid = {layer_id}')
     if LAYER_CONFIG[f'emb']['mode'] == 'full' or LAYER_CONFIG[f'emb']['mode'] == 'freeze':
         return nn.Embedding(*args, **kwargs)
     else:

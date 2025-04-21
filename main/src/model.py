@@ -43,9 +43,9 @@ from bitsandbytes.optim import Adam8bit,AdamW8bit
 
 if 'x070' in os.environ["RWKV_MY_TESTING"]:
     from .rwkv7 import LAYER_CONFIG,RWKV_Tmix_x070,RWKV_Tmix_x070_state,RWKV_Tmix_x070_infctx,RWKV_CMix_x070,RWKV_CMix_x070_MoLE,RWKV_CMix_x070_infctx,RWKV_Tmix_x070m,make_linear_head,make_emb
-if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+if 'xa07' in os.environ["RWKV_MY_TESTING"]:
     from .arwkv7 import LAYER_CONFIG,ARWKV_Tmix_x070,ARWKV_Tmix_x070_state,ARWKV_Tmix_x070_infctx,Qwen2MLP,Qwen2MLP_infctx,Qwen2RMSNorm,Phi35MLP,Phi35MLP_infctx,make_linear_head,make_emb
-    from .prwkv7 import LAYER_CONFIG,PRWKV_Tmix_cxa073
+    from .prwkv7 import LAYER_CONFIG,PRWKV_Tmix_cxa075
 elif 'x060' in os.environ["RWKV_MY_TESTING"]:
     from .rwkv6 import LAYER_CONFIG,RWKV_Tmix_x060,RWKV_Tmix_x060_state,RWKV_Tmix_x060_infctx,RWKV_CMix_x060,RWKV_CMix_x060_infctx,make_linear_head,make_emb
 else:
@@ -142,7 +142,7 @@ if 'x070' in os.environ["RWKV_MY_TESTING"]:
 
                 x = x + ffn_out
                 return x, v_first ,BlockState(att_state, ffn_state)
-if 'xa070' in os.environ["RWKV_MY_TESTING"]:
+if 'xa07' in os.environ["RWKV_MY_TESTING"]:
     class Block(nn.Module):
         def __init__(self, args, layer_id):
             super().__init__()
@@ -157,8 +157,8 @@ if 'xa070' in os.environ["RWKV_MY_TESTING"]:
             elif os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
                 self.att = ARWKV_Tmix_x070_infctx(args, layer_id) 
             else:
-                if 'cxa070' in os.environ["RWKV_MY_TESTING"]:
-                    self.att = PRWKV_Tmix_cxa073(args, layer_id)  
+                if 'cxa07' in os.environ["RWKV_MY_TESTING"]:
+                    self.att = PRWKV_Tmix_cxa075(args, layer_id)  
                 else:
                     self.att = ARWKV_Tmix_x070(args, layer_id)  
 
@@ -1266,7 +1266,7 @@ class RWKV(pl.LightningModule):
             if args.dropout > 0:
                 x = self.drop0(x)
 
-            if 'x070' in os.environ["RWKV_MY_TESTING"] or 'xa070' in os.environ["RWKV_MY_TESTING"]:
+            if 'x070' in os.environ["RWKV_MY_TESTING"] or 'xa07' in os.environ["RWKV_MY_TESTING"]:
                 v_first = torch.empty_like(x)
                 
                 for i, (block, block_state) in enumerate(zip(self.blocks,
@@ -1296,7 +1296,7 @@ class RWKV(pl.LightningModule):
 
             if args.dropout > 0:
                 x = self.drop0(x)
-            if 'x070' in os.environ["RWKV_MY_TESTING"] or 'xa070' in os.environ["RWKV_MY_TESTING"]:
+            if 'x070' in os.environ["RWKV_MY_TESTING"] or 'xa07' in os.environ["RWKV_MY_TESTING"]:
                     v_first = torch.empty_like(x)
                     moe_total_loss = 0
                     for block in self.blocks:
@@ -1492,7 +1492,7 @@ class RWKV(pl.LightningModule):
                         return n
                     return n + (128 - remainder)
 
-                if 'x070' in os.environ["RWKV_MY_TESTING"] or 'xa070' in os.environ["RWKV_MY_TESTING"]:
+                if 'x070' in os.environ["RWKV_MY_TESTING"] or 'xa07' in os.environ["RWKV_MY_TESTING"]:
                     max_len = find_next_128_multiple(max_len)
                     input_ids = input_ids[:, :max_len]
                     target = target[:, :max_len]
@@ -1796,7 +1796,7 @@ class RWKV(pl.LightningModule):
                     max_len = max(len1, len2)
 
                     # 必要に応じてパディング
-                    if 'x070' in os.environ.get("RWKV_MY_TESTING", "") or 'xa070' in os.environ.get("RWKV_MY_TESTING", ""):
+                    if '07' in os.environ.get("RWKV_MY_TESTING", "") or 'xa07' in os.environ.get("RWKV_MY_TESTING", ""):
                         max_len = args.ctx_len
 
                     if len1 < max_len:
@@ -1911,7 +1911,7 @@ class RWKV(pl.LightningModule):
                     max_len = max(len1, len2)
 
                     # 必要に応じてパディング
-                    if 'x070' in os.environ.get("RWKV_MY_TESTING", "")or 'xa070' in os.environ.get("RWKV_MY_TESTING", ""):
+                    if '07' in os.environ.get("RWKV_MY_TESTING", "")or 'xa07' in os.environ.get("RWKV_MY_TESTING", ""):
                         max_len = args.ctx_len
 
                     # パディング処理（右側0埋め）
@@ -2064,7 +2064,7 @@ class RWKV(pl.LightningModule):
                     chosen_output2 = chosen_output
                     reject_output2 = reject_output
 
-                    if 'x070' in os.environ["RWKV_MY_TESTING"]:
+                    if '07' in os.environ["RWKV_MY_TESTING"]:
                         max_len = args.ctx_len
 
                     # 長さが異なる場合、短いテンソルをパディング
@@ -2198,7 +2198,7 @@ class RWKV(pl.LightningModule):
                     # 最大長を計算
                     max_len = max(len1, len2)
 
-                    if 'x070' in os.environ["RWKV_MY_TESTING"]:
+                    if '07' in os.environ["RWKV_MY_TESTING"]:
                         max_len = args.ctx_len
 
                     #if max_len < 512:# GOMI CODE
@@ -2317,7 +2317,7 @@ class RWKV(pl.LightningModule):
                     # 最大長を計算
                     max_len = max(len1, len2)
 
-                    if 'x070' in os.environ["RWKV_MY_TESTING"]:
+                    if '07' in os.environ["RWKV_MY_TESTING"]:
                         max_len = args.ctx_len
 
                     #if max_len < 512:# GOMI CODE

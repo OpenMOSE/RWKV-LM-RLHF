@@ -40,10 +40,10 @@ MyModule = nn.Module
 MyFunction = __nop
 
 
-if 'xa070' in ModelGeneration:
+if 'xa07' in ModelGeneration:
     print('PRWKV v7 Mode')
     if 'flatriton' in RunningDevice or 'infctx' in TrainingType or ('state' in TrainingType and KernelMode == 1): #infctx or FLA Mode
-        print('ax070 Flash-Linear-Attention Kernel Mode')
+        print('cx070 Flash-Linear-Attention Kernel Mode')
         @torch.jit.ignore
         def RUN_RWKV7_STATE(r, k, v, w, a, b, s, HEAD_SIZE=64): # for State-tuning, infctx
             B,T,HC = w.shape
@@ -80,7 +80,7 @@ if 'xa070' in ModelGeneration:
             return o
     else:
         if 'cuda' in RunningDevice:
-            print('pxa070 Wind CUDA Kernel Mode')
+            print('cxa070 Wind CUDA Kernel Mode')
             CHUNK_LEN = 16
             flags = ['-res-usage', f'-D_C_={HEAD_SIZE}', f"-D_CHUNK_LEN_={CHUNK_LEN}", "--use_fast_math", "-O3", "-Xptxas -O3", "--extra-device-vectorization"]
             load(name="wind_backstepping", sources=[f'cuda/wkv7_cuda.cu', 'cuda/wkv7_op.cpp'], is_python_module=False, verbose=True, extra_cuda_cflags=flags)
@@ -225,7 +225,7 @@ if 'xa070' in ModelGeneration:
                     s0 = th.zeros(B,H,C,C, dtype=th.bfloat16,device=w.device)
                     return attn_backstepping_longhead(r,w,k,v,a,b,s0)[0].view(B,T,HC)
             else:
-                print('qxa 070 Wind Triton Kernel Mode')
+                print('cxa 070 Wind Triton Kernel Mode')
         
                 import torch as th
                 import triton
@@ -469,7 +469,7 @@ if 'xa070' in ModelGeneration:
 
 
     
-    class PRWKV_Tmix_cxa073(nn.Module):
+    class PRWKV_Tmix_cxa075(nn.Module):
         def __init__(self, args, layer_id):
             super().__init__()
             self.args = args
@@ -526,6 +526,11 @@ if 'xa070' in ModelGeneration:
                 self.v2 = nn.Parameter(ortho_init(torch.zeros(D_MV_LORA, C), 0.1))
                 self.v0 = nn.Parameter(torch.zeros(1,1,C)+1.0)
 
+                D_GATE_LORA = max(32, int(round(  (0.6*(C**0.8))  /32)*32)) # suggestion
+                # Note: for some data, you can reduce D_GATE_LORA or even remove this gate
+                self.g1 = nn.Parameter(torch.zeros(C, D_GATE_LORA))
+                self.g2 = nn.Parameter(ortho_init(torch.zeros(D_GATE_LORA, C), 0.1))
+
                 self.k_k = nn.Parameter(torch.ones(1,1,C)*0.85)
                 self.k_a = nn.Parameter(torch.ones(1,1,C))
                 self.r_k = nn.Parameter(torch.zeros(H,N))
@@ -534,26 +539,28 @@ if 'xa070' in ModelGeneration:
 
                 Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
 
-                self.receptance = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.receptance')
+                self.receptance = make_linear_att(C, C, bias=True,n_layer=self.layer_id,pname='att.receptance')
                 #GQAStyle
-                self.key = make_linear_att(C, self.head_size*self.kv_n_head, bias=False,n_layer=self.layer_id,pname='att.key')
-                self.value = make_linear_att(C, self.head_size*self.kv_n_head, bias=False,n_layer=self.layer_id,pname='att.value')
+                self.key = make_linear_att(C, self.head_size*self.kv_n_head, bias=True,n_layer=self.layer_id,pname='att.key')
+                self.value = make_linear_att(C, self.head_size*self.kv_n_head, bias=True,n_layer=self.layer_id,pname='att.value')
                 self.output = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.output')
 
-                self.ln_x = nn.GroupNorm(H, C, eps=64e-5) # !!! notice eps value !!!
-
+          
 
         #@torch.compile
         def forward(self, x, v_first,passthrough = False):
             B, T, C = x.size()
             H = self.n_head
         
-            xr = xw = xk = xv = xa = x            
+            xr = xw = xk = xv = xa = xg = x            
 
             r = self.receptance(xr,passthrough)
-            w = -F.softplus(-(self.w0 + torch.tanh(xw @ self.w1) @ self.w2)) - 0.6 # soft-clamp to (-inf, -0.5)
+            w = -F.softplus(-(self.w0 + torch.tanh(xw @ self.w1) @ self.w2)) - 0.5 # soft-clamp to (-inf, -0.5)
             k = self.key(xk,passthrough)
             v = self.value(xv,passthrough)
+
+            g_delta = torch.sigmoid(xg @ self.g1) @ self.g2
+            g = 1.0 + g_delta
 
             k = k.view(B, T, self.kv_n_head, self.head_size)
             v = v.view(B, T, self.kv_n_head, self.head_size)
@@ -579,11 +586,11 @@ if 'xa070' in ModelGeneration:
 
             k = k * (1 + (a-1) * self.k_a)
 
-            x = RUN_CUDA_RWKV7g(r, w, k, v, -kk, kk*a,HEAD_SIZE=self.head_size)
+            x = RUN_CUDA_RWKV7g(r, w, k, v, -kk, kk*a,HEAD_SIZE=self.head_size).view(B, T, C)
 
-            x = self.ln_x(x.view(B * T, C)).view(B, T, C)
+
             x = x + ((r.view(B,T,H,-1)*k.view(B,T,H,-1)*self.r_k).sum(dim=-1, keepdim=True) * v.view(B,T,H,-1)).view(B,T,C)
-            x = self.output(x,passthrough)
+            x = self.output(x*g,passthrough)
             return x, v_first
         
         #@torch.no_grad() # for sampling ppo
@@ -599,7 +606,7 @@ if 'xa070' in ModelGeneration:
 
             xx = torch.concat((shift_state.unsqueeze(1), x[:, :-1]), dim=1) - x
 
-            xr = xw = xk = xv = xa = x   
+            xr = xw = xk = xv = xa = xg = x   
 
             shift_state = x[:, -1]
 
@@ -607,6 +614,9 @@ if 'xa070' in ModelGeneration:
             w = -F.softplus(-(self.w0 + torch.tanh(xw @ self.w1) @ self.w2)) - 0.5 # soft-clamp to (-inf, -0.5)
             k = self.key(xk,passthrough)
             v = self.value(xv,passthrough)
+
+            g_delta = torch.sigmoid(xg @ self.g1) @ self.g2
+            g = 1.0 + g_delta
 
             k = k.view(B, T, self.kv_n_head, self.head_size)
             v = v.view(B, T, self.kv_n_head, self.head_size)
@@ -629,12 +639,10 @@ if 'xa070' in ModelGeneration:
             kk = F.normalize(kk.view(B,T,H,-1), dim=-1, p=2.0).view(B,T,C)
             k = k * (1 + (a-1) * self.k_a)
 
-            x, wkv_state = RUN_RWKV7_RECURRENT(r,k,v,w,-kk, kk*a,s=wkv_state)
-
-            x = self.ln_x(x.view(B * T, C)).view(B, T, C)
+            x, wkv_state = RUN_RWKV7_RECURRENT(r,k,v,w,-kk, kk*a,s=wkv_state).view(B, T, C)
 
             x = x + ((r.view(B,T,H,-1)*k.view(B,T,H,-1)*self.r_k).sum(dim=-1, keepdim=True) * v.view(B,T,H,-1)).view(B,T,C)
-            x = self.output(x,passthrough)
+            x = self.output(x*g,passthrough)
 
             return x, v_first,TimeMixState(shift_state,wkv_state)
         

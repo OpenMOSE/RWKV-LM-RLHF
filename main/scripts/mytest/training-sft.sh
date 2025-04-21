@@ -1,0 +1,22 @@
+python train.py --load_model "myfolder/models/RWKV-6-World-0.4B-v2-20231113-ctx4096.pth" \
+ --wandb "RWKV-LM-RLHF Code 0b4 Test SoftPlus" --proj_dir "myfolder/Outputs/0b4Code" \
+ --chunk_ctx 512 \
+ --vocab_size 65536 --ctx_len 65536 \
+ --epoch_steps 200 --epoch_count 200 --epoch_begin 0 --epoch_save 1 \
+ --micro_bsz 8 --n_layer 24 --n_embd 1024 \
+ --lr_init 1e-4 --lr_final 1e-6 \
+ --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
+ --accelerator gpu --devices 1 --precision 'bf16' \
+ --grad_cp 1 --my_testing "x060" \
+ --strategy deepspeed_stage_2_offload \
+ --layer_profile 'layerprofile/24_TEST.csv' \
+ --quant 1 \
+ --quant_mode 'fp8'\
+ --gpu_arch 'cuda' \
+ --limited_lora 0 \
+ --sft 1 \
+ --smoothing 0.01 \
+ --random_mode 1 \
+ --optim '' \
+ --train_data_file 'myfolder/datasets/claudeoai.h5' \
+ --accumulate_grad_batches 1
