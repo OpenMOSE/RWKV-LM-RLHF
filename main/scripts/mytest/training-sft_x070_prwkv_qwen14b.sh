@@ -1,6 +1,8 @@
 python train.py --load_model "/home/client/Projects/RWKV-Infer/models/PRWKV7-cxa075-qwen14b-stage2-final.pth" \
- --wandb "RWKV-LM-RLHF cxa075 SFT Test" --proj_dir "myfolder/Outputs/PRWKV7-qwen14b-test" \
- --vocab_size 152064 --ctx_len 4096 \
+ --wandb "RWKV-LM-RLHF cxa075 SFT infctx" --proj_dir "myfolder/Outputs/PRWKV7-qwen14b-infctx" \
+ --vocab_size 152064 --ctx_len 32768 \
+ --chunk_ctx 1024 \
+ --infctx 1 \
  --epoch_steps 1000 --epoch_count 200 --epoch_begin 0 --epoch_save 1 \
  --micro_bsz 1 --n_layer 48 --n_embd 5120 --dim_ffn 13824 \
  --gqa_kv_heads 8 \
@@ -20,7 +22,7 @@ python train.py --load_model "/home/client/Projects/RWKV-Infer/models/PRWKV7-cxa
  --sft_jsonmode_tokenizermode 'qwen' \
  --smoothing 0.0001 \
  --random_mode 1 \
- --infctx_dataset_multiplier 8 \
+ --infctx_dataset_multiplier 64 \
  --optim 'muon' \
  --train_data_file 'myfolder/jpen_light' \
- --accumulate_grad_batches 16
+ --accumulate_grad_batches 4

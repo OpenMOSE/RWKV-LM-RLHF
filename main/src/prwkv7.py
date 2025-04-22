@@ -42,44 +42,44 @@ MyFunction = __nop
 
 if 'xa07' in ModelGeneration:
     print('PRWKV v7 Mode')
-    if 'flatriton' in RunningDevice or 'infctx' in TrainingType or ('state' in TrainingType and KernelMode == 1): #infctx or FLA Mode
-        print('cx070 Flash-Linear-Attention Kernel Mode')
-        @torch.jit.ignore
-        def RUN_RWKV7_STATE(r, k, v, w, a, b, s, HEAD_SIZE=64): # for State-tuning, infctx
-            B,T,HC = w.shape
-            C = HEAD_SIZE
-            H = HC//C
-            w = -w.float().exp().to(r)
-            r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
-            o, state = chunk_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=s, output_final_state=True, head_first=False)
-            return o, state
-        def RUN_RWKV7_INFCTX(r, k, v, w, a, b, s, HEAD_SIZE=64): # for State-tuning, infctx
-            B,T,HC = w.shape
-            C = HEAD_SIZE
-            H = HC//C
-            w = -w.float().exp().to(r)
-            r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
-            o, state = chunk_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=s, output_final_state=True, head_first=False)
-            return o, state
-        def RUN_RWKV7_RECURRENT(r, k, v, w, a, b, s, HEAD_SIZE=64): # for sampling
-            B,T,HC = w.shape
-            C = HEAD_SIZE
-            H = HC//C
-            w = -w.float().exp().to(r)
-            r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
-            o, state = fused_recurrent_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=s, output_final_state=True, head_first=False)
-            return o, state
-        @torch.jit.ignore
-        def RUN_CUDA_RWKV7g(r,w,k,v,a,b, HEAD_SIZE=64): #compatible with cuda implement
-            B,T,HC = w.shape
-            C = HEAD_SIZE
-            H = HC//C
-            r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
-            w = -w.float().exp().to(r)
-            o, _ = chunk_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=None, output_final_state=False, head_first=False)
-            return o
-    else:
-        if 'cuda' in RunningDevice:
+    # if 'flatriton' in RunningDevice or 'infctx' in TrainingType or ('state' in TrainingType and KernelMode == 1): #infctx or FLA Mode
+    #     print('cx070 Flash-Linear-Attention Kernel Mode')
+    #     @torch.jit.ignore
+    #     def RUN_RWKV7_STATE(r, k, v, w, a, b, s, HEAD_SIZE=64): # for State-tuning, infctx
+    #         B,T,HC = w.shape
+    #         C = HEAD_SIZE
+    #         H = HC//C
+    #         w = -w.float().exp().to(r)
+    #         r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
+    #         o, state = chunk_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=s, output_final_state=True, head_first=False)
+    #         return o, state
+    #     def RUN_RWKV7_INFCTX(r, k, v, w, a, b, s, HEAD_SIZE=64): # for State-tuning, infctx
+    #         B,T,HC = w.shape
+    #         C = HEAD_SIZE
+    #         H = HC//C
+    #         w = -w.float().exp().to(r)
+    #         r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
+    #         o, state = chunk_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=s, output_final_state=True, head_first=False)
+    #         return o, state
+    #     def RUN_RWKV7_RECURRENT(r, k, v, w, a, b, s, HEAD_SIZE=64): # for sampling
+    #         B,T,HC = w.shape
+    #         C = HEAD_SIZE
+    #         H = HC//C
+    #         w = -w.float().exp().to(r)
+    #         r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
+    #         o, state = fused_recurrent_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=s, output_final_state=True, head_first=False)
+    #         return o, state
+    #     @torch.jit.ignore
+    #     def RUN_CUDA_RWKV7g(r,w,k,v,a,b, HEAD_SIZE=64): #compatible with cuda implement
+    #         B,T,HC = w.shape
+    #         C = HEAD_SIZE
+    #         H = HC//C
+    #         r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
+    #         w = -w.float().exp().to(r)
+    #         o, _ = chunk_rwkv7(r, w, k, v, a, b, scale=1.0, initial_state=None, output_final_state=False, head_first=False)
+    #         return o
+    # else:
+    if 'cuda' in RunningDevice:
             print('cxa070 Wind CUDA Kernel Mode')
             CHUNK_LEN = 16
             flags = ['-res-usage', f'-D_C_={HEAD_SIZE}', f"-D_CHUNK_LEN_={CHUNK_LEN}", "--use_fast_math", "-O3", "-Xptxas -O3", "--extra-device-vectorization"]
@@ -148,7 +148,7 @@ if 'xa07' in ModelGeneration:
                 #o = rearrange(o, 'b h l d -> b l (h d)')
                 return o, state
             
-        else:
+    else:
             if 'bigheadtriton' in RunningDevice:
                 from  .tritonbighead import RUN_CUDA_RWKV7g
             elif 'backstepping_longhead' in RunningDevice:
@@ -224,6 +224,18 @@ if 'xa07' in ModelGeneration:
                     r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
                     s0 = th.zeros(B,H,C,C, dtype=th.bfloat16,device=w.device)
                     return attn_backstepping_longhead(r,w,k,v,a,b,s0)[0].view(B,T,HC)
+                def RUN_CUDA_RWKV7g_chunk(r,w,k,v,a,b, HEAD_SIZE, state=None,  dot_prec = 'fp32'):
+                    #mask and dot_prec is dummy
+                    B,T,HC = w.shape
+                    C = HEAD_SIZE
+                    H = HC//C
+                    r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
+                    if state is None:
+                        s0 = th.zeros(B,H,C,C, dtype=th.bfloat16,device=w.device)
+                    else:
+                        s0 = state
+                    y, sT = attn_backstepping_longhead(r,w,k,v,a,b,s0)
+                    return y.view(B,T,HC), sT
             else:
                 print('cxa 070 Wind Triton Kernel Mode')
         
@@ -645,6 +657,136 @@ if 'xa07' in ModelGeneration:
             x = self.output(x*g,passthrough)
 
             return x, v_first,TimeMixState(shift_state,wkv_state)
+        
+
+    class PRWKV_Tmix_cxa075_infctx(nn.Module):
+        def __init__(self, args, layer_id):
+            super().__init__()
+            self.args = args
+            self.layer_id = layer_id
+            self.my_testing = args.my_testing
+
+            self.head_size = args.head_size_a
+            self.n_head = args.dim_att // self.head_size
+            self.kv_n_head = args.gqa_kv_heads
+            assert args.dim_att % self.n_head == 0
+            H = self.n_head
+            N = self.head_size
+            C = args.n_embd
+
+            with torch.no_grad():
+                ratio_0_to_1 = layer_id / (args.n_layer - 1)  # 0 to 1
+                ratio_1_to_almost0 = 1.0 - (layer_id / args.n_layer)  # 1 to ~0
+                ddd = torch.ones(1, 1, C)
+                for i in range(C):
+                    ddd[0, 0, i] = i / C
+
+                def ortho_init(x, scale):
+                    with torch.no_grad():
+                        shape = x.shape
+                        if len(shape) == 2:
+                            gain = math.sqrt(shape[0] / shape[1]) if shape[0] > shape[1] else 1
+                            nn.init.orthogonal_(x, gain=gain * scale)
+                        elif len(shape) == 3:
+                            gain = math.sqrt(shape[1] / shape[2]) if shape[1] > shape[2] else 1
+                            for i in range(shape[0]):
+                                nn.init.orthogonal_(x[i], gain=gain * scale)
+                        else:
+                            assert False
+                        return x
+
+                D_DECAY_LORA = 64
+                D_DECAY_LORA = max(32, int(round(  (1.8*(C**0.5))  /32)*32)) # suggestion
+                self.w1 = nn.Parameter(torch.zeros(C, D_DECAY_LORA))
+                self.w2 = nn.Parameter(ortho_init(torch.zeros(D_DECAY_LORA, C), 0.1))
+                decay_speed = torch.ones(C)
+                for n in range(C):
+                    decay_speed[n] = -7 + 5 * (n / (C - 1)) ** (0.85 + 1.0 * ratio_0_to_1 ** 0.5)
+                self.w0 = nn.Parameter(decay_speed.reshape(1,1,C) + 0.5) # !!! 0.5 comes from F.softplus !!!
+
+                D_AAA_LORA = 64
+                D_AAA_LORA = max(32, int(round(  (1.8*(C**0.5))  /32)*32)) # suggestion
+                self.a1 = nn.Parameter(torch.zeros(C, D_AAA_LORA))
+                self.a2 = nn.Parameter(ortho_init(torch.zeros(D_AAA_LORA, C), 0.1))
+                self.a0 = nn.Parameter(torch.zeros(1,1,C))
+
+                D_MV_LORA = 32
+                D_MV_LORA = max(32, int(round(  (1.3*(C**0.5))  /32)*32)) # suggestion
+                self.v1 = nn.Parameter(torch.zeros(C, D_MV_LORA))
+                self.v2 = nn.Parameter(ortho_init(torch.zeros(D_MV_LORA, C), 0.1))
+                self.v0 = nn.Parameter(torch.zeros(1,1,C)+1.0)
+
+                D_GATE_LORA = max(32, int(round(  (0.6*(C**0.8))  /32)*32)) # suggestion
+                # Note: for some data, you can reduce D_GATE_LORA or even remove this gate
+                self.g1 = nn.Parameter(torch.zeros(C, D_GATE_LORA))
+                self.g2 = nn.Parameter(ortho_init(torch.zeros(D_GATE_LORA, C), 0.1))
+
+                self.k_k = nn.Parameter(torch.ones(1,1,C)*0.85)
+                self.k_a = nn.Parameter(torch.ones(1,1,C))
+                self.r_k = nn.Parameter(torch.zeros(H,N))
+
+                self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
+
+                Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
+
+                self.receptance = make_linear_att(C, C, bias=True,n_layer=self.layer_id,pname='att.receptance')
+                #GQAStyle
+                self.key = make_linear_att(C, self.head_size*self.kv_n_head, bias=True,n_layer=self.layer_id,pname='att.key')
+                self.value = make_linear_att(C, self.head_size*self.kv_n_head, bias=True,n_layer=self.layer_id,pname='att.value')
+                self.output = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.output')
+
+           
+
+        #@torch.compile
+        def forward(self, x, v_first, last_state: TimeMixState):
+            B, T, C = x.size()
+            H = self.n_head
+        
+            xr = xw = xk = xv = xa = xg = x     
+            shift_state = last_state.shift_state
+            wkv_state = last_state.wkv_state.clone().contiguous()     
+
+            shift_state = x[:,-1,:]  #Dummy 
+
+            r = self.receptance(xr)
+            w = -F.softplus(-(self.w0 + torch.tanh(xw @ self.w1) @ self.w2)) - 0.5 # soft-clamp to (-inf, -0.5)
+            k = self.key(xk)
+            v = self.value(xv)
+
+            g_delta = torch.sigmoid(xg @ self.g1) @ self.g2
+            g = 1.0 + g_delta
+
+            k = k.view(B, T, self.kv_n_head, self.head_size)
+            v = v.view(B, T, self.kv_n_head, self.head_size)
+
+            # repeat k/v heads if n_kv_heads < n_heads
+            #modified repeat_kv B,T,H_kv,D) -> B,T,H,D -> B,T,C
+            k = repeat_kv(k, self.n_head // self.kv_n_head)#reshape(B,T,-1) #(B,T,C)
+            v = repeat_kv(v, self.n_head // self.kv_n_head)#reshape(B,T,-1) #(B,T,C)
+
+            k = k.view(B, T, -1)
+            v = v.view(B, T, -1)
+
+            #so now all B,T,C tensors
+
+            if self.layer_id == 0:
+                v_first = v # store the v of the first layer
+            else:
+                v = v + (v_first - v) * torch.sigmoid(self.v0 + (xv @ self.v1) @ self.v2) # add value residual
+            a = torch.sigmoid(self.a0 + (xa @ self.a1) @ self.a2) # a is "in-context learning rate"
+
+            kk = k * self.k_k
+            kk = F.normalize(kk.view(B,T,H,-1), dim=-1, p=2.0).view(B,T,C)
+
+            k = k * (1 + (a-1) * self.k_a)
+
+            x,wkv_state = RUN_CUDA_RWKV7g_chunk(r, w, k, v, -kk, kk*a,state=wkv_state,HEAD_SIZE=self.head_size)
+            #x, wkv_state = RUN_CUDA_RWKV7g_chunk(r,k,v,w,-kk,kk*a,wkv_state,self.head_size)
+
+            x = x.view(B, T, C) + ((r.view(B,T,H,-1)*k.view(B,T,H,-1)*self.r_k).sum(dim=-1, keepdim=True) * v.view(B,T,H,-1)).view(B,T,C)
+            x = self.output(x*g)
+            return x, v_first,TimeMixState(shift_state,wkv_state)
+        
         
     
     
