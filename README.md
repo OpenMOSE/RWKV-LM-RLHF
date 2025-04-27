@@ -17,7 +17,8 @@ Finally, I started writing the Wiki🙂
    - RWKV v6 "Finch" (full feature support)
    - RWKV v7 "Goose" (full feature support)
    - RWKV v7 "Goose" + Mixture of LoRA Experts (SFT Support)
-   - ARWKV (MHLA + SwiGLU -> RWKV v7 TimeMix + SwiGLU) (SFT support)
+   - ARWKV (GQA + SwiGLU -> RWKV v7 TimeMix + SwiGLU) (SFT support)
+   - PRWKV (GQA + SwiGLU -> RWKV cxa076 TimeMix + SwiGLU) (SFT, Infctx, DPO, ORPO)
 
 ## Key Features
 
