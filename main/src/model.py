@@ -45,7 +45,7 @@ if 'x070' in os.environ["RWKV_MY_TESTING"]:
     from .rwkv7 import LAYER_CONFIG,RWKV_Tmix_x070,RWKV_Tmix_x070_state,RWKV_Tmix_x070_infctx,RWKV_CMix_x070,RWKV_CMix_x070_MoLE,RWKV_CMix_x070_infctx,RWKV_Tmix_x070m,make_linear_head,make_emb
 if 'xa07' in os.environ["RWKV_MY_TESTING"]:
     from .arwkv7 import LAYER_CONFIG,ARWKV_Tmix_x070,ARWKV_Tmix_x070_state,ARWKV_Tmix_x070_infctx,Qwen2MLP,Qwen2MLP_infctx,Qwen2RMSNorm,Phi35MLP,Phi35MLP_infctx,make_linear_head,make_emb
-    from .prwkv7 import LAYER_CONFIG,PRWKV_Tmix_cxa075,PRWKV_Tmix_cxa075_infctx
+    from .prwkv7 import LAYER_CONFIG,PRWKV_Tmix_cxa075,PRWKV_Tmix_cxa075_infctx,PRWKV_Tmix_cxa076,PRWKV_Tmix_cxa076_infctx
 elif 'x060' in os.environ["RWKV_MY_TESTING"]:
     from .rwkv6 import LAYER_CONFIG,RWKV_Tmix_x060,RWKV_Tmix_x060_state,RWKV_Tmix_x060_infctx,RWKV_CMix_x060,RWKV_CMix_x060_infctx,make_linear_head,make_emb
 else:
@@ -155,13 +155,17 @@ if 'xa07' in os.environ["RWKV_MY_TESTING"]:
             if os.environ["RWKV_TRAIN_TYPE"] == 'state':
                 self.att = ARWKV_Tmix_x070_state(args, layer_id) 
             elif os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
-                if 'cxa07' in os.environ["RWKV_MY_TESTING"]:
+                if 'cxa075' in os.environ["RWKV_MY_TESTING"]:
                     self.att = PRWKV_Tmix_cxa075_infctx(args, layer_id) 
+                elif 'cxa076' in os.environ["RWKV_MY_TESTING"]:
+                    self.att = PRWKV_Tmix_cxa076_infctx(args, layer_id) 
                 else:
                     self.att = ARWKV_Tmix_x070_infctx(args, layer_id) 
             else:
-                if 'cxa07' in os.environ["RWKV_MY_TESTING"]:
+                if 'cxa075' in os.environ["RWKV_MY_TESTING"]:
                     self.att = PRWKV_Tmix_cxa075(args, layer_id)  
+                elif 'cxa076' in os.environ["RWKV_MY_TESTING"]:
+                    self.att = PRWKV_Tmix_cxa076(args, layer_id)  
                 else:
                     self.att = ARWKV_Tmix_x070(args, layer_id)  
 
@@ -1177,7 +1181,9 @@ class RWKV(pl.LightningModule):
                     )
                     if status == 'skip':
                         break
-                    states = BlockStateList(new_shift_states, new_wkv_states)
+                    #states = BlockStateList(new_shift_states, new_wkv_states)
+                    states = BlockStateList(new_shift_states.clone().detach(), new_wkv_states.clone().detach())
+                    #print('nu')
 
 
                     if status == 'proceed':

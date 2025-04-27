@@ -406,3 +406,18 @@ def RUN_CUDA_RWKV7g(r,w,k,v,a,b,HEAD_SIZE=64, mask=None,  dot_prec = 'fp32'):
     
     s0 = th.zeros(B,H,C,C, dtype=th.bfloat16,device=w.device)
     return RWKV7_bighead.apply(r,w,k,v,a,b,s0,dot_prec)[0].view(B,T,HC)
+
+
+
+def RUN_CUDA_RWKV7g_chunk(r,w,k,v,a,b, HEAD_SIZE, state=None,  dot_prec = 'fp32'):
+    #mask and dot_prec is dummy
+    B,T,HC = w.shape
+    C = HEAD_SIZE
+    H = HC//C
+    r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
+    if state is None:
+        s0 = th.zeros(B,H,C,C, dtype=th.bfloat16,device=w.device)
+    else:
+        s0 = state
+    y, sT = RWKV7_bighead.apply(r,w,k,v,a,b,s0,dot_prec)
+    return y.view(B,T,HC), sT

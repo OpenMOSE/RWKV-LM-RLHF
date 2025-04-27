@@ -1,5 +1,5 @@
-python train.py --load_model "/home/client/Projects/RWKV-Infer/models/PRWKV7-cxa075-qwen14b-stage2-final.pth" \
- --wandb "RWKV-LM-RLHF cxa075 SFT infctx" --proj_dir "myfolder/Outputs/PRWKV7-qwen14b-infctx" \
+python train.py --load_model "/home/client/Projects/RWKV-Infer/models/PRWKV7-cxa076-qwen14b-stage2-final.pth" \
+ --wandb "RWKV-LM-RLHF cxa076 SFT infctx" --proj_dir "myfolder/Outputs/PRWKV7-qwen14b-infctx" \
  --vocab_size 152064 --ctx_len 16384 \
  --chunk_ctx 256 \
  --infctx 1 \
@@ -10,7 +10,7 @@ python train.py --load_model "/home/client/Projects/RWKV-Infer/models/PRWKV7-cxa
  --rms_norm_eps 1e-6 \
  --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
  --accelerator gpu --devices 1 --precision 'bf16' \
- --grad_cp 1 --my_testing "cxa075" \
+ --grad_cp 1 --my_testing "cxa076" \
  --strategy deepspeed_stage_2_offload \
  --layer_profile 'layerprofile/48_TEST_bone.csv' \
  --quant 1 \
