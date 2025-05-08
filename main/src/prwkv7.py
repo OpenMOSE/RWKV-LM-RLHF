@@ -39,6 +39,25 @@ def __nop(ob):
 MyModule = nn.Module
 MyFunction = __nop
 
+class Qwen3RMSNorm(nn.Module):
+    def __init__(self, hidden_size, eps=1e-6):
+        """
+        Qwen3RMSNorm is equivalent to T5LayerNorm
+        """
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.variance_epsilon = eps
+
+    def forward(self, hidden_states):
+        input_dtype = hidden_states.dtype
+        hidden_states = hidden_states.to(torch.float32)
+        variance = hidden_states.pow(2).mean(-1, keepdim=True)
+        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
+        return self.weight * hidden_states.to(input_dtype)
+
+    def extra_repr(self):
+        return f"{tuple(self.weight.shape)}, eps={self.variance_epsilon}"
+
 
 if 'xa07' in ModelGeneration:
     print('PRWKV v7 Mode')
@@ -729,10 +748,15 @@ if 'xa07' in ModelGeneration:
 
                 Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
 
-                self.receptance = make_linear_att(C, C, bias=True,n_layer=self.layer_id,pname='att.receptance')
+                if self.args.rkv_bias:
+                    rkv_bias = True
+                else:
+                    rkv_bias = False
+
+                self.receptance = make_linear_att(C, C, bias=rkv_bias,n_layer=self.layer_id,pname='att.receptance')
                 #GQAStyle
-                self.key = make_linear_att(C, self.head_size*self.kv_n_head, bias=True,n_layer=self.layer_id,pname='att.key')
-                self.value = make_linear_att(C, self.head_size*self.kv_n_head, bias=True,n_layer=self.layer_id,pname='att.value')
+                self.key = make_linear_att(C, self.head_size*self.kv_n_head, bias=rkv_bias,n_layer=self.layer_id,pname='att.key')
+                self.value = make_linear_att(C, self.head_size*self.kv_n_head, bias=rkv_bias,n_layer=self.layer_id,pname='att.value')
                 self.output = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.output')
 
            
@@ -869,6 +893,11 @@ if 'xa07' in ModelGeneration:
                 self.value = make_linear_att(C, self.head_size*self.kv_n_head, bias=True,n_layer=self.layer_id,pname='att.value')
                 self.output = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.output')
 
+                if self.args.rk_norm:
+                    self.ln_r = Qwen2RMSNorm(N,self.args.rms_norm_eps)
+                    self.ln_k = Qwen2RMSNorm(N,self.args.rms_norm_eps)
+
+
           
 
         #@torch.compile
@@ -882,6 +911,10 @@ if 'xa07' in ModelGeneration:
             w = -F.softplus(-(self.w0 + torch.tanh(xw @ self.w1) @ self.w2)) - 0.5 # soft-clamp to (-inf, -0.5)
             k = self.key(xk,passthrough)
             v = self.value(xv,passthrough)
+
+            if self.args.rk_norm:
+                r = self.ln_r(r.view(B,T,H,self.head_size))
+                k = self.ln_k(k.view(B,T,self.kv_n_head,self.head_size))
 
             g = torch.sigmoid(xg @ self.g1) @ self.g2
 
@@ -985,11 +1018,22 @@ if 'xa07' in ModelGeneration:
 
                 Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
 
-                self.receptance = make_linear_att(C, C, bias=True,n_layer=self.layer_id,pname='att.receptance')
+                if self.args.rkv_bias:
+                    rkv_bias = True
+                else:
+                    rkv_bias = False
+
+                self.receptance = make_linear_att(C, C, bias=rkv_bias,n_layer=self.layer_id,pname='att.receptance')
                 #GQAStyle
-                self.key = make_linear_att(C, self.head_size*self.kv_n_head, bias=True,n_layer=self.layer_id,pname='att.key')
-                self.value = make_linear_att(C, self.head_size*self.kv_n_head, bias=True,n_layer=self.layer_id,pname='att.value')
+                self.key = make_linear_att(C, self.head_size*self.kv_n_head, bias=rkv_bias,n_layer=self.layer_id,pname='att.key')
+                self.value = make_linear_att(C, self.head_size*self.kv_n_head, bias=rkv_bias,n_layer=self.layer_id,pname='att.value')
                 self.output = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.output')
+                
+                if self.args.rk_norm:
+                    self.ln_r = Qwen2RMSNorm(N,self.args.rms_norm_eps)
+                    self.ln_k = Qwen2RMSNorm(N,self.args.rms_norm_eps)
+                
+
 
            
 
@@ -1008,6 +1052,10 @@ if 'xa07' in ModelGeneration:
             w = -F.softplus(-(self.w0 + torch.tanh(xw @ self.w1) @ self.w2)) - 0.5 # soft-clamp to (-inf, -0.5)
             k = self.key(xk)
             v = self.value(xv)
+
+            if self.args.rk_norm:
+                r = self.ln_r(r.view(B,T,H,self.head_size))
+                k = self.ln_k(k.view(B,T,self.kv_n_head,self.head_size))
 
             g = torch.sigmoid(xg @ self.g1) @ self.g2
 
