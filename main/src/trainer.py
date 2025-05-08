@@ -246,6 +246,15 @@ class train_callback(pl.Callback):
 
                 param_dict = {n: p for n, p in pl_module.named_parameters()}
 
+                HaveLatestState = False
+                if self.args.state and self.args.prefix_tuning:
+                    pl_module.eval()
+                    with torch.no_grad():
+                        LatestState = pl_module(idx=None).to(dtype=torch.bfloat16)
+                    pl_module.train()
+                    HaveLatestState = True
+                    print(f'Created Prefix State {LatestState.shape} {LatestState.dtype}')
+
                 for name, state in to_save_dict.items():
                     #print(f'{name} {param_dict[name].requires_grad}')
                     try:
@@ -279,6 +288,17 @@ class train_callback(pl.Callback):
                         # キーが存在しない場合や、requires_gradプロパティがない場合の処理
                         #print(f'{name} not found')
                         pass
+
+                if HaveLatestState:
+                    for i in range(self.args.n_layer):
+                        key=f'blocks.{i}.att.time_state'
+                        if args.state_output_mode == 0:
+                                lora_dict[key] = LatestState[i]
+                        else:
+                                lora_dict[key] = LatestState[i]
+                                state_dict[key] = LatestState[i]
+
+                print(state_dict.keys())
 
 
 

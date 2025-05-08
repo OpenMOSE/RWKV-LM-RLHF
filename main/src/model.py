@@ -125,11 +125,20 @@ if 'x070' in os.environ["RWKV_MY_TESTING"]:
                 if self.layer_id == 0:
                     x = self.ln0(x)
 
-                x_attn, v_first = self.att(self.ln1(x), v_first, passthrough)
+                # x_attn, v_first = self.att(self.ln1(x), v_first, passthrough)
+                if self.args.state:
+                    x_attn, v_first, out_state = self.att(self.ln1(x), v_first, passthrough)
+                else:
+                    x_attn, v_first = self.att(self.ln1(x), v_first, passthrough)
+
                 x = x + x_attn
 
                 x = x + self.ffn(self.ln2(x),passthrough)
-                return x, v_first
+                if self.args.state:
+                    return x, v_first, out_state
+                else:
+                    return x, v_first
+                # return x, v_first
             @torch.no_grad()
             def forward_rnn(self, x, v_first,last_state: BlockState,passthrough=False):
                 if self.layer_id == 0:
@@ -195,12 +204,18 @@ if 'xa07' in os.environ["RWKV_MY_TESTING"]:
         else:
             def forward(self, x, v_first,passthrough = False,x_emb=None):
       
-
-                x_attn, v_first = self.att(self.ln1(x), v_first, passthrough)
+                if self.args.state:
+                    x_attn, v_first, out_state = self.att(self.ln1(x), v_first, passthrough)
+                else:
+                    x_attn, v_first = self.att(self.ln1(x), v_first, passthrough)
                 x = x + x_attn
 
                 x = x + self.ffn(self.ln2(x),passthrough)
-                return x, v_first
+
+                if self.args.state:
+                    return x, v_first, out_state
+                else:
+                    return x, v_first
             @torch.no_grad()
             def forward_rnn(self, x, v_first,last_state: BlockState,passthrough=False):
 
@@ -275,16 +290,10 @@ if 'x060' in os.environ["RWKV_MY_TESTING"]:
                     x = self.ln0(x)
 
                 if self.args.dropout == 0:
-                    if self.layer_id == 0 and args.pre_ffn > 0:
-                        x = x + self.ffnPre(self.ln1(x))
-                    else:
-                        x = x + self.att(self.ln1(x))
+                    x = x + self.att(self.ln1(x))
                     x = x + self.ffn(self.ln2(x))
                 else:
-                    if self.layer_id == 0 and args.pre_ffn > 0:
-                        x = self.drop0(x + self.ffnPre(self.ln1(x)))
-                    else:
-                        x = self.drop0(x + self.att(self.ln1(x)))
+                    x = self.drop0(x + self.att(self.ln1(x)))
                     x = self.drop1(x + self.ffn(self.ln2(x)))
 
     
@@ -431,6 +440,11 @@ class RWKV(pl.LightningModule):
                 del cold_adapter_dict
 
 
+        
+        if args.prefix_tuning == 1:
+            print('Prefix Softtoken tuning enabled')
+            self.prefix_token = nn.Parameter(torch.zeros(self.args.prefix_token_len, args.n_embd))
+
 
         self.emb = make_emb(args.vocab_size, args.n_embd)
 
@@ -574,6 +588,14 @@ class RWKV(pl.LightningModule):
                                             'lr_final':float(LAYER_CONFIG['head']['lr_final']),
                                             'weight_decay':float(LAYER_CONFIG['head']['weight_decay']) ,
                                             'pname':'head'})
+                elif ('prefix' in n):
+                    if p.requires_grad:
+                        print(f"Prefix-tuning {n} Set lr_init {float(LAYER_CONFIG['emb']['lr_init'])} lr_final {float(LAYER_CONFIG['emb']['lr_final'])}")
+                        optim_groups.append({"params":[param_dict[n]],
+                                            'lr_init':float(LAYER_CONFIG['emb']['lr_init']),
+                                            'lr_final':float(LAYER_CONFIG['emb']['lr_final']),
+                                            'weight_decay':float(LAYER_CONFIG['emb']['weight_decay']) ,
+                                            'pname':'prefix'})
                 else:
                     print('Layer Check')
                     Found = False
@@ -1297,10 +1319,20 @@ class RWKV(pl.LightningModule):
 
         def forward(self, idx,passthrough=False,frozen=False,clitic=False):
             args = self.args
-            B, T = idx.size()
-            assert T <= args.ctx_len, "Cannot forward, model ctx_len is exhausted."
+            StatePack = torch.zeros(self.args.n_layer,self.args.n_embd // self.args.head_size_a, self.args.head_size_a,self.args.head_size_a )
+            if idx is None:
+                B = 1
+                T = self.args.prefix_token_len
+                x = self.prefix_token.unsqueeze(0).expand(B, -1, -1)
+                StatePack = torch.zeros(self.args.n_layer,self.args.n_embd // self.args.head_size_a, self.args.head_size_a,self.args.head_size_a )
+            else:
+                B, T = idx.size()
+                assert T <= args.ctx_len, "Cannot forward, model ctx_len is exhausted."
+                x = self.emb(idx)
+                if self.args.state and self.args.prefix_tuning:
+                    Prefix_expanded = self.prefix_token.unsqueeze(0).repeat(B, 1, 1)
+                    x = torch.cat([Prefix_expanded, x], dim=1)
 
-            x = self.emb(idx)
             x_emb = x
 
             if args.dropout > 0:
@@ -1308,6 +1340,7 @@ class RWKV(pl.LightningModule):
             if 'x070' in os.environ["RWKV_MY_TESTING"] or 'xa07' in os.environ["RWKV_MY_TESTING"]:
                     v_first = torch.empty_like(x)
                     moe_total_loss = 0
+                    i = 0
                     for block in self.blocks:
                         if frozen:
                             x, v_first = block(x, v_first,passthrough)
@@ -1320,13 +1353,21 @@ class RWKV(pl.LightningModule):
                                     x, v_first,moe_router_loss = torch_checkpoint(block, x, v_first, idx, use_reentrant=False)
                                     moe_total_loss += (moe_router_loss+0.001) / float(args.n_layer)
                                 else:
-                                    x, v_first = torch_checkpoint(block, x, v_first,passthrough,x_emb,use_reentrant=False)
+                                    if self.args.state:
+                                        x, v_first,out_state = torch_checkpoint(block, x, v_first,passthrough,x_emb,use_reentrant=False)
+                                        StatePack[i] = out_state[0]
+                                    else:
+                                        x, v_first = torch_checkpoint(block, x, v_first,passthrough,x_emb,use_reentrant=False)
                             else:
                                 if os.environ["CustomModel"] == 'MoE':
                                     x, v_first ,moe_router_loss = torch_checkpoint(block, x, v_first,idx,use_reentrant=False)
                                     moe_total_loss += (moe_router_loss+0.001) / float(args.n_layer)
                                 else:
-                                    x, v_first = torch_checkpoint(block, x, v_first,passthrough,x_emb, use_reentrant=False)
+                                    if self.args.state:
+                                        x, v_first,out_state = torch_checkpoint(block, x, v_first,passthrough,x_emb,use_reentrant=False)
+                                        StatePack[i] = out_state[0]
+                                    else:
+                                        x, v_first = torch_checkpoint(block, x, v_first,passthrough,x_emb,use_reentrant=False)
                                 #x, v_first = deepspeed.checkpointing.checkpoint(block, x, v_first )
                         else:
                             if os.environ["CustomModel"] == 'MoE':
@@ -1334,6 +1375,7 @@ class RWKV(pl.LightningModule):
                                 moe_total_loss += (moe_router_loss+0.001) / float(args.n_layer)
                             else:
                                 x, v_first = block(x, v_first)
+                        i = i + 1
             else:
                 for block in self.blocks:
                     if args.grad_cp == 1:
@@ -1358,7 +1400,10 @@ class RWKV(pl.LightningModule):
             if os.environ["CustomModel"] == 'MoE':
                 #print(f'Moe Router_loss = {moe_router_loss}')
                 return x, moe_router_loss
-            return x, 0.0
+            if idx is None:
+                return StatePack
+            else:
+                return x, 0.0
         
 
         def forward_head2(self, idx,passthrough=False,frozen=False,clitic=False):
@@ -1514,6 +1559,10 @@ class RWKV(pl.LightningModule):
                     attention_mask = attention_mask[:, :max_len]
 
                 student_logits,moe_loss = self(input_ids)
+
+                if args.state and args.prefix_tuning:
+                    student_logits = student_logits[:, args.prefix_token_len:, :]
+
 
 
                 targets = target.contiguous().view(-1)

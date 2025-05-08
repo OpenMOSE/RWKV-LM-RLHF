@@ -44,7 +44,8 @@ def generate_prompt_from_config(tokenizer_config: dict, messages: list, add_gene
     rendered_text = template.render(
         messages=messages,
         add_generation_prompt=add_generation_prompt,
-        eos_token=eos_token
+        eos_token=eos_token,
+        enable_thinking = False,
     )
     return rendered_text
 

@@ -41,8 +41,11 @@ if __name__ == "__main__":
     parser.add_argument("--chunk_ctx", default=512, type=int)
 
     parser.add_argument("--state", default=0, type=int) #for state-tuning x060
-    parser.add_argument("--prefix_tuning", default=1, type=int) #for prefix state-tuning on x070 Dynamic State 
-    parser.add_argument("--post_wkv_tuning", default=0, type=int) #for suffix state-tuning on x070 Fixed Hidden offset Tuning
+
+    parser.add_argument("--prefix_tuning", default=1, type=int) #for prefix soft-token tuning
+    parser.add_argument("--prefix_token_len", default=128, type=int) #for prefix soft-token tuning
+    parser.add_argument("--direct_state_tuning", default=1, type=int) # direct wkv state-tuning
+    parser.add_argument("--post_wkv_tuning", default=0, type=int) #for post wkv output offset tuning
 
     
     parser.add_argument("--state_output_mode", default=1, type=int) #0: state in MainAdapter, 1: Separate MainAdapter,State 2: Separate state in MainAdapter, State
@@ -103,6 +106,9 @@ if __name__ == "__main__":
     parser.add_argument("--head_size_a", default=64, type=int) # can try larger values for larger models
 
     parser.add_argument("--gqa_kv_heads", default=8, type=int) 
+
+    parser.add_argument("--rk_norm", default=0, type=int) 
+    parser.add_argument("--rkv_bias", default=1, type=int) 
 
 
 
@@ -228,7 +234,14 @@ if __name__ == "__main__":
     args.real_bsz = int(args.num_nodes) * int(args.devices) * args.micro_bsz
     os.environ["RWKV_MY_TESTING"] = args.my_testing
     os.environ["RWKV_MY_ARCHITECTURE"] = args.gpu_arch
-    os.environ["RWKV_CTXLEN"] = str(args.ctx_len)
+
+    if args.state and args.prefix_tuning:
+        os.environ["RWKV_CTXLEN"] = str(args.ctx_len + args.prefix_token_len)
+    else:
+        os.environ["RWKV_CTXLEN"] = str(args.ctx_len)
+
+
+
     os.environ["RWKV_HEAD_SIZE_A"] = str(args.head_size_a)
     os.environ["RWKV_HEAD"] = str(args.n_embd // args.head_size_a)
     os.environ["RWKV_MIRCO_BSZ"] = str(args.micro_bsz)
@@ -511,6 +524,12 @@ if __name__ == "__main__":
                     print(f'  head additionally training module {pname}')
                     param.requires_grad = True
 
+        if any(n.startswith("prefix_token") for n, _ in module.named_parameters()):
+            for pname, param in module.named_parameters():
+                if 'prefix_token' in pname:
+                    print(f'  prefix_token additionally training module {pname}')
+                    param.requires_grad = True
+
 
 
                     
@@ -526,8 +545,6 @@ if __name__ == "__main__":
                 param.requires_grad = 'bone' in pname
                 print(f'bone Parts Enabled Training :{pname}')
 
- 
-        
         elif ('ln0' in name or 'ln_out' in name) and args.limited_lora == 0:
             for param in module.parameters():
                 print(f'  additionally training module {name}')

@@ -357,13 +357,18 @@ if 'x070' in ModelGeneration:
                 r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
                 s0 = th.zeros(B,H,C,C, dtype=th.bfloat16,device=w.device)
                 return TritonRWKV7.apply(w,r,k,v,a,b,s0,dot_prec)[0].view(B,T,HC)
-            def RUN_RWKV7_STATE(r, k, v, w, a, b, s, HEAD_SIZE=64, dot_prec = 'fp32'):
+            def RUN_RWKV7_STATE(r, w, k, v, a, b, s=None, HEAD_SIZE=64, dot_prec = 'fp32'):
                 B,T,HC = w.shape
                 C = HEAD_SIZE
                 H = HC//C
+                if s is None:
+                    s0 = th.zeros(B,H,C,C, dtype=th.bfloat16,device=w.device)
+                else:
+                    s0 = s
+
                 r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
-                s0 = s
-                return TritonRWKV7.apply(w,r,k,v,a,b,s0,dot_prec)[0].view(B,T,HC), None
+                x, state = TritonRWKV7.apply(w,r,k,v,a,b,s0,dot_prec)
+                return x.view(B,T,HC), state
 
 
     
@@ -656,30 +661,13 @@ if 'x070' in ModelGeneration:
                 self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
 
                 #for State-tuning
-                if self.args.prefix_tuning:
+                if self.args.direct_state_tuning:
                     self.time_state = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
                 if self.args.post_wkv_tuning:
                     #self.time_state_offset = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
                     self.time_offset = nn.Parameter(torch.zeros(args.n_embd))
 
-                
 
-                #for State-tuning
-                # if self.args.suffix_offset and args.prefix_tuning == 0:
-                #     self.time_offset_y = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
-                #     if args.suffix_offset_mode == 2:
-                #         self.time_offset = nn.Parameter(torch.zeros(args.n_embd))
-                #     #self.time_offset = nn.Parameter(torch.zeros(args.n_embd))
-                # elif self.args.suffix_offset and args.prefix_tuning == 1:
-                #     if args.suffix_offset_mode == 2:
-                #         self.time_offset = nn.Parameter(torch.zeros(args.n_embd))
-                #     if args.suffix_offset_mode == 1:
-                #         self.time_offset_y = nn.Parameter(torch.zeros(args.n_embd))
-                #     else:
-                #         self.time_offset_y = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
-                #     self.time_state = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
-                # else:
-                #     self.time_state = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
 
                 Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
 
@@ -715,8 +703,6 @@ if 'x070' in ModelGeneration:
             else:
                 v = v + (v_first - v) * torch.sigmoid(self.v0 + (xv @ self.v1) @ self.v2) # add value residual
 
-            if self.args.suffix_tuning:
-                xa = xa * (1 + self.time_offset2)
 
             a = torch.sigmoid(self.a0 + (xa @ self.a1) @ self.a2) # a is "in-context learning rate"
             g = torch.sigmoid(xg @ self.g1) @ self.g2
@@ -725,28 +711,24 @@ if 'x070' in ModelGeneration:
             kk = F.normalize(kk.view(B,T,H,-1), dim=-1, p=2.0).view(B,T,C)
             k = k * (1 + (a-1) * self.k_a)
 
-
-            
-
-            if self.args.prefix_tuning:
-                x , _ = RUN_RWKV7_STATE(r,k,v,w,-kk, kk*a,self.time_state)
+            if self.args.direct_state_tuning:
+                input_state = self.time_state.unsqueeze(0).repeat(B, 1, 1, 1)
+                #print(input_state.shape)
+                x, out_state = RUN_RWKV7_STATE(r,w,k,v,-kk, kk*a,s=input_state,HEAD_SIZE=self.head_size)
             else:
-                x     = RUN_CUDA_RWKV7g(r , w, k, v, -kk, kk*a,HEAD_SIZE=self.head_size)
+                x, out_state = RUN_RWKV7_STATE(r,w,k,v,-kk, kk*a,s=None,HEAD_SIZE=self.head_size)
 
             if self.args.post_wkv_tuning:
                 x = x * (1 + self.time_offset)
 
-            
-
+            #print(x)
 
             x = self.ln_x(x.view(B * T, C)).view(B, T, C)
 
             x = x + ((r.view(B,T,H,-1)*k.view(B,T,H,-1)*self.r_k).sum(dim=-1, keepdim=True) * v.view(B,T,H,-1)).view(B,T,C)
             x = self.output(x * g,passthrough)
 
- 
-
-            return x, v_first
+            return x, v_first, out_state
         
 
     class RWKV_Tmix_x070_infctx(nn.Module):
