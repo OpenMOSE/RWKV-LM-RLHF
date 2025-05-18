@@ -191,9 +191,6 @@ class FP6aoHybridMatmul(torch.autograd.Function):
 fp6ao_matmul = FP6aoHybridMatmul.apply
 
 
-
-        
-
 def rwkv_quantize(quant_type, weight):
     global NowCurrentlyGPUNo
     if quant_type=='4bit':
@@ -363,103 +360,7 @@ def LinearForward_Experts(self,adapter,x):
             F.linear(x, self.weight) + adapter.scaling *
             F.linear(F.linear(adapter.lora_dropout(x), lora_A), lora_B)) 
 
-class HeadLoraLinear(nn.Module):
-    def __init__(self, in_features: int, out_features: int, bias: bool):
-        super().__init__()
 
-        self.weight = nn.Parameter(torch.empty((out_features, in_features)))
-        if bias == True:
-            self.bias = nn.Parameter(torch.empty((out_features)))
-            self.biasmode = True
-        else:
-            self.biasmode = False
-
-        if LAYER_CONFIG[f'head']['mode'] == 'bone':
-            print('bone mode')
-            r = int(LAYER_CONFIG[f'head']['rank'])
-            self.r = r
-            self.bone = nn.Parameter(torch.zeros(in_features//self.r, self.r, self.r))
-            self.bonemode = True
-
-        else:
-            self.doramode = False
-            if LAYER_CONFIG[f'head']['mode'] == 'dora':
-                #DoRA: Weight-Decomposed Low-Rank Adaptation
-                with torch.no_grad():
-                    m_init = self.weight.norm(dim=0, keepdim=True)
-                self.lora_M = nn.Parameter(m_init) #momemtum
-                self.doramode = True
-            
-            r = int(LAYER_CONFIG[f'head']['rank'])
-            alpha = int(LAYER_CONFIG[f'head']['alpha'])
-            dropout = float(LAYER_CONFIG[f'head']['dropout'])
-
-            self.lora_A = nn.Parameter(torch.empty(r, in_features))
-            self.lora_B = nn.Parameter(torch.empty(out_features, r))
-            self.lora_dropout = nn.Dropout(dropout)
-            self.scaling = alpha / r
-            self.r = r
-            nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
-            nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
-            #nn.init.zeros_(self.lora_A)
-            nn.init.zeros_(self.lora_B)
-            self.bonemode = False
-        self.pissa = False
-        self.is_quant = False
-
- 
-    def dora_init(self):
-        self.doramode = True
-        if self.is_quant:
-            temporal_weight = rwkv_dequantize(self.quant_type, self.Qweight, self.qstate)
-            with torch.no_grad():
-                m_init = temporal_weight.norm(dim=0, keepdim=True) #temporal_weight#.norm(p=2, dim=0, keepdim=True)
-            self.lora_M = nn.Parameter(m_init) #momemtum
-            print(self.lora_M)
-        else:
-            with torch.no_grad():
-                    # self.weight は shape (out_features, in_features)
-                    # 各列の L2 ノルムを計算（shape: (1, in_features)）
-                    m_init = self.weight.norm(dim=0, keepdim=True)
-            self.lora_M = nn.Parameter(m_init) #momemtum
-
-
-    def quant(self, quant_type,target_gpu):
-        self.is_quant = True
-        self.quant_type = quant_type
-        self.Qweight, self.qstate= rwkv_quantize(self.quant_type, (self.weight.data).to(target_gpu))
-        self.weight = None # Because Latest Pytorch-lightning forced to BF16 type. thats why delete
-    #@torch.jit.ignore
-    def forward(self, x,passthrough=False):
-        if self.biasmode == True:
-            return LinearForward(self,x,passthrough) + self.bias
-        else:
-            return LinearForward(self,x,passthrough)
-
-        
-@torch.jit.ignore
-class LoraEmbedding(nn.Module): #Not working well. please help
-    def __init__(self, num_embeddings, embedding_dim, r=8, alpha=16, dropout=0.1):
-        super().__init__()
-        self.weight = nn.Embedding(num_embeddings, embedding_dim)
-        self.lora_A = nn.Parameter(torch.zeros(r, num_embeddings))
-        self.lora_B = nn.Parameter(torch.zeros(embedding_dim, r))
-        self.scaling = alpha / r
-        self.dropout = nn.Dropout(dropout)
-
-        # Initialize LoRA parameters
-        nn.init.normal_(self.lora_A, std=1 / r)
-        nn.init.zeros_(self.lora_B)
-    @torch.jit.ignore
-    def forward(self, x):
-        # Regular embedding
-        embedded = self.weight(x)
-        
-        # LoRA path
-        lora_embedded = self.dropout(F.embedding(x, self.lora_A.T))  # [batch_size, seq_len, r]
-        lora_embedded = lora_embedded @ self.lora_B.T  # [batch_size, seq_len, embedding_dim]
-        
-        return embedded + self.scaling * lora_embedded
     
 class NormalLinear(nn.Module):
     def __init__(self, in_features: int, out_features: int, bias: bool, n_layer: int, pname=''):
@@ -478,25 +379,10 @@ class NormalLinear(nn.Module):
         else:
             return F.linear(x,self.weight)
     
-class NormalLinear_h(nn.Module):
-    def __init__(self, in_features: int, out_features: int, bias: bool):
-        super().__init__()
 
-        self.weight = nn.Parameter(torch.empty((out_features, in_features)))
-        #assert bias == False, "Biased LoraLinear not supported"
-        if bias == True:
-            self.bias = nn.Parameter(torch.empty((out_features)))
-            self.biasmode = True
-        else:
-            self.biasmode = False
-    def forward(self, x,passthrough = False):
-        if self.biasmode == True:
-            return F.linear(x,self.weight) + self.bias
-        else:
-            return F.linear(x,self.weight)
 class LoraLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :) Chaos Modified
     #@torch.jit.unused
-    def __init__(self, in_features: int, out_features: int, bias: bool, n_layer: int, pname=''):
+    def __init__(self, in_features: int, out_features: int, bias: bool, n_layer: int=-1, pname=''):
         super().__init__()
 
         self.weight = nn.Parameter(torch.empty((out_features, in_features)))
@@ -507,15 +393,19 @@ class LoraLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :) Chaos Modified
         else:
             self.biasmode = False
 
-        if LAYER_CONFIG[f'{str(n_layer)}']['mode'] == 'bone':
+        TargetName = f'{str(n_layer)}'
+        if n_layer < 0:
+            TargetName = 'head'
+
+        if LAYER_CONFIG[TargetName]['mode'] == 'bone':
             print('bone mode')
-            r = int(LAYER_CONFIG[f'{str(n_layer)}']['rank'])
+            r = int(LAYER_CONFIG[TargetName]['rank'])
             self.r = r
             self.bone = nn.Parameter(torch.zeros(in_features//self.r, self.r, self.r))
             self.bonemode = True
         else:
             self.doramode = False
-            if LAYER_CONFIG[f'{str(n_layer)}']['mode'] == 'dora':
+            if LAYER_CONFIG[TargetName]['mode'] == 'dora':
                 #DoRA: Weight-Decomposed Low-Rank Adaptation
                 with torch.no_grad():
                     # self.weight は shape (out_features, in_features)
@@ -524,11 +414,11 @@ class LoraLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :) Chaos Modified
                 self.lora_M = nn.Parameter(m_init) #momemtum
                 
                 self.doramode = True
-            r = int(LAYER_CONFIG[f'{str(n_layer)}']['rank'])
-            alpha = int(LAYER_CONFIG[f'{str(n_layer)}']['alpha'])
-            d = LAYER_CONFIG[f'{str(n_layer)}']
+            r = int(LAYER_CONFIG[TargetName]['rank'])
+            alpha = int(LAYER_CONFIG[TargetName]['alpha'])
+            d = LAYER_CONFIG[TargetName]
 
-            dropout = float(LAYER_CONFIG[f'{str(n_layer)}']['dropout'])
+            dropout = float(LAYER_CONFIG[TargetName]['dropout'])
 
             self.lora_A = nn.Parameter(torch.empty(r, in_features))
             self.lora_B = nn.Parameter(torch.empty(out_features, r))
@@ -705,19 +595,20 @@ def make_linear_ffn_experts(*args, **kwargs):
         return Shared_LoraLinear(*args, **kwargs)
     
 
-@functools.wraps(HeadLoraLinear)
+@functools.wraps(LoraLinear)
 def make_linear_head(*args, **kwargs):
     if LAYER_CONFIG[f'head']['mode'] == 'full':
-        return NormalLinear_h(*args, **kwargs)    
+        return NormalLinear(*args, **kwargs)    
     elif LAYER_CONFIG[f'head']['mode'] == 'freeze':
-        return NormalLinear_h(*args, **kwargs)
+        return NormalLinear(*args, **kwargs)
     else:
-        return HeadLoraLinear(*args, **kwargs)
+        return LoraLinear(*args, **kwargs)
     
 
-@functools.wraps(LoraEmbedding)
+#@functools.wraps(LoraEmbedding)
 def make_emb(*args, **kwargs):
     if LAYER_CONFIG[f'emb']['mode'] == 'full' or LAYER_CONFIG[f'emb']['mode'] == 'freeze':
         return nn.Embedding(*args, **kwargs)
     else:
-        return LoraEmbedding(*args, **kwargs)
+        return nn.Embedding(*args, **kwargs)
+        #return LoraEmbedding(*args, **kwargs)
