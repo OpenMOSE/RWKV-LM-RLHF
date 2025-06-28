@@ -1,7 +1,7 @@
 python train.py --load_model "myfolder/models/RWKV7-G1-2.9B-87%25trained-20250511-ctx4k.pth" \
  --wandb "RWKV-LM-RLHF x070 2.9B T-BPTT May Kirihara Remaster" --proj_dir "myfolder/Outputs/x070-tbptt-maykirihara-2b9" \
- --vocab_size 65536 --ctx_len 65536 \
- --chunk_ctx 4096 \
+ --vocab_size 65536 --ctx_len 2048 \
+ --chunk_ctx 512 \
  --infctx 1 \
  --epoch_steps 100 --epoch_count 200 --epoch_begin 0 --epoch_save 1 \
  --micro_bsz 3 --n_layer 32 --n_embd 2560 \
@@ -12,7 +12,7 @@ python train.py --load_model "myfolder/models/RWKV7-G1-2.9B-87%25trained-2025051
  --strategy deepspeed_stage_2 \
  --layer_profile 'layerprofile/32_TEST_lora.csv' \
  --quant 1 \
- --quant_mode 'int8'\
+ --quant_mode 'nf4'\
  --gpu_arch 'cuda' \
  --limited_lora 0 \
  --sft 1 \
@@ -20,7 +20,7 @@ python train.py --load_model "myfolder/models/RWKV7-G1-2.9B-87%25trained-2025051
  --sft_jsonmode_tokenizermode 'world' \
  --smoothing 0.005 \
  --random_mode 1 \
- --infctx_dataset_multiplier 32 \
+ --infctx_dataset_multiplier 8 \
  --optim 'muon' \
  --train_data_file 'myfolder/kirihara/Output' \
  --accumulate_grad_batches 1

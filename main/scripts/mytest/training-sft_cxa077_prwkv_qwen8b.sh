@@ -1,0 +1,28 @@
+python train.py --load_model "/home/client/Projects/output/Qwen3-8B/cxa077-qwen3-8b-stage1.pth" \
+ --wandb "RWKV-LM-RLHF cxa077 Test" --proj_dir "myfolder/Outputs/cxa077-8b" \
+ --vocab_size 151936 --ctx_len 4096 \
+ --epoch_steps 1000 --epoch_count 200 --epoch_begin 0 --epoch_save 1 \
+ --micro_bsz 3 --n_layer 36 --n_embd 4096 --dim_ffn 12288 \
+ --gqa_kv_heads 8 \
+ --head_size_a 128 \
+ --rms_norm_eps 1e-6 \
+ --rk_norm 1 \
+ --rkv_bias 0 \
+ --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
+ --accelerator gpu --devices 2 --precision 'bf16' \
+ --grad_cp 1 --my_testing "cxa077" \
+ --strategy deepspeed_stage_2 \
+ --layer_profile 'layerprofile/36_TEST_lora.csv' \
+ --quant 1 \
+ --quant_mode 'int8'\
+ --gpu_arch 'backstepping_longhead' \
+ --limited_lora 0 \
+ --sft 1 \
+ --sft_jsonmode 1 \
+ --sft_jsonmode_tokenizermode 'qwen' \
+ --smoothing 0.0001 \
+ --random_mode 1 \
+ --infctx_dataset_multiplier 20 \
+ --optim 'muon' \
+ --train_data_file '/home/client/Projects/r2' \
+ --accumulate_grad_batches 4

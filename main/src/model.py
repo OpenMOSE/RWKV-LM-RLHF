@@ -46,7 +46,8 @@ if 'x070' in os.environ["RWKV_MY_TESTING"]:
     from .models.rwkv7 import LAYER_CONFIG,RWKV_Tmix_x070,RWKV_Tmix_x070_state,RWKV_Tmix_x070_infctx,RWKV_CMix_x070,RWKV_CMix_x070_MoLE,RWKV_CMix_x070_infctx,RWKV_Tmix_x070m,make_linear_head,make_emb
 if 'xa07' in os.environ["RWKV_MY_TESTING"]:
     from .models.arwkv7 import LAYER_CONFIG,ARWKV_Tmix_x070,ARWKV_Tmix_x070_state,ARWKV_Tmix_x070_infctx,Qwen2MLP,Qwen2MLP_infctx,Qwen2RMSNorm,Phi35MLP,Phi35MLP_infctx,make_linear_head,make_emb
-    from .models.prwkv7 import LAYER_CONFIG,PRWKV_Tmix_cxa075,PRWKV_Tmix_cxa075_infctx,PRWKV_Tmix_cxa076,PRWKV_Tmix_cxa076_infctx
+    from .models.prwkv7 import LAYER_CONFIG,PRWKV_Tmix_cxa075,PRWKV_Tmix_cxa075_infctx,PRWKV_Tmix_cxa076,PRWKV_Tmix_cxa076_infctx,PRWKV_Tmix_cxa078
+    from .models.selfattention import LAYER_CONFIG,GQAWithRopeAttention
 elif 'x060' in os.environ["RWKV_MY_TESTING"]:
     from .models.rwkv6 import LAYER_CONFIG,RWKV_Tmix_x060,RWKV_Tmix_x060_state,RWKV_Tmix_x060_infctx,RWKV_CMix_x060,RWKV_CMix_x060_infctx,make_linear_head,make_emb
 else:
@@ -159,33 +160,44 @@ if 'xa07' in os.environ["RWKV_MY_TESTING"]:
             self.ln1 = Qwen2RMSNorm(args.n_embd,args.rms_norm_eps)
             self.ln2 = Qwen2RMSNorm(args.n_embd,args.rms_norm_eps)
 
-            if os.environ["RWKV_TRAIN_TYPE"] == 'state':
-                self.att = ARWKV_Tmix_x070_state(args, layer_id) 
-            elif os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
-                if 'cxa075' in os.environ["RWKV_MY_TESTING"]:
-                    self.att = PRWKV_Tmix_cxa075_infctx(args, layer_id) 
-                elif 'cxa076' in os.environ["RWKV_MY_TESTING"]:
-                    self.att = PRWKV_Tmix_cxa076_infctx(args, layer_id) 
-                else:
-                    self.att = ARWKV_Tmix_x070_infctx(args, layer_id) 
-            else:
-                if 'cxa075' in os.environ["RWKV_MY_TESTING"]:
-                    self.att = PRWKV_Tmix_cxa075(args, layer_id)  
-                elif 'cxa076' in os.environ["RWKV_MY_TESTING"]:
-                    self.att = PRWKV_Tmix_cxa076(args, layer_id)  
-                else:
-                    self.att = ARWKV_Tmix_x070(args, layer_id)  
+            ModelMode = os.environ["RWKV_MY_TESTING"]
 
-            if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
-                if 'pxa070' in os.environ["RWKV_MY_TESTING"]:
-                    self.ffn = Phi35MLP_infctx(args,layer_id)
-                else:
-                    self.ffn = Qwen2MLP_infctx(args, layer_id)
+            if 'hxa' in ModelMode:
+                if 'hxa078' in ModelMode:
+                    if layer_id < self.args.n_layer - self.args.gqa_attention_hybrid_layers:
+                        #cxa078 Block
+                        self.att = PRWKV_Tmix_cxa078(args, layer_id)  
+                    else:
+                        self.att = GQAWithRopeAttention(args,layer_id)
+
             else:
-                if 'pxa070' in os.environ["RWKV_MY_TESTING"]:
-                    self.ffn = Phi35MLP(args,layer_id)
+                if os.environ["RWKV_TRAIN_TYPE"] == 'state':
+                    self.att = ARWKV_Tmix_x070_state(args, layer_id) 
+                elif os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
+                    if 'cxa075' in ModelMode:
+                        self.att = PRWKV_Tmix_cxa075_infctx(args, layer_id) 
+                    elif 'cxa076' in ModelMode:
+                        self.att = PRWKV_Tmix_cxa076_infctx(args, layer_id) 
+                    else:
+                        self.att = ARWKV_Tmix_x070_infctx(args, layer_id) 
                 else:
-                    self.ffn = Qwen2MLP(args, layer_id)
+                    if 'cxa075' in ModelMode:
+                        self.att = PRWKV_Tmix_cxa075(args, layer_id)  
+                    elif 'cxa076' in ModelMode:
+                        self.att = PRWKV_Tmix_cxa076(args, layer_id)  
+                    else:
+                        self.att = ARWKV_Tmix_x070(args, layer_id)  
+
+                if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
+                    if 'pxa070' in os.environ["RWKV_MY_TESTING"]:
+                        self.ffn = Phi35MLP_infctx(args,layer_id)
+                    else:
+                        self.ffn = Qwen2MLP_infctx(args, layer_id)
+                else:
+                    if 'pxa070' in os.environ["RWKV_MY_TESTING"]:
+                        self.ffn = Phi35MLP(args,layer_id)
+                    else:
+                        self.ffn = Qwen2MLP(args, layer_id)
 
 
         if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
@@ -200,20 +212,38 @@ if 'xa07' in os.environ["RWKV_MY_TESTING"]:
                 x = x + ffn_out
                 return x, v_first ,BlockState(att_state, ffn_state)
         else:
-            def forward(self, x, v_first,passthrough = False,x_emb=None):
-      
-                if self.args.state:
-                    x_attn, v_first, out_state = self.att(self.ln1(x), v_first, passthrough)
-                else:
-                    x_attn, v_first = self.att(self.ln1(x), v_first, passthrough)
-                x = x + x_attn
+            ModelMode = os.environ["RWKV_MY_TESTING"]
 
-                x = x + self.ffn(self.ln2(x),passthrough)
+            if 'hxa' in ModelMode:
+                def forward(self, x, v_first,passthrough = False,attention_mask=None,x_emb=None):
 
-                if self.args.state:
-                    return x, v_first, out_state
-                else:
+                    if self.layer_id < self.args.n_layer - self.args.gqa_attention_hybrid_layers:
+                        #RWKV Mode
+                        x_attn, v_first = self.att(self.ln1(x), v_first, passthrough)
+                    else:
+                        #GQA Mode
+                        x_attn = self.att(self.ln1(x),passthrough,attention_mask)
+                    
+                    x = x + x_attn
+
+                    x = x + self.ffn(self.ln2(x),passthrough)
+
                     return x, v_first
+            else:
+                def forward(self, x, v_first,passthrough = False,x_emb=None):
+        
+                    if self.args.state:
+                        x_attn, v_first, out_state = self.att(self.ln1(x), v_first, passthrough)
+                    else:
+                        x_attn, v_first = self.att(self.ln1(x), v_first, passthrough)
+                    x = x + x_attn
+
+                    x = x + self.ffn(self.ln2(x),passthrough)
+
+                    if self.args.state:
+                        return x, v_first, out_state
+                    else:
+                        return x, v_first
             @torch.no_grad()
             def forward_rnn(self, x, v_first,last_state: BlockState,passthrough=False):
 
@@ -298,7 +328,23 @@ if 'x060' in os.environ["RWKV_MY_TESTING"]:
                 return x
         
  
+class CPUCheckpointEmbedding(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, embedding_layer, input_ids):
+        ctx.embedding_layer = embedding_layer
+        ctx.device=input_ids.device
+        ctx.input_ids = input_ids.to("cpu", non_blocking=True)  # CPU退避
+        
+        with torch.no_grad():
+            return embedding_layer(input_ids)
 
+    @staticmethod
+    def backward(ctx, grad_output):
+        input_ids = ctx.input_ids.to(ctx.device, non_blocking=True)
+        with torch.enable_grad():
+            out = ctx.embedding_layer(input_ids)
+        out.backward(grad_output)
+        return None, None
 
 
 class RWKV(pl.LightningModule):
@@ -523,6 +569,12 @@ class RWKV(pl.LightningModule):
             grpo_init(self)
         if args.infctx and args.sft:
             training_sft_infctx_init(self)
+
+    def forward_embed(self, x):
+        return self.emb(x)
+    
+    def cpu_checkpoint_embed(self,embedding_layer, input_ids):
+        return CPUCheckpointEmbedding.apply(embedding_layer, input_ids)
         
 
     def setup(self, stage):
@@ -731,23 +783,30 @@ class RWKV(pl.LightningModule):
             H =  args.dim_att // args.head_size_a
             assert C==H*args.head_size_a
             
-            x = self.emb(idx)
+            #
+            if LAYER_CONFIG[f'emb']['mode'] == 'freeze':
+                x = self.cpu_checkpoint_embed(self.emb, idx)
+            else:
+                x = self.emb(idx)
+
+
+
             x_emb = x
             new_states = BlockStateList.empty(args.n_layer, B, args.n_embd, H,
                                             x.device, x.dtype)
             if args.dropout > 0:
                 x = self.drop0(x)
 
-            if 'x070' in os.environ["RWKV_MY_TESTING"] or '07' in os.environ["RWKV_MY_TESTING"]:
+            if '07' in os.environ["RWKV_MY_TESTING"]:
                 v_first = torch.empty_like(x)
                 
                 for i, (block, block_state) in enumerate(zip(self.blocks,
                     BlockStateList(last_shift_states, last_wkv_states))):
-                    if args.grad_cp == 1 and i > 0:# and i < len(self.blocks)-1 :
+                    layer_mode = LAYER_CONFIG[f'{str(block.layer_id)}']['mode']
+                    if i == 0 or layer_mode == 'freeze':
                         x, v_first, new_block_state = torch_checkpoint(block, x, v_first, block_state, x_emb, use_reentrant=False)
     
                     else:
-                        #x, new_block_state = torch_checkpoint(block, x, block_state,x_emb, use_reentrant=False)
                         x, v_first, new_block_state = deepspeed.checkpointing.checkpoint(block, x,v_first,block_state, x_emb)
             
                     new_states[i] = new_block_state 
@@ -868,7 +927,7 @@ class RWKV(pl.LightningModule):
         
 
 
-        def forward(self, idx,passthrough=False,frozen=False,clitic=False):
+        def forward(self, idx,passthrough=False,attention_mask=None,frozen=False,clitic=False):
             args = self.args
             StatePack = torch.zeros(self.args.n_layer,self.args.n_embd // self.args.head_size_a, self.args.head_size_a,self.args.head_size_a )
             if idx is None:
@@ -896,7 +955,17 @@ class RWKV(pl.LightningModule):
                         if frozen:
                             x, v_first = block(x, v_first,passthrough)
 
-                        elif args.grad_cp == 1:
+                        if 'hxa' in os.environ["RWKV_MY_TESTING"]:
+                            layer_mode = LAYER_CONFIG[f'{str(block.layer_id)}']['mode']
+                            if layer_mode == 'full' or layer_mode == 'freeze':
+                                if block.layer_id < args.n_layer - args.gqa_attention_hybrid_layers:
+                                    x, v_first = torch_checkpoint(block, x, v_first,passthrough,x_emb,use_reentrant=False)
+                                else:
+                                    x, v_first= torch_checkpoint(block, x, v_first,passthrough,attention_mask,x_emb,use_reentrant=False)
+                            else:
+                                x, v_first = torch_checkpoint(block, x, v_first,passthrough,x_emb,use_reentrant=False)
+                                #x, v_first = deepspeed.checkpointing.checkpoint(block, x, v_first )
+                        else:
                             layer_mode = LAYER_CONFIG[f'{str(block.layer_id)}']['mode']
                             if layer_mode == 'full' or layer_mode == 'freeze':
                                 #x, v_first = deepspeed.checkpointing.checkpoint(block, x, v_first)
@@ -920,12 +989,7 @@ class RWKV(pl.LightningModule):
                                     else:
                                         x, v_first = torch_checkpoint(block, x, v_first,passthrough,x_emb,use_reentrant=False)
                                 #x, v_first = deepspeed.checkpointing.checkpoint(block, x, v_first )
-                        else:
-                            if os.environ["CustomModel"] == 'MoE':
-                                x, v_first,moe_router_loss = block(x, v_first,idx)
-                                moe_total_loss += (moe_router_loss+0.001) / float(args.n_layer)
-                            else:
-                                x, v_first = block(x, v_first)
+                
                         i = i + 1
             else:
                 for block in self.blocks:

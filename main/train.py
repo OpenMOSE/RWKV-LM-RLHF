@@ -74,7 +74,6 @@ if __name__ == "__main__":
     parser.add_argument("--epoch_count", default=500, type=int)  # train for this many "epochs". will continue afterwards with lr = lr_final
     parser.add_argument("--epoch_begin", default=0, type=int)  # if you load a model trained for x "epochs", set epoch_begin = x
     parser.add_argument("--epoch_save", default=5, type=int)  # save the model every [epoch_save] "epochs"
-    #parser.add_argument("--max_epochs", default=500, type=int) 
     parser.add_argument("--micro_bsz", default=1, type=int)  # micro batch size (batch size per GPU) maybe not working on lisa
     parser.add_argument("--n_layer", default=6, type=int)
     parser.add_argument("--n_embd", default=512, type=int)
@@ -107,9 +106,13 @@ if __name__ == "__main__":
     parser.add_argument("--head_size_a", default=64, type=int) # can try larger values for larger models
 
     parser.add_argument("--gqa_kv_heads", default=8, type=int) 
+    parser.add_argument("--gqa_attention_heads", default=-1, type=int) 
+    parser.add_argument("--gqa_attention_hybrid_layers", default=4, type=int)  #Set GQA SelfAttention Layer from head
 
     parser.add_argument("--rk_norm", default=0, type=int) 
     parser.add_argument("--rkv_bias", default=1, type=int) 
+
+    parser.add_argument("--rope_theta", default=1000000.0, type=float) 
 
 
 
@@ -185,7 +188,7 @@ if __name__ == "__main__":
     #new optim
     parser.add_argument("--optim", default="", type=str)
 
-    #parser.add_argument("--accelerator", default="gpu", type=str)
+    parser.add_argument("--accelerator", default="gpu", type=str)
 
     parser.add_argument("--rms_norm_eps", default=1e-6, type=float)
 
@@ -332,6 +335,7 @@ if __name__ == "__main__":
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.enabled = True
+    torch.set_float32_matmul_precision('medium')
     if args.precision == "fp32":
         torch.backends.cudnn.allow_tf32 = False
         torch.backends.cuda.matmul.allow_tf32 = False

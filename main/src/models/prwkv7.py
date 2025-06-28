@@ -223,13 +223,13 @@ if 'xa07' in ModelGeneration:
                     device_props = th.cuda.get_device_properties(th.cuda.current_device())
                     if 'AMD' in device_props.name:
                         value_chunk_size = 16
-                        CUDA_FLAGS = [f'-D_C_={head_size}', f'-D_K_={value_chunk_size}', f'-D_CHUNK_LEN_={CHUNK_LEN}', '-O3', '-ffast-math', '-DAMD', '--offload-arch=gfx942']
+                        CUDA_FLAGS = [f'-D_C_={head_size}', f'-D_K_={value_chunk_size}', f'-D_CHUNK_LEN_={CHUNK_LEN}', '-O3', '-ffast-math', '-DAMD', '--offload-arch=gfx1100']
                     else:
                         value_chunk_size = 32
                         if th.cuda.get_device_properties(th.cuda.current_device()).multi_processor_count >= batchsz_times_heads_estimate * head_size / 32:
                             value_chunk_size = 32
                         CUDA_FLAGS = ['-res-usage', f'-D_C_={head_size} -D_K_={value_chunk_size}', f"-D_CHUNK_LEN_={CHUNK_LEN}", "--use_fast_math", "-O3", "-Xptxas -O3", "--extra-device-vectorization"]
-                    path = os.path.dirname(__file__) + '/../cuda/'
+                    path = os.path.dirname(__file__) + '/../../cuda/'
                     load(name="wind_backstepping_longhead", sources=[os.path.join(path,'backstepping_longhead.cu'), os.path.join(path,'backstepping_longhead.cpp')], is_python_module=False, verbose=False, extra_cuda_cflags=CUDA_FLAGS)
                     assert hasattr(th.ops.wind_backstepping_longhead, 'forward')
 
@@ -1095,6 +1095,409 @@ if 'xa07' in ModelGeneration:
             x = self.output(x*g)
             return x, v_first,TimeMixState(shift_state,wkv_state)
         
+
+        
+    
+    # from Transformers
+    def rotate_half(x):
+        """Rotates half the hidden dims of the input."""
+        x1 = x[..., : x.shape[-1] // 2]
+        x2 = x[..., x.shape[-1] // 2 :]
+        return torch.cat((-x2, x1), dim=-1)
+    def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
+        """Applies Rotary Position Embedding to the query and key tensors.
+
+        Args:
+            q (`torch.Tensor`): The query tensor.
+            k (`torch.Tensor`): The key tensor.
+            cos (`torch.Tensor`): The cosine part of the rotary embedding.
+            sin (`torch.Tensor`): The sine part of the rotary embedding.
+            position_ids (`torch.Tensor`, *optional*):
+                Deprecated and unused.
+            unsqueeze_dim (`int`, *optional*, defaults to 1):
+                The 'unsqueeze_dim' argument specifies the dimension along which to unsqueeze cos[position_ids] and
+                sin[position_ids] so that they can be properly broadcasted to the dimensions of q and k. For example, note
+                that cos[position_ids] and sin[position_ids] have the shape [batch_size, seq_len, head_dim]. Then, if q and
+                k have the shape [batch_size, heads, seq_len, head_dim], then setting unsqueeze_dim=1 makes
+                cos[position_ids] and sin[position_ids] broadcastable to the shapes of q and k. Similarly, if q and k have
+                the shape [batch_size, seq_len, heads, head_dim], then set unsqueeze_dim=2.
+        Returns:
+            `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
+        """
+        cos = cos.unsqueeze(unsqueeze_dim)
+        sin = sin.unsqueeze(unsqueeze_dim)
+        q_embed = (q * cos) + (rotate_half(q) * sin)
+        k_embed = (k * cos) + (rotate_half(k) * sin)
+        return q_embed, k_embed
+    
+    def build_rope_sin_cos(seq_len, head_dim, base=10000, start_pos=0,device=None, dtype=torch.float32):
+        """
+        Args:
+            seq_len: 長さ (トークン数)
+            head_dim: ヘッド次元（64や128など）
+            base: RoPEのベース。Qwenは100000、GPT系は10000が多い
+            start_pos: position の開始点（デフォルト0）
+            device: GPU / CPU 指定（Noneで自動）
+            dtype: Tensor型（float32推奨）
+
+        Returns:
+            cos: [seq_len, head_dim]
+            sin: [seq_len, head_dim]
+        """
+        theta = 1.0 / (base ** (torch.arange(0, head_dim, 2, dtype=dtype,device=device) / head_dim))  # [head_dim//2]
+        position = torch.arange(start_pos, start_pos + seq_len, dtype=dtype,device=device)            # [seq_len]
+
+        freq = torch.einsum('i,j->ij', position, theta)  # [seq_len, head_dim//2]
+
+        sin = torch.zeros(seq_len, head_dim, dtype=dtype,device=device)
+        cos = torch.zeros(seq_len, head_dim, dtype=dtype,device=device)
+        sin[:, 0::2] = torch.sin(freq)
+        cos[:, 0::2] = torch.cos(freq)
+        sin[:, 1::2] = torch.sin(freq)
+        cos[:, 1::2] = torch.cos(freq)
+
+        return cos, sin
+    
+
+    def build_hf_rope_sin_cos(seq_len, head_dim, base=10000.0, start_pos=0, device=None, dtype=torch.float32):
+        """
+        HuggingFace Transformers の RotaryEmbedding に完全互換な sin / cos を生成。
+        戻り値の shape: [seq_len, head_dim]
+        """
+        assert head_dim % 2 == 0, "head_dim must be even"
+
+        half_dim = head_dim // 2
+
+        # 周波数の逆数: [half_dim]
+        inv_freq = 1.0 / (base ** (torch.arange(0, half_dim, dtype=dtype, device=device) / half_dim))
+
+        # 位置ベクトル: [seq_len]
+        t = torch.arange(start_pos, start_pos + seq_len, dtype=dtype, device=device)
+
+        # outer product: [seq_len, half_dim]
+        freqs = torch.outer(t, inv_freq)  # == t[:, None] * inv_freq[None, :]
+
+        # even/odd interleaving のために [seq_len, head_dim] へ展開
+        emb = torch.cat([freqs, freqs], dim=-1)  # [seq_len, head_dim]
+
+        # sin, cos を計算
+        sin = torch.sin(emb)
+        cos = torch.cos(emb)
+
+        return cos, sin
+    
+    def build_noninterleaved_rope_cos_sin(seq_len, head_dim, base=1000000.0, start_pos=0, device=None, dtype=torch.float32):
+        """
+        Qwen/LLaMA系の非interleaved RoPEを生成（cos/sinの形 [1, seq_len, head_dim]）
+        """
+        assert head_dim % 2 == 0, "head_dim must be even"
+        
+        dim = torch.arange(head_dim, dtype=dtype, device=device)
+        inv_freq = 1.0 / (base ** (dim / head_dim))  # [head_dim]
+        
+        pos = torch.arange(start_pos, start_pos + seq_len, dtype=dtype, device=device)  # [seq_len]
+        freqs = torch.outer(pos, inv_freq)  # [seq_len, head_dim]
+
+        cos = torch.cos(freqs)[None, :, :]  # [1, seq_len, head_dim]
+        sin = torch.sin(freqs)[None, :, :]
+
+        return cos, sin
+    
+    def build_qwen_rope_cos_sin(seq_len, head_dim, base=1000000.0, start_pos=0, device=None, dtype=torch.bfloat16):
+        """
+        Qwen式：前半のhead_dim // 2次元にだけRoPEを適用し、後半は常に1.0
+        戻り値: cos, sin [1, seq_len, head_dim]
+        """
+        assert head_dim % 2 == 0
+        rope_dim = head_dim // 2
+
+        # 周波数割り当て
+        dim = torch.arange(0, rope_dim, dtype=torch.float32, device=device)
+        inv_freq = 1.0 / (base ** (dim / rope_dim))
+
+        # 位置ベクトル
+        pos = torch.arange(start_pos, start_pos + seq_len, dtype=torch.float32, device=device)
+        freqs = torch.outer(pos, inv_freq)  # [seq_len, rope_dim]
+
+        # cos, sin を作成
+        cos_part = torch.cos(freqs)  # [seq_len, rope_dim]
+        sin_part = torch.sin(freqs)
+
+        # 後半に1.0を埋める
+        ones = torch.ones_like(cos_part)
+        zeros = torch.zeros_like(sin_part)
+
+        cos = torch.cat([cos_part, ones], dim=-1)[None, :, :]  # [1, seq_len, head_dim]
+        sin = torch.cat([sin_part, zeros], dim=-1)[None, :, :]
+
+        return cos.to(dtype=dtype), sin.to(dtype=dtype)
+    
+    def build_qwen_rope_cos_sin2(
+    seq_len,
+    head_dim,
+    base=1000000.0,
+    start_pos=0,
+    device=None,
+    dtype=torch.bfloat16,
+):
+        """
+        Qwen互換：RoPEを head_dim//2 に適用し、後半は1.0
+        完全一致を目指す実装。
+        """
+        assert head_dim % 2 == 0
+        rope_dim = head_dim // 2
+
+        # dim / (rope_dim - 1) にすることで GPTNeoX / Qwen に近づく
+        dim = torch.arange(rope_dim, dtype=torch.float32, device=device)
+        inv_freq = 1.0 / (base ** (dim / (rope_dim - 1)))  # ← ここ重要
+
+        # 位置ベクトル
+        pos = torch.arange(start_pos, start_pos + seq_len, dtype=torch.float32, device=device)
+        freqs = torch.outer(pos, inv_freq)  # [seq_len, rope_dim]
+
+        # cos, sin 計算（float32のまま）
+        cos_part = torch.cos(freqs)  # [seq_len, rope_dim]
+        sin_part = torch.sin(freqs)
+
+        # 後半を1.0で埋める
+        ones = torch.ones((seq_len, rope_dim), dtype=torch.float32, device=device)
+        zeros = torch.zeros((seq_len, rope_dim), dtype=torch.float32, device=device)
+
+        cos = torch.cat([cos_part, ones], dim=-1)[None, :, :].to(dtype)
+        sin = torch.cat([sin_part, zeros], dim=-1)[None, :, :].to(dtype)
+
+        return cos, sin
+    
+
+    def build_qwen3_rope_cos_sin(
+    position_ids: torch.LongTensor,   # [B, T]
+    head_dim: int,                    # (必ず偶数)
+    rope_theta: float = 1e6,          # θ 値
+    attention_scaling: float = 1.0,    # config 由来の scaling
+    dtype: torch.dtype = torch.bfloat16,
+    device: str = "cuda",
+):
+        assert head_dim % 2 == 0, "head_dim must be even"
+        rope_dim = head_dim // 2
+        B, T = position_ids.shape
+
+        # --- float32 で inv_freq を作成 ---
+        # inv_freq[i] = exp( - log(θ) * (i/rope_dim) )
+        log_theta = torch.log(torch.tensor(rope_theta, dtype=torch.float32, device=device))
+        idx = torch.arange(rope_dim, dtype=torch.float32, device=device)
+        inv_freq = torch.exp(- log_theta * (idx / rope_dim))  # [rope_dim]
+
+        # --- position_ids を float32 にして [B, T, 1] に ---
+        pos = position_ids.to(torch.float32).unsqueeze(-1)   # [B, T, 1]
+
+        # --- 要素ごとの掛け算で [B, T, rope_dim] を得る ---
+        freqs = pos * inv_freq[None, None, :]               # [B, T, rope_dim]
+
+        # --- 二重化して D=2*rope_dim に戻す ---
+        emb = torch.cat([freqs, freqs], dim=-1)              # [B, T, D]
+
+        # --- cos/sin を float32 で計算し、最後にキャスト ---
+        cos = emb.cos() * attention_scaling
+        sin = emb.sin() * attention_scaling
+
+        return cos.to(dtype), sin.to(dtype)
+    
+    def build_default_rope_cos_sin(seq_len, head_dim, base=1000000.0, device="cuda", dtype=torch.bfloat16):
+        dim = head_dim
+        half_dim = dim // 2
+
+        # 周波数: dimの偶数インデックスのみに割り当て（GPTNeoX式）
+        inv_freq = 1.0 / (base ** (torch.arange(0, half_dim * 2, 2, dtype=torch.float32, device=device) / dim))  # [half_dim]
+
+        # 位置列: 0〜seq_len-1
+        pos = torch.arange(seq_len, dtype=torch.float32, device=device)  # [seq_len]
+
+        # 外積: [seq_len, half_dim]
+        freqs = torch.outer(pos, inv_freq)
+
+        # cos, sin → interleave（交互に並べる）
+        cos = torch.stack((freqs.cos(), freqs.cos()), dim=-1).flatten(-2)  # [seq_len, head_dim]
+        sin = torch.stack((freqs.sin(), freqs.sin()), dim=-1).flatten(-2)
+
+        # batch次元を追加して返す
+        return cos[None, :, :].to(dtype), sin[None, :, :].to(dtype)
+    
+    def compute_qwen3_rope_cache(seq_len, rotary_dim, device, dtype, rope_theta):
+            half_dim = rotary_dim // 2
+            freq_seq = torch.arange(half_dim, dtype=dtype, device=device)
+            inv_freq = 1.0 / (rope_theta ** (freq_seq / half_dim))
+            positions = torch.arange(seq_len, dtype=dtype, device=device)
+            freqs = torch.einsum("i,j->ij", positions, inv_freq)
+            emb = torch.cat([freqs, freqs], dim=-1)
+            cos = emb.cos()
+            sin = emb.sin()
+            return cos.unsqueeze(0), sin.unsqueeze(0), inv_freq
+
+        
+
+
+
+
+    class PRWKV_Tmix_cxa078(nn.Module):
+        def __init__(self, args, layer_id):
+            super().__init__()
+            self.args = args
+            self.layer_id = layer_id
+            self.my_testing = args.my_testing
+
+            self.head_size = args.head_size_a
+            self.n_head = args.dim_att // self.head_size
+            self.kv_n_head = args.gqa_kv_heads
+            self.attention_n_head = args.gqa_attention_heads
+            assert args.dim_att % self.n_head == 0
+            H = self.n_head
+            N = self.head_size
+            C = args.n_embd
+
+            with torch.no_grad():
+                ratio_0_to_1 = layer_id / (args.n_layer - 1)  # 0 to 1
+                ratio_1_to_almost0 = 1.0 - (layer_id / args.n_layer)  # 1 to ~0
+                ddd = torch.ones(1, 1, C)
+                for i in range(C):
+                    ddd[0, 0, i] = i / C
+
+                def ortho_init(x, scale):
+                    with torch.no_grad():
+                        shape = x.shape
+                        if len(shape) == 2:
+                            gain = math.sqrt(shape[0] / shape[1]) if shape[0] > shape[1] else 1
+                            nn.init.orthogonal_(x, gain=gain * scale)
+                        elif len(shape) == 3:
+                            gain = math.sqrt(shape[1] / shape[2]) if shape[1] > shape[2] else 1
+                            for i in range(shape[0]):
+                                nn.init.orthogonal_(x[i], gain=gain * scale)
+                        else:
+                            assert False
+                        return x
+
+                D_DECAY_LORA = 64
+                D_DECAY_LORA = max(32, int(round(  (1.8*(C**0.5))  /32)*32)) * 2# suggestion
+                self.w1 = nn.Parameter(torch.zeros(C, D_DECAY_LORA))
+                self.w2 = nn.Parameter(ortho_init(torch.zeros(D_DECAY_LORA, C), 0.1))
+                decay_speed = torch.ones(C)
+                for n in range(C):
+                    decay_speed[n] = -7 + 5 * (n / (C - 1)) ** (0.85 + 1.0 * ratio_0_to_1 ** 0.5)
+                self.w0 = nn.Parameter(decay_speed.reshape(1,1,C) + 0.5) # !!! 0.5 comes from F.softplus !!!
+
+                D_AAA_LORA = 64
+                D_AAA_LORA = max(32, int(round(  (1.8*(C**0.5))  /32)*32)) # suggestion
+                self.a1 = nn.Parameter(torch.zeros(C, D_AAA_LORA))
+                self.a2 = nn.Parameter(ortho_init(torch.zeros(D_AAA_LORA, C), 0.1))
+                self.a0 = nn.Parameter(torch.zeros(1,1,C))
+
+                D_MV_LORA = 32
+                D_MV_LORA = max(32, int(round(  (1.3*(C**0.5))  /32)*32)) # suggestion
+                self.v1 = nn.Parameter(torch.zeros(C, D_MV_LORA))
+                self.v2 = nn.Parameter(ortho_init(torch.zeros(D_MV_LORA, C), 0.1))
+                self.v0 = nn.Parameter(torch.zeros(1,1,C)+1.0)
+
+                D_GATE_LORA = max(32, int(round(  (0.6*(C**0.8))  /32)*32)) # suggestion
+                # Note: for some data, you can reduce D_GATE_LORA or even remove this gate
+                self.g1 = nn.Parameter(torch.zeros(C, D_GATE_LORA))
+                self.g2 = nn.Parameter(ortho_init(torch.zeros(D_GATE_LORA, C), 0.1))
+
+                #self.k_k = nn.Parameter(torch.ones(1,1,C)*0.85)
+                #self.k_a = nn.Parameter(torch.ones(1,1,C))
+                self.r_k = nn.Parameter(torch.zeros(H,N))
+
+                self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
+
+                Processing_Mode = LAYER_CONFIG[f'{str(self.layer_id)}']['mode']
+
+                self.rope_theta = float(self.args.rope_theta)
+                
+
+                #self.rope_cos = torch.Tensor(self.rope_cos.unsqueeze(0))
+                #self.rope_sin = torch.Tensor(self.rope_sin.unsqueeze(0))
+
+                if self.args.rkv_bias:
+                    rkv_bias = True
+                else:
+                    rkv_bias = False
+
+
+                self.receptance = make_linear_att(C, self.head_size*self.attention_n_head, bias=rkv_bias,n_layer=self.layer_id,pname='att.receptance')
+                #GQAStyle
+                self.key = make_linear_att(C, self.head_size*self.kv_n_head, bias=rkv_bias,n_layer=self.layer_id,pname='att.key')
+                self.value = make_linear_att(C, self.head_size*self.kv_n_head, bias=rkv_bias,n_layer=self.layer_id,pname='att.value')
+                self.output = make_linear_att(self.head_size*self.attention_n_head, C, bias=False,n_layer=self.layer_id,pname='att.output')
+
+                if self.args.rk_norm:
+                    self.ln_r = Qwen2RMSNorm(N,self.args.rms_norm_eps)
+                    self.ln_k = Qwen2RMSNorm(N,self.args.rms_norm_eps)
+
+
+          
+
+        #@torch.compile
+        def forward(self, x, v_first,passthrough = False):
+            B, T, C = x.size()
+            H = self.n_head
+        
+            xr = xw = xk = xv = xa = xg = x            
+
+            r = self.receptance(xr,passthrough)
+            w = -F.softplus(-(self.w0 + torch.tanh(xw @ self.w1) @ self.w2)) - 0.5 # soft-clamp to (-inf, -0.5)
+            k = self.key(xk,passthrough)
+            v = self.value(xv,passthrough)
+
+            if self.args.rk_norm:
+                r = self.ln_r(r.view(B,T,H,self.head_size))
+                k = self.ln_k(k.view(B,T,self.kv_n_head,self.head_size))
+
+            g = torch.sigmoid(xg @ self.g1) @ self.g2
+
+            k = k.view(B, T, self.kv_n_head, self.head_size)
+            v = v.view(B, T, self.kv_n_head, self.head_size)
+
+            #rope_cos, rope_sin = build_qwen_rope_cos_sin2(self.args.ctx_len,self.head_size,self.rope_theta,device=k.device,dtype=torch.bfloat16)
+            #position_ids = torch.arange(0, self.args.ctx_len).unsqueeze(0).to("cuda")  # [1, 2048]
+            #rope_cos, rope_sin = build_qwen3_rope_cos_sin(position_ids, head_dim=128, rope_theta=self.rope_theta, device=k.device)
+            #rope_cos , rope_sin = build_default_rope_cos_sin(self.args.ctx_len,self.head_size,self.rope_theta,k.device)
+
+            rope_cos, rope_sin, inv_freq_own = compute_qwen3_rope_cache(T, self.head_size, k.device, torch.float32, self.rope_theta)
+
+            rope_cos = rope_cos.to(dtype=k.dtype)
+            rope_sin = rope_sin.to(dtype=k.dtype)
+
+            #print(f'{self.rope_cos.shape}')
+
+            #print(f'cos = {rope_cos}')
+
+            r, k = apply_rotary_pos_emb(r, k, rope_cos,rope_sin, unsqueeze_dim=2)
+
+            # repeat k/v heads if n_kv_heads < n_heads
+            #modified repeat_kv B,T,H_kv,D) -> B,T,H,D -> B,T,C
+            k = repeat_kv(k, self.n_head // self.kv_n_head)#reshape(B,T,-1) #(B,T,C)
+            v = repeat_kv(v, self.n_head // self.kv_n_head)#reshape(B,T,-1) #(B,T,C)
+
+            k = k.view(B, T, -1)
+            v = v.view(B, T, -1)
+
+            #so now all B,T,C tensors
+
+            if self.layer_id == 0:
+                v_first = v # store the v of the first layer
+            else:
+                v = v + (v_first - v) * torch.sigmoid(self.v0 + (xv @ self.v1) @ self.v2) # add value residual
+            a = torch.sigmoid(self.a0 + (xa @ self.a1) @ self.a2) # a is "in-context learning rate"
+
+            kk = F.normalize(k.view(B,T,H,-1), dim=-1, p=2.0).view(B,T,C)
+
+            k = k * (1.0 - w + a)
+
+            x = RUN_CUDA_RWKV7g(r, w, k, v, -kk, kk*a,HEAD_SIZE=self.head_size).view(B, T, C)
+
+            x = x * (float(self.head_size) ** -0.5)
+
+            x = x + ((r.view(B,T,H,-1)*k.view(B,T,H,-1)*self.r_k).sum(dim=-1, keepdim=True) * v.view(B,T,H,-1)).view(B,T,C)
+            x = self.output(x*g,passthrough)
+            return x, v_first
         
         
     

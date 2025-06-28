@@ -19,7 +19,16 @@ import requests
 import json
 import time
 import threading
+import io
 from torch.utils.checkpoint import checkpoint as torch_checkpoint
+from multiprocessing import shared_memory
+
+import pickle
+import base64
+
+def base64_to_tensor(b64_str):
+    pickle_bytes = base64.b64decode(b64_str.encode('utf-8'))
+    return pickle.loads(pickle_bytes)
 
 
 
@@ -281,44 +290,85 @@ def training_step_sft(self, batch, batch_idx):
 
                 input_ids = batch['input_ids']
                 target = batch['target_ids']
-                #top_k_values = batch['top_k_values']
-                #top_k_indices = batch['top_k_indices']
+                
                 attention_mask = batch['attention_mask']
 
-                with torch.no_grad():
-                    arraywmask = convert_to_array_with_mask(input_ids, attention_mask)
+                top_k_values = batch['topk_logits']
+                top_k_indices = batch['topk_indices']
+                teacher_loss = batch["teacher_loss"].mean()
 
-                    #print(arraywmask)
+
+                # with torch.no_grad():
+                #     arraywmask = convert_to_array_with_mask(input_ids, attention_mask)
+
+                #     #print(arraywmask)
 
 
-                    payload = {
-                        "input_ids": arraywmask,
-                        "topk": args.sft_kl_topk
-                    }
-                    PROCESS_LOGITS_URL = f"{args.sft_kl_accesspoint}/ProcessLogits"
+                #     payload = {
+                #         "input_ids": arraywmask,
+                #         "topk": args.sft_kl_topk
+                #     }
+                #     PROCESS_LOGITS_URL = f"{args.sft_kl_accesspoint}/ProcessLogits_shm"
                     
 
-                    while True:
-                        try:
-                            teacher_response = requests.post(PROCESS_LOGITS_URL, json=payload)
-                            if teacher_response.status_code == 200:
-                                teacher_result = teacher_response.json()
-                                logits_numpy_array = np.array(teacher_result['logits'],dtype=np.float32)
-                                indices_numpy_array = np.array(teacher_result['indices'],dtype=np.int64)
-                                teacher_loss = teacher_result['loss']
-                                # print(f"Loss: {teacher_result['loss']}")
-                                # print(f"バッチ数: {len(teacher_result['indices'])}")
-                                # print(f"シーケンス長: {[len(batch) for batch in teacher_result['indices']]}")
-                                # print(f"Topkサイズ: {len(teacher_result['indices'][0][0])}")
-                                break
-                        except Exception as e:
-                            print('retry')
-                            print(f"エラーが発生しました: {e}")
-                            print(f"エラーの型: {type(e).__name__}")
-                            time.sleep(1)
+                #     while True:
+                       
+                #         try:
+                #             #print('post start')
+                #             res = requests.post(PROCESS_LOGITS_URL, json=payload)
+                #             #print('post finished')
+                #             res.raise_for_status()
+                #             data = res.json()
 
-                    top_k_values = torch.tensor(logits_numpy_array, dtype=torch.bfloat16).to(device=input_ids.device)
-                    top_k_indices = torch.tensor(indices_numpy_array, dtype=torch.int64).to(device=input_ids.device)
+                #             # --- 1. SharedMemory 取得 ---
+                #             logits_shm = shared_memory.SharedMemory(name=data["logits_shm"])
+                #             indices_shm = shared_memory.SharedMemory(name=data["indices_shm"])
+
+                #             # --- 2. NumPy配列に変換 ---
+                #             logits_np = np.ndarray(
+                #                 shape=tuple(data["logits_shape"]),
+                #                 dtype=np.dtype(data["dtype_logits"]),
+                #                 buffer=logits_shm.buf
+                #             )
+                #             indices_np = np.ndarray(
+                #                 shape=tuple(data["indices_shape"]),
+                #                 dtype=np.dtype(data["dtype_indice"]),
+                #                 buffer=indices_shm.buf
+                #             )
+
+                #             # --- 3. PyTorch Tensor に変換（コピーしないと SHM依存になる） ---
+                #             top_k_values = torch.from_numpy(logits_np.copy()).to(dtype=torch.bfloat16,device=input_ids.device).contiguous()
+                #             top_k_indices = torch.from_numpy(indices_np.copy()).to(dtype=torch.int64,device=input_ids.device).contiguous()
+
+                  
+                #             teacher_loss = data["loss"]
+
+                #             try:
+                #                 logits_shm.close()
+                #                 logits_shm.unlink()
+                #             except Exception as e:
+                #                 print(f"Warning: logits_shm cleanup failed: {e}")
+
+                #             try:
+                #                 indices_shm.close()
+                #                 indices_shm.unlink()
+                #             except Exception as e:
+                #                 print(f"Warning: indices_shm cleanup failed: {e}")
+
+                          
+
+                #             break
+                         
+                #         except Exception as e:
+                #             print('retry')
+                #             print(f"エラーが発生しました: {e}")
+                #             print(f"エラーの型: {type(e).__name__}")
+                #             time.sleep(5)
+                       
+                    
+
+                #     # top_k_values = torch.tensor(logits_numpy_array, dtype=torch.bfloat16).to(device=input_ids.device)
+                #     # top_k_indices = torch.tensor(indices_numpy_array, dtype=torch.int64).to(device=input_ids.device)
 
                     
 
@@ -331,7 +381,7 @@ def training_step_sft(self, batch, batch_idx):
                 max_len = int(attention_mask.sum(dim=1).max().item())
                
 
-                student_logits,moe_loss = self(input_ids)
+                student_logits,moe_loss = self(input_ids,attention_mask=attention_mask)
                 targets = target.contiguous().view(-1)
                 kl_mask = attention_mask.contiguous().view(-1) #[:,:-1]
                 sum_kl_mask = torch.sum(kl_mask).item()
@@ -354,9 +404,13 @@ def training_step_sft(self, batch, batch_idx):
                 teacher_logits = top_k_values#[:, :-1]
                 teacher_indices = top_k_indices#[:, :-1]
 
+                #print(f'teacher_logits = {teacher_logits.shape}')
+                #print(f'teacher_indices = {teacher_indices.shape}')
+                #print(f'student_logits = {student_logits.shape}')
+
                 student_top_k_logits = torch.gather(student_logits, -1, teacher_indices)
 
-                kl_loss = self.kl_divergence_loss(student_top_k_logits, teacher_logits, temperature)
+                kl_loss = kl_divergence_loss(student_top_k_logits, teacher_logits, temperature)
 
                 kl_loss = pad_kl_loss_to_match_attention_mask(kl_loss,attention_mask)
 

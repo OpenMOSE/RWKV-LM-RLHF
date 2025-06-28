@@ -17,8 +17,7 @@ Finally, I started writing the Wiki🙂
    - RWKV v6 "Finch" (full feature support)
    - RWKV v7 "Goose" (full feature support)
    - RWKV v7 "Goose" + Mixture of LoRA Experts (SFT Support)
-   - ARWKV (GQA + SwiGLU -> RWKV v7 TimeMix + SwiGLU) (SFT support)
-   - PRWKV (GQA + SwiGLU -> RWKV cxa076 TimeMix + SwiGLU) (SFT, Infctx, DPO, ORPO)
+   - Hybrid RWKV "hxa079" (Experimental Support)
 
 ## Key Features
 
@@ -75,10 +74,9 @@ Finally, I started writing the Wiki🙂
 
 
 
-
 ## System Requirements
    - CPU RAM >= 32GB (128GB Recommend for stress free)
-   - Cuda or Rocm GPU.(NVIDIA RTX3090,4090, AMD MI100)
+   - Cuda or Rocm GPU.(NVIDIA RTX3090,4090, AMD MI100,W7900)
    - CUDA 12.4+, Rocm 6.1.2+
    - Python 3.12+
    - Pytorch 2.5+

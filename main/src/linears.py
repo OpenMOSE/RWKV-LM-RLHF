@@ -363,7 +363,7 @@ def LinearForward_Experts(self,adapter,x):
 
     
 class NormalLinear(nn.Module):
-    def __init__(self, in_features: int, out_features: int, bias: bool, n_layer: int, pname=''):
+    def __init__(self, in_features: int, out_features: int, bias: bool, n_layer: int=-1, pname=''):
         super().__init__()
 
         self.weight = nn.Parameter(torch.empty((out_features, in_features)))
