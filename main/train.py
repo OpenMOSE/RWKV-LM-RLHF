@@ -107,7 +107,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--gqa_kv_heads", default=8, type=int) 
     parser.add_argument("--gqa_attention_heads", default=-1, type=int) 
-    parser.add_argument("--gqa_attention_hybrid_layers", default=4, type=int)  #Set GQA SelfAttention Layer from head
+    parser.add_argument("--gqa_attention_hybrid_layers", nargs='+', type=int, default=[-1])  #Set GQA SelfAttention Layer from head
 
     parser.add_argument("--rk_norm", default=0, type=int) 
     parser.add_argument("--rkv_bias", default=1, type=int) 
@@ -188,7 +188,7 @@ if __name__ == "__main__":
     #new optim
     parser.add_argument("--optim", default="", type=str)
 
-    parser.add_argument("--accelerator", default="gpu", type=str)
+    #parser.add_argument("--accelerator", default="gpu", type=str)
 
     parser.add_argument("--rms_norm_eps", default=1e-6, type=float)
 

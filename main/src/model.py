@@ -45,9 +45,7 @@ from .trainers.orpo import training_step_orpo
 if 'x070' in os.environ["RWKV_MY_TESTING"]:
     from .models.rwkv7 import LAYER_CONFIG,RWKV_Tmix_x070,RWKV_Tmix_x070_state,RWKV_Tmix_x070_infctx,RWKV_CMix_x070,RWKV_CMix_x070_MoLE,RWKV_CMix_x070_infctx,RWKV_Tmix_x070m,make_linear_head,make_emb
 if 'xa07' in os.environ["RWKV_MY_TESTING"]:
-    from .models.arwkv7 import LAYER_CONFIG,ARWKV_Tmix_x070,ARWKV_Tmix_x070_state,ARWKV_Tmix_x070_infctx,Qwen2MLP,Qwen2MLP_infctx,Qwen2RMSNorm,Phi35MLP,Phi35MLP_infctx,make_linear_head,make_emb
-    from .models.prwkv7 import LAYER_CONFIG,PRWKV_Tmix_cxa075,PRWKV_Tmix_cxa075_infctx,PRWKV_Tmix_cxa076,PRWKV_Tmix_cxa076_infctx,PRWKV_Tmix_cxa078
-    from .models.selfattention import LAYER_CONFIG,GQAWithRopeAttention
+    from .models.hrwkv7 import LAYER_CONFIG,HRWKV_Tmix_hxa079,HRWKV_GQA_Nope_Attention,SwiGLU_MLP,T5RMSNorm,make_linear_head,make_emb
 elif 'x060' in os.environ["RWKV_MY_TESTING"]:
     from .models.rwkv6 import LAYER_CONFIG,RWKV_Tmix_x060,RWKV_Tmix_x060_state,RWKV_Tmix_x060_infctx,RWKV_CMix_x060,RWKV_CMix_x060_infctx,make_linear_head,make_emb
 else:
@@ -157,47 +155,52 @@ if 'xa07' in os.environ["RWKV_MY_TESTING"]:
             self.args = args
             self.layer_id = layer_id
 
-            self.ln1 = Qwen2RMSNorm(args.n_embd,args.rms_norm_eps)
-            self.ln2 = Qwen2RMSNorm(args.n_embd,args.rms_norm_eps)
+            self.ln1 = T5RMSNorm(args.n_embd,args.rms_norm_eps)
+            self.ln2 = T5RMSNorm(args.n_embd,args.rms_norm_eps)
 
             ModelMode = os.environ["RWKV_MY_TESTING"]
 
             if 'hxa' in ModelMode:
-                if 'hxa078' in ModelMode:
-                    if layer_id < self.args.n_layer - self.args.gqa_attention_hybrid_layers:
-                        #cxa078 Block
-                        self.att = PRWKV_Tmix_cxa078(args, layer_id)  
+                if 'hxa079' in ModelMode:
+                    if layer_id in self.args.gqa_attention_hybrid_layers:
+                        #cxa079 Block
+                        self.att = HRWKV_GQA_Nope_Attention(args,layer_id)
+                          
                     else:
-                        self.att = GQAWithRopeAttention(args,layer_id)
+                        self.att = HRWKV_Tmix_hxa079(args, layer_id)
 
+                    self.ffn = SwiGLU_MLP(args, layer_id)
             else:
-                if os.environ["RWKV_TRAIN_TYPE"] == 'state':
-                    self.att = ARWKV_Tmix_x070_state(args, layer_id) 
-                elif os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
-                    if 'cxa075' in ModelMode:
-                        self.att = PRWKV_Tmix_cxa075_infctx(args, layer_id) 
-                    elif 'cxa076' in ModelMode:
-                        self.att = PRWKV_Tmix_cxa076_infctx(args, layer_id) 
-                    else:
-                        self.att = ARWKV_Tmix_x070_infctx(args, layer_id) 
-                else:
-                    if 'cxa075' in ModelMode:
-                        self.att = PRWKV_Tmix_cxa075(args, layer_id)  
-                    elif 'cxa076' in ModelMode:
-                        self.att = PRWKV_Tmix_cxa076(args, layer_id)  
-                    else:
-                        self.att = ARWKV_Tmix_x070(args, layer_id)  
+                raise "currently only support hxa"
+                        
+            # else:
+            #     if os.environ["RWKV_TRAIN_TYPE"] == 'state':
+            #         self.att = ARWKV_Tmix_x070_state(args, layer_id) 
+            #     elif os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
+            #         if 'cxa075' in ModelMode:
+            #             self.att = PRWKV_Tmix_cxa075_infctx(args, layer_id) 
+            #         elif 'cxa076' in ModelMode:
+            #             self.att = PRWKV_Tmix_cxa076_infctx(args, layer_id) 
+            #         else:
+            #             self.att = ARWKV_Tmix_x070_infctx(args, layer_id) 
+            #     else:
+            #         if 'cxa075' in ModelMode:
+            #             self.att = PRWKV_Tmix_cxa075(args, layer_id)  
+            #         elif 'cxa076' in ModelMode:
+            #             self.att = PRWKV_Tmix_cxa076(args, layer_id)  
+            #         else:
+            #             self.att = ARWKV_Tmix_x070(args, layer_id)  
 
-                if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
-                    if 'pxa070' in os.environ["RWKV_MY_TESTING"]:
-                        self.ffn = Phi35MLP_infctx(args,layer_id)
-                    else:
-                        self.ffn = Qwen2MLP_infctx(args, layer_id)
-                else:
-                    if 'pxa070' in os.environ["RWKV_MY_TESTING"]:
-                        self.ffn = Phi35MLP(args,layer_id)
-                    else:
-                        self.ffn = Qwen2MLP(args, layer_id)
+            #     if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
+            #         if 'pxa070' in os.environ["RWKV_MY_TESTING"]:
+            #             self.ffn = Phi35MLP_infctx(args,layer_id)
+            #         else:
+            #             self.ffn = Qwen2MLP_infctx(args, layer_id)
+            #     else:
+            #         if 'pxa070' in os.environ["RWKV_MY_TESTING"]:
+            #             self.ffn = Phi35MLP(args,layer_id)
+            #         else:
+            #             self.ffn = Qwen2MLP(args, layer_id)
 
 
         if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
@@ -215,20 +218,21 @@ if 'xa07' in os.environ["RWKV_MY_TESTING"]:
             ModelMode = os.environ["RWKV_MY_TESTING"]
 
             if 'hxa' in ModelMode:
-                def forward(self, x, v_first,passthrough = False,attention_mask=None,x_emb=None):
+                def forward(self, x, v_first,k_first=None,passthrough = False,attention_mask=None,x_emb=None):
 
-                    if self.layer_id < self.args.n_layer - self.args.gqa_attention_hybrid_layers:
-                        #RWKV Mode
-                        x_attn, v_first = self.att(self.ln1(x), v_first, passthrough)
-                    else:
+                    if self.layer_id in self.args.gqa_attention_hybrid_layers:
                         #GQA Mode
-                        x_attn = self.att(self.ln1(x),passthrough,attention_mask)
+                        x_attn = self.att(self.ln1(x),passthrough,attention_mask)                        
+                    else:
+                        #RWKV Mode
+                        x_attn, v_first, k_first = self.att(self.ln1(x), v_first,k_first, passthrough)
+                        
                     
                     x = x + x_attn
 
                     x = x + self.ffn(self.ln2(x),passthrough)
 
-                    return x, v_first
+                    return x, v_first,k_first
             else:
                 def forward(self, x, v_first,passthrough = False,x_emb=None):
         
@@ -494,7 +498,7 @@ class RWKV(pl.LightningModule):
 
 
         if 'xa07' in os.environ["RWKV_MY_TESTING"]:
-            self.ln_out = Qwen2RMSNorm(args.n_embd,args.rms_norm_eps)
+            self.ln_out = T5RMSNorm(args.n_embd,args.rms_norm_eps)
         else:
             self.ln_out = nn.LayerNorm(args.n_embd)
 
@@ -916,6 +920,7 @@ class RWKV(pl.LightningModule):
                     x, v_first, new_block_state = block.forward_rnn(x,v_first, block_state,passthrough)
             
                     new_states[i] = new_block_state 
+            
             else:
                 assert "currently only supported v7"
 
@@ -949,6 +954,7 @@ class RWKV(pl.LightningModule):
                 x = self.drop0(x)
             if 'x070' in os.environ["RWKV_MY_TESTING"] or 'xa07' in os.environ["RWKV_MY_TESTING"]:
                     v_first = torch.empty_like(x)
+                    k_first = torch.empty_like(x)
                     moe_total_loss = 0
                     i = 0
                     for block in self.blocks:
@@ -957,14 +963,15 @@ class RWKV(pl.LightningModule):
 
                         if 'hxa' in os.environ["RWKV_MY_TESTING"]:
                             layer_mode = LAYER_CONFIG[f'{str(block.layer_id)}']['mode']
-                            if layer_mode == 'full' or layer_mode == 'freeze':
-                                if block.layer_id < args.n_layer - args.gqa_attention_hybrid_layers:
-                                    x, v_first = torch_checkpoint(block, x, v_first,passthrough,x_emb,use_reentrant=False)
-                                else:
-                                    x, v_first= torch_checkpoint(block, x, v_first,passthrough,attention_mask,x_emb,use_reentrant=False)
+                            #if layer_mode == 'full' or layer_mode == 'freeze':
+                            if block.layer_id in args.gqa_attention_hybrid_layers:
+                                x, v_first,k_first= torch_checkpoint(block, x, v_first,k_first,passthrough,attention_mask,x_emb,use_reentrant=False)
+                                
                             else:
-                                x, v_first = torch_checkpoint(block, x, v_first,passthrough,x_emb,use_reentrant=False)
-                                #x, v_first = deepspeed.checkpointing.checkpoint(block, x, v_first )
+                                x, v_first,k_first = torch_checkpoint(block, x, v_first,k_first,passthrough,x_emb,use_reentrant=False)
+                            # else:
+                            #     x, v_first = torch_checkpoint(block, x, v_first,passthrough,x_emb,use_reentrant=False)
+                            #     #x, v_first = deepspeed.checkpointing.checkpoint(block, x, v_first )
                         else:
                             layer_mode = LAYER_CONFIG[f'{str(block.layer_id)}']['mode']
                             if layer_mode == 'full' or layer_mode == 'freeze':
@@ -1066,24 +1073,26 @@ class RWKV(pl.LightningModule):
                 return training_step_dpo(self,batch,batch_idx)
             if args.orpo:
                 return training_step_orpo(self,batch,batch_idx)
+
+            raise "Abnormal Train Mode"
                 
-            if args.my_qa_mask != 1:
-                idx, targets = batch
-                logits = self(idx)
-                loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
-            else:
-                idx, targets, mask = batch
-                mask = mask.view(-1)
-                sum_mask = torch.sum(mask).item()
+            # if args.my_qa_mask != 1:
+            #     idx, targets = batch
+            #     logits = self(idx)
+            #     loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+            # else:
+            #     idx, targets, mask = batch
+            #     mask = mask.view(-1)
+            #     sum_mask = torch.sum(mask).item()
 
-                logits = self(idx)
-                if sum_mask == mask.shape[0]:
-                    loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
-                else:
-                    loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), reduction='none')
-                    loss = torch.sum(loss * mask) / sum_mask
+            #     logits = self(idx)
+            #     if sum_mask == mask.shape[0]:
+            #         loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+            #     else:
+            #         loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), reduction='none')
+            #         loss = torch.sum(loss * mask) / sum_mask
 
-            return L2Wrap.apply(loss, logits)
+            # return L2Wrap.apply(loss, logits)
 
     def training_step_end(self, batch_parts):
         if pl.__version__[0]!='2':

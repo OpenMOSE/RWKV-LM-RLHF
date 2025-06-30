@@ -102,9 +102,10 @@ def training_step_orpo(self, batch, batch_idx):
     
 
                     SFT_idx = []
-                    SFT_idx = torch.cat([chosen_input.unsqueeze(0), reject_input.unsqueeze(0)], dim=0) # make batch with Chosen and Reject  
+                    SFT_idx = torch.cat([chosen_input.unsqueeze(0), reject_input.unsqueeze(0)], dim=0) # make batch with Chosen and Reject 
+                    SFT_Padding = torch.stack([chosen_mask, reject_mask], dim=0)  # shape [2, max_len] 
 
-                    RT ,moe_loss= self(SFT_idx)
+                    RT ,moe_loss= self(SFT_idx,attention_mask = SFT_Padding)
 
 
                     #print(RT)

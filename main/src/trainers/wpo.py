@@ -73,8 +73,9 @@ def training_step_wpo(self, batch, batch_idx):
 
                     # 一度にまとめて推論: chosenとrejectをバッチで入れる
                     SFT_idx = torch.stack([chosen_input, reject_input], dim=0)  # shape [2, max_len]
+                    SFT_Padding = torch.stack([chosen_mask, reject_mask], dim=0)  # shape [2, max_len]
                     # ログits計算 [2, max_len, vocab_size]
-                    RT ,moe_loss= self(SFT_idx)
+                    RT ,moe_loss= self(SFT_idx,attention_mask = SFT_Padding)
 
                     outputs_pos = RT[0].unsqueeze(0)  # chosen
                     outputs_neg = RT[1].unsqueeze(0)  # reject

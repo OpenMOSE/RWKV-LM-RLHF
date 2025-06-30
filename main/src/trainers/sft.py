@@ -135,7 +135,7 @@ def training_step_sft(self, batch, batch_idx):
                     target = target[:, :max_len]
                     attention_mask = attention_mask[:, :max_len]
 
-                student_logits,moe_loss = self(input_ids)
+                student_logits,moe_loss = self(input_ids,attention_mask=attention_mask)
 
                 if args.state and args.prefix_tuning:
                     student_logits = student_logits[:, args.prefix_token_len:, :]
@@ -296,87 +296,6 @@ def training_step_sft(self, batch, batch_idx):
                 top_k_values = batch['topk_logits']
                 top_k_indices = batch['topk_indices']
                 teacher_loss = batch["teacher_loss"].mean()
-
-
-                # with torch.no_grad():
-                #     arraywmask = convert_to_array_with_mask(input_ids, attention_mask)
-
-                #     #print(arraywmask)
-
-
-                #     payload = {
-                #         "input_ids": arraywmask,
-                #         "topk": args.sft_kl_topk
-                #     }
-                #     PROCESS_LOGITS_URL = f"{args.sft_kl_accesspoint}/ProcessLogits_shm"
-                    
-
-                #     while True:
-                       
-                #         try:
-                #             #print('post start')
-                #             res = requests.post(PROCESS_LOGITS_URL, json=payload)
-                #             #print('post finished')
-                #             res.raise_for_status()
-                #             data = res.json()
-
-                #             # --- 1. SharedMemory 取得 ---
-                #             logits_shm = shared_memory.SharedMemory(name=data["logits_shm"])
-                #             indices_shm = shared_memory.SharedMemory(name=data["indices_shm"])
-
-                #             # --- 2. NumPy配列に変換 ---
-                #             logits_np = np.ndarray(
-                #                 shape=tuple(data["logits_shape"]),
-                #                 dtype=np.dtype(data["dtype_logits"]),
-                #                 buffer=logits_shm.buf
-                #             )
-                #             indices_np = np.ndarray(
-                #                 shape=tuple(data["indices_shape"]),
-                #                 dtype=np.dtype(data["dtype_indice"]),
-                #                 buffer=indices_shm.buf
-                #             )
-
-                #             # --- 3. PyTorch Tensor に変換（コピーしないと SHM依存になる） ---
-                #             top_k_values = torch.from_numpy(logits_np.copy()).to(dtype=torch.bfloat16,device=input_ids.device).contiguous()
-                #             top_k_indices = torch.from_numpy(indices_np.copy()).to(dtype=torch.int64,device=input_ids.device).contiguous()
-
-                  
-                #             teacher_loss = data["loss"]
-
-                #             try:
-                #                 logits_shm.close()
-                #                 logits_shm.unlink()
-                #             except Exception as e:
-                #                 print(f"Warning: logits_shm cleanup failed: {e}")
-
-                #             try:
-                #                 indices_shm.close()
-                #                 indices_shm.unlink()
-                #             except Exception as e:
-                #                 print(f"Warning: indices_shm cleanup failed: {e}")
-
-                          
-
-                #             break
-                         
-                #         except Exception as e:
-                #             print('retry')
-                #             print(f"エラーが発生しました: {e}")
-                #             print(f"エラーの型: {type(e).__name__}")
-                #             time.sleep(5)
-                       
-                    
-
-                #     # top_k_values = torch.tensor(logits_numpy_array, dtype=torch.bfloat16).to(device=input_ids.device)
-                #     # top_k_indices = torch.tensor(indices_numpy_array, dtype=torch.int64).to(device=input_ids.device)
-
-                    
-
- 
-
-
-
-                #max_len = int(input_ids.shape[1])#int(attention_mask.sum(dim=1).max().item())
 
                 max_len = int(attention_mask.sum(dim=1).max().item())
                
