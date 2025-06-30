@@ -1,0 +1,30 @@
+python train.py --load_model "/media/client/backup/models/HRWKV7-hxa079-qwen3-14b-stage2-e1.pth" \
+ --wandb "RWKV-LM-RLHF hxa079 sft" --proj_dir "myfolder/Outputs/hxa079-sft-test2" \
+ --vocab_size 151936 --ctx_len 4096 \
+ --epoch_steps 100 --epoch_count 200 --epoch_begin 0 --epoch_save 1 \
+ --micro_bsz 1 --n_layer 40 --n_embd 5120 --dim_ffn 17408 \
+ --gqa_attention_hybrid_layers 7 14 21 28 35 39 \
+ --gqa_attention_heads 40 \
+ --gqa_kv_heads 8 \
+ --head_size_a 128 \
+ --rk_norm 1 \
+ --rkv_bias 0 \
+ --rms_norm_eps 1e-6 \
+ --warmup_steps 100 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
+ --accelerator 'gpu' --devices 1 --precision 'bf16' \
+ --grad_cp 1 --my_testing "hxa079" \
+ --strategy deepspeed_stage_2_offload \
+ --layer_profile 'layerprofile/40_TEST_lora.csv' \
+ --quant 1 \
+ --quant_mode 'nf4'\
+ --gpu_arch 'backstepping_longhead' \
+ --limited_lora 0 \
+ --sft 1 \
+ --sft_jsonmode 1 \
+ --sft_jsonmode_tokenizermode 'qwen3' \
+ --smoothing 0.0001 \
+ --random_mode 1 \
+ --infctx_dataset_multiplier 16 \
+ --optim 'adamw' \
+ --train_data_file 'myfolder/jsonl_dataset_hiroshima_light' \
+ --accumulate_grad_batches 16

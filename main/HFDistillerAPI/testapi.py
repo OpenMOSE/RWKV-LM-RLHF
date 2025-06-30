@@ -7,7 +7,7 @@ BASE_URL = "http://localhost:10000"  # 変更されたポート番号
 LOAD_MODEL_URL = f"{BASE_URL}/LoadModel"
 PROCESS_LOGITS_URL = f"{BASE_URL}/ProcessLogits"
 
-def test_load_model(model_name="myfolder/Phi-4-mini-instruct", use_4bit=True, use_cuda=True):
+def test_load_model(model_name="/home/client/Projects/llm/Qwen3-8B", use_4bit=False, use_cuda=True):
     """LoadModelエンドポイントをテスト"""
     payload = {
         "modelname": model_name,
@@ -24,9 +24,8 @@ def test_process_logits():
     # 2つのバッチのトークンを持つ入力例
     payload = {
         #"input_ids": [[200021, 145692, 668, 1412, 382, 6446, 30, 200020, 200019], [200021, 145692, 668, 1412, 382, 6446, 30, 200020, 200019]],
-        "input_ids": [[200021, 145692, 668, 1412, 382, 6446, 30, 575, 2411, 6446, 382, 4358, 5716, 13, 6446, 382, 1869, 23172, 13, 200020, 200019], [200021, 145692, 668, 1412, 382, 6446, 30, 200020, 200019]],
-        
-        "topk": 2000  # テスト用に小さい値
+        "input_ids": [[128000, 145692, 668, 1412, 382, 6446, 30, 575, 2411, 6446, 382, 4358, 5716, 13, 6446, 382, 1869, 23172, 13, 100020, 100019], [128000, 145692, 668, 1412, 382, 6446, 30, 575, 2411, 6446, 382, 4358, 5716, 13, 6446, 382, 1869, 23172, 13, 100020, 100019]],
+        "topk": 30000  # テスト用に小さい値
     }
     
     response = requests.post(PROCESS_LOGITS_URL, json=payload)

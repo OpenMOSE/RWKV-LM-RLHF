@@ -1,3 +1,5 @@
+*.pyc
+*.Identifier
 datasets/
 wandb/
 1b6-distillation/

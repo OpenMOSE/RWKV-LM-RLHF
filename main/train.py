@@ -37,6 +37,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--ctx_len", default=2048, type=int) #maximum context size
     parser.add_argument("--infctx", default=0, type=int) #from RWKV-PEFT :)
+    parser.add_argument("--infctx_truncated_bptt", default=1, type=int)
     parser.add_argument("--infctx_dataset_multiplier", default=100, type=int) #from RWKV-PEFT :)
     parser.add_argument("--chunk_ctx", default=512, type=int)
 
@@ -73,7 +74,6 @@ if __name__ == "__main__":
     parser.add_argument("--epoch_count", default=500, type=int)  # train for this many "epochs". will continue afterwards with lr = lr_final
     parser.add_argument("--epoch_begin", default=0, type=int)  # if you load a model trained for x "epochs", set epoch_begin = x
     parser.add_argument("--epoch_save", default=5, type=int)  # save the model every [epoch_save] "epochs"
-    #parser.add_argument("--max_epochs", default=500, type=int) 
     parser.add_argument("--micro_bsz", default=1, type=int)  # micro batch size (batch size per GPU) maybe not working on lisa
     parser.add_argument("--n_layer", default=6, type=int)
     parser.add_argument("--n_embd", default=512, type=int)
@@ -106,9 +106,13 @@ if __name__ == "__main__":
     parser.add_argument("--head_size_a", default=64, type=int) # can try larger values for larger models
 
     parser.add_argument("--gqa_kv_heads", default=8, type=int) 
+    parser.add_argument("--gqa_attention_heads", default=-1, type=int) 
+    parser.add_argument("--gqa_attention_hybrid_layers", nargs='+', type=int, default=[-1])  #Set GQA SelfAttention Layer from head
 
     parser.add_argument("--rk_norm", default=0, type=int) 
     parser.add_argument("--rkv_bias", default=1, type=int) 
+
+    parser.add_argument("--rope_theta", default=1000000.0, type=float) 
 
 
 
@@ -331,6 +335,7 @@ if __name__ == "__main__":
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.enabled = True
+    torch.set_float32_matmul_precision('medium')
     if args.precision == "fp32":
         torch.backends.cudnn.allow_tf32 = False
         torch.backends.cuda.matmul.allow_tf32 = False
@@ -349,39 +354,39 @@ if __name__ == "__main__":
     from src.config import LAYER_CONFIG,update_layer_config
 
     from src.trainer import train_callback, generate_init_weight
-    from src.dataset import MyDataset
+    from src.datasets.dataset import MyDataset
     
     
     if args.dpo or args.orpo or args.simpo or args.wpo:
         
         if '.save' in args.rlhf_train_file:
-            from src.dpodataset import DPODataset
+            from src.datasets.dpodataset import DPODataset
             dpo_train_data = DPODataset(args)
             os.environ["H5_MODE"] = "0"
         else:
             print('h5 RLHF file mode')
             os.environ["H5_MODE"] = "1"
-            from src.rlhfdataset import RLHFDataset
+            from src.datasets.rlhfdataset import RLHFDataset
             dpo_train_data = RLHFDataset(args,args.rlhf_train_file,args.ctx_len)
 
     if args.zerocot or args.grpo:
         print('h5 CoT-RL file mode')
         os.environ["H5_MODE"] = "1"
-        from src.cotdataset import RLHFDataset
+        from src.datasets.cotdataset import RLHFDataset
         dpo_train_data = RLHFDataset(args,args.rlhf_train_file,args.ctx_len)
 
     
 
     if args.distillation:
-        from src.distillationdataset import HDF5TopKTensorDataset,collate_fn
+        from src.datasets.distillationdataset import HDF5TopKTensorDataset,collate_fn
         distillation_data = HDF5TopKTensorDataset(args,args.train_data_file,args.top_k,args.ctx_len)
     elif args.sft:
 
         if args.sft_jsonmode:
-            from src.jsonldataset import JSONLOnDemandOffsetDataset,collate_fn
+            from src.datasets.jsonldataset import JSONLOnDemandOffsetDataset,collate_fn
             sft_data = JSONLOnDemandOffsetDataset(args,args.train_data_file,args.sft_jsonmode_tokenizermode,args.ctx_len)
         else:
-            from src.sftdataset import HDF5TopKTensorDataset,collate_fn
+            from src.datasets.sftdataset import HDF5TopKTensorDataset,collate_fn
             filename = ''
             if os.path.isfile(args.train_data_file):
                 filename = args.train_data_file
@@ -614,9 +619,15 @@ if __name__ == "__main__":
      
 
     if pl.__version__[0]=='2':
-        trainer = Trainer(sync_batchnorm=True,accelerator=args.accelerator,strategy=args.strategy,devices=args.devices,num_nodes=args.num_nodes,precision=args.precision,
+        if args.infctx and args.infctx_truncated_bptt:
+            args.gradient_clip_val = None
+            trainer = Trainer(sync_batchnorm=True,accelerator=args.accelerator,strategy=args.strategy,devices=args.devices,num_nodes=args.num_nodes,precision=args.precision,
         logger=args.logger,callbacks=[train_callback(args)],max_epochs=args.max_epochs,check_val_every_n_epoch=args.check_val_every_n_epoch,num_sanity_val_steps=args.num_sanity_val_steps,
-        log_every_n_steps=args.log_every_n_steps,enable_checkpointing=args.enable_checkpointing,accumulate_grad_batches=args.accumulate_grad_batches,gradient_clip_val=args.gradient_clip_val)
+        log_every_n_steps=args.log_every_n_steps,enable_checkpointing=args.enable_checkpointing,accumulate_grad_batches=1,gradient_clip_val=args.gradient_clip_val)
+        else:
+            trainer = Trainer(sync_batchnorm=True,accelerator=args.accelerator,strategy=args.strategy,devices=args.devices,num_nodes=args.num_nodes,precision=args.precision,
+            logger=args.logger,callbacks=[train_callback(args)],max_epochs=args.max_epochs,check_val_every_n_epoch=args.check_val_every_n_epoch,num_sanity_val_steps=args.num_sanity_val_steps,
+            log_every_n_steps=args.log_every_n_steps,enable_checkpointing=args.enable_checkpointing,accumulate_grad_batches=args.accumulate_grad_batches,gradient_clip_val=args.gradient_clip_val)
     else:
         trainer = Trainer.from_argparse_args(
             args,

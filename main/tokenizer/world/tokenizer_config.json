@@ -2,7 +2,7 @@
   "add_prefix_space": false,
   "added_tokens_decoder": {
     "0": {
-      "content": "<|rwkv_tokenizer_end_of_text|>",
+      "content": "",
       "lstrip": false,
       "normalized": false,
       "rstrip": false,
@@ -16,12 +16,12 @@
       null
     ]
   },
-  "bos_token": "<|rwkv_tokenizer_end_of_text|>",
+  "bos_token": "",
   "clean_up_tokenization_spaces": false,
-  "eos_token": "<|rwkv_tokenizer_end_of_text|>",
+  "eos_token": "",
   "model_max_length": 1000000000000000019884624838656,
   "tokenizer_class": "RwkvTokenizer",
-  "unk_token": "<|rwkv_tokenizer_end_of_text|>",
+  "unk_token": "",
   "use_fast": false,
-  "chat_template": "{{ '<|rwkv_tokenizer_end_of_text|>' }}{% for message in messages %}{% if message['role'] == 'user' %}{{'User: ' + message['content'] + '\n\n'}}{% elif message['role'] == 'system' %}{{'System: ' + message['content'] + '\n\n'}}{% elif message['role'] == 'assistant' %}{{'Assistant: ' + message['content'] + '\n\n'}}{% endif %}{% endfor %}{% if add_generation_prompt %}{{ 'Assistant:' }}{% endif %}"
+  "chat_template": "{{ '' }}{% for message in messages %}{% if message['role'] == 'user' %}{{'User: ' + message['content'] + '\n\n'}}{% elif message['role'] == 'system' %}{{'System: ' + message['content'] + '\n\n'}}{% elif message['role'] == 'assistant' %}{{'Assistant: ' + message['content'] + '\n\n'}}{% endif %}{% endfor %}{% if add_generation_prompt %}{{ 'Assistant:' }}{% endif %}"
 }

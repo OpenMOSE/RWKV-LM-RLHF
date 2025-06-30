@@ -1,4 +1,4 @@
-python train.py --load_model 'myfolder/models/RWKV-x070-World-1.5B-v3-20250127-ctx4096.pth' \
+python train.py --load_model '/media/client/backup/models/rwkv7-g1-1.5b-20250429-ctx4096.pth' \
  --wandb "RWKV-LM-RLHF x070 1B5 ORPO" --proj_dir "myfolder/Outputs/1B5ORPO"\
  --infctx 0 \
  --vocab_size 65536 --ctx_len 1024 \

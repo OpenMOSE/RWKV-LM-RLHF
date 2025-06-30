@@ -1,10 +1,10 @@
 python train.py --load_model "/home/client/Projects/RWKV-Infer/models/PRWKV-7-Qwen3-8B-Preview-stage2final-ctx2048.pth" \
  --wandb "RWKV-LM-RLHF cxa076 SFT infctx" --proj_dir "myfolder/Outputs/cxa076r-8b-hiroshima" \
- --vocab_size 151936 --ctx_len 16384 \
+ --vocab_size 151936 --ctx_len 2048 \
  --chunk_ctx 1024 \
- --infctx 1 \
+ --infctx 0 \
  --epoch_steps 1000 --epoch_count 200 --epoch_begin 0 --epoch_save 1 \
- --micro_bsz 1 --n_layer 36 --n_embd 4096 --dim_ffn 12288 \
+ --micro_bsz 2 --n_layer 36 --n_embd 4096 --dim_ffn 12288 \
  --gqa_kv_heads 8 \
  --head_size_a 128 \
  --rms_norm_eps 1e-6 \
