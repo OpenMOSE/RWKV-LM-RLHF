@@ -157,13 +157,10 @@ def training_step_sft(self, batch, batch_idx):
                 smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
 
                 if args.dft:
-                    # DFT: 論文著者の実装を適用
-                    print(f"Before DFT = {smooth_loss}")
+                    # DFT: 論文実装を適用
                     smooth_loss = smooth_loss * torch.softmax(student_logits_shifted, dim=-1).gather(1, targets.unsqueeze(-1)).squeeze(-1).detach()
-                    print(f"after DFT = {smooth_loss}")
 
 
-                # Lossの計算
                 if sum_mask == mask.shape[0]:
                     loss = smooth_loss.mean()
                 else:
