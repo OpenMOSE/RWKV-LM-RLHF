@@ -497,7 +497,17 @@ class RWKV(pl.LightningModule):
                         #print(name)
                         #exit()
                         if hasattr(m, "quant") and callable(getattr(m, "quant")) and f'{str(i)}.' in name:
-                                m.quant(args.quant_mode,target_gpu)
+                                quant_mode = args.quant_mode_att
+                                if "att." in name:
+                                    quant_mode = args.quant_mode_att
+                                    print(f"att quant = {quant_mode}")
+                                elif "ffn." in name:
+                                    quant_mode = args.quant_mode_ffn
+                                    print(f"ffn quant = {quant_mode}")
+                                else:
+                                    quant_mode = args.quant_mode_head
+                                    print(f"else quant = {quant_mode}")
+                                m.quant(quant_mode,target_gpu)
                                 print(f'{name} Quant')
 
                 if LAYER_CONFIG[f'{str(i)}']['mode'] == 'dora':
@@ -516,7 +526,17 @@ class RWKV(pl.LightningModule):
                     #print(f'pname = {name}')
                     
                     if hasattr(m, "quant") and callable(getattr(m, "quant")) and f'head' in name:
-                            m.quant(args.quant_mode,target_gpu)
+                            quant_mode = args.quant_mode_att
+                            if "att." in name:
+                                quant_mode = args.quant_mode_att
+                                print(f"att quant = {quant_mode}")
+                            elif "ffn." in name:
+                                quant_mode = args.quant_mode_ffn
+                                print(f"ffn quant = {quant_mode}")
+                            else:
+                                quant_mode = args.quant_mode_head
+                                print(f"else quant = {quant_mode}")
+                            m.quant(quant_mode,target_gpu)
                             print(f'{name} Quant')
 
             if LAYER_CONFIG[f'head']['mode'] == 'dora':

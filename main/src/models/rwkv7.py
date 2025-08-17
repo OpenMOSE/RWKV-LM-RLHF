@@ -379,6 +379,29 @@ if 'x070' in ModelGeneration:
             H = self.n_head
             N = self.head_size
             C = args.n_embd
+            self.hidden_size = args.n_embd
+
+            if args.autoconfig:
+                print(f"RWKV TMix AutoConfig")
+                self.head_size = args.head_size_a
+                self.n_head = args.num_attention_heads
+                self.n_kv_head = args.num_kv_heads
+                self.hidden_size = args.n_embd
+                self.num_lora_w = args.num_lora_w
+                self.num_lora_v = args.num_lora_v
+                self.num_lora_g = args.num_lora_g
+                self.num_lora_a = args.num_lora_a
+                H = self.n_head
+                N = self.head_size
+                C = args.head_size_a * args.num_attention_heads
+            else:
+                self.num_lora_w = None
+                self.num_lora_v = None
+                self.num_lora_g = None
+                self.num_lora_a = None
+
+
+            
 
             with torch.no_grad():
                 ratio_0_to_1 = layer_id / (args.n_layer - 1)  # 0 to 1
@@ -413,6 +436,8 @@ if 'x070' in ModelGeneration:
                     D_DECAY_LORA = 96
                 elif C == 4096 and 'x070Upgraded' in args.my_testing:
                     D_DECAY_LORA = D_DECAY_LORA * 2
+                if self.num_lora_w is not None:
+                    D_DECAY_LORA = self.num_lora_w
                 # D_DECAY_LORA = max(32, int(round(  (1.8*(C**0.5))  /32)*32)) # suggestion
                 self.w1 = nn.Parameter(torch.zeros(C, D_DECAY_LORA))
                 self.w2 = nn.Parameter(ortho_init(torch.zeros(D_DECAY_LORA, C), 0.1))
@@ -427,6 +452,8 @@ if 'x070' in ModelGeneration:
                 elif C == 4096 and 'x070Upgraded' in args.my_testing:
                     print('openmose mytesting mode')
                     D_AAA_LORA = D_AAA_LORA * 2
+                if self.num_lora_a is not None:
+                    D_AAA_LORA = self.num_lora_a
                 # D_AAA_LORA = max(32, int(round(  (1.8*(C**0.5))  /32)*32)) # suggestion
                 self.a1 = nn.Parameter(torch.zeros(C, D_AAA_LORA))
                 self.a2 = nn.Parameter(ortho_init(torch.zeros(D_AAA_LORA, C), 0.1))
@@ -437,6 +464,8 @@ if 'x070' in ModelGeneration:
                     D_MV_LORA = 64
                 elif C == 4096 and 'x070Upgraded' in args.my_testing:
                     D_MV_LORA = D_MV_LORA * 4
+                if self.num_lora_v is not None:
+                    D_MV_LORA = self.num_lora_v
                 # D_MV_LORA = max(32, int(round(  (1.3*(C**0.5))  /32)*32)) # suggestion
                 self.v1 = nn.Parameter(torch.zeros(C, D_MV_LORA))
                 self.v2 = nn.Parameter(ortho_init(torch.zeros(D_MV_LORA, C), 0.1))
@@ -449,6 +478,8 @@ if 'x070' in ModelGeneration:
                     D_GATE_LORA = 256
                 elif C == 4096 and 'x070Upgraded' in args.my_testing:
                     D_GATE_LORA = D_GATE_LORA * 4
+                if self.num_lora_g is not None:
+                    D_GATE_LORA = self.num_lora_g
                 # D_GATE_LORA = max(32, int(round(  (0.6*(C**0.8))  /32)*32)) # suggestion
                 # Note: for some data, you can reduce D_GATE_LORA or even remove this gate
                 self.g1 = nn.Parameter(torch.zeros(C, D_GATE_LORA))

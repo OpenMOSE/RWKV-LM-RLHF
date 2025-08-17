@@ -213,18 +213,25 @@ def GetAutoModelConfig(args,inputpath):
             if "att.key.weight" in name:
                 num_kv_heads = shape[0] // headsize
 
+        for name, shape in shapes.items():
+            if "emb" in name or "embedding" in name:
+                vocabsize = shape[0]
+                break
+
     args.my_testing = rwkvarch
     args.head_size_a = headsize
-    args.gqa_attention_heads = num_attention_heads
-    args.gqa_kv_heads = num_kv_heads
+    args.num_attention_heads = num_attention_heads
+    args.num_kv_heads = num_kv_heads
     args.n_layer = num_totallayers
     args.n_embd = hiddensize
     args.num_lora_w = num_lora_w
     args.num_lora_v = num_lora_v
     args.num_lora_g = num_lora_g
     args.num_lora_a = num_lora_a
+    args.vocab_size = vocabsize
     print(f"auto detect result-----------------------------------")
     print(f"rwkvarch = {rwkvarch}")
+    print(f"vocabsize = {vocabsize}")
     print(f"head_size_a = {headsize}")
     print(f"gqa_attention_heads = {num_attention_heads}")
     print(f"gqa_kv_heads = {num_kv_heads}")

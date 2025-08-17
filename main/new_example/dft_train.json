@@ -15,6 +15,7 @@
   },
   "trainer": {
     "type": "sft",
+    "sft_method": "dft",
     "args": {
       "epoch_count": 100,
       "epoch_steps": 500,

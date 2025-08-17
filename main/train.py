@@ -59,11 +59,11 @@ if __name__ == "__main__":
 
     parser.add_argument("--fla", default=0, type=int)
 
-    parser.add_argument("--moe", default=0, type=int)
-    parser.add_argument("--moe_experts", default=8, type=int)
-    parser.add_argument("--moe_active", default=2, type=int)
-    parser.add_argument("--moe_shared", default=1, type=int)
-    parser.add_argument("--moe_balance_alpha", default=0.01, type=float)
+    # parser.add_argument("--moe", default=0, type=int)
+    # parser.add_argument("--moe_experts", default=8, type=int)
+    # parser.add_argument("--moe_active", default=2, type=int)
+    # parser.add_argument("--moe_shared", default=1, type=int)
+    # parser.add_argument("--moe_balance_alpha", default=0.01, type=float)
 
     parser.add_argument("--zerocot", default=0, type=int)
 
@@ -134,7 +134,10 @@ if __name__ == "__main__":
     parser.add_argument("--gpu_arch",default="cuda",type=str)# if CUDA set cuda, but if rocm and 4bit need custom bitsandbytes for rocm
     parser.add_argument("--layer_profile",default='layerprofile/24_test_bone.csv',type=str)
     parser.add_argument("--quant", default=1, type=int) #Quantize NF4 on LoRA Layers
-    parser.add_argument("--quant_mode", default='nf4', type=str) #Quantize NF4 on LoRA Layers or freezing
+    parser.add_argument("--quant_mode", default='int8', type=str) #Quantize NF4 on LoRA Layers or freezing
+    parser.add_argument("--quant_mode_att", default='int8', type=str) #Quantize NF4 on LoRA Layers or freezing
+    parser.add_argument("--quant_mode_ffn", default='nf4', type=str)
+    parser.add_argument("--quant_mode_head", default='int8', type=str)
 
     parser.add_argument("--limited_lora", default=0, type=int)
 
@@ -173,6 +176,7 @@ if __name__ == "__main__":
 
     #Hyper Parameters SFT(masked)
     parser.add_argument("--sft", default=0, type=int)
+    parser.add_argument("--sft_method", default="sft", type=str)
     parser.add_argument("--sft_jsonmode", default=0, type=int)
     parser.add_argument("--sft_jsonmode_overlap_tokenshift", default=1, type=int)
     parser.add_argument("--sft_jsonmode_tokenizermode", default='world', type=str)
@@ -214,6 +218,7 @@ if __name__ == "__main__":
         with open(args.autoconfig, "r") as f:
             autoconfig = json.load(f)
         # for key, value in autoconfig.items():
+        
         #     setattr(args, key, value)
         args.my_testing = autoconfig.get("architectures", args.my_testing)
         args.wandb = autoconfig.get("wandb_project", args.wandb)
@@ -229,7 +234,44 @@ if __name__ == "__main__":
         # args.load_model = autoconfig.get("input_model_path", args.load_model)
 
         args = GetAutoModelConfig(args,args.load_model)
-        exit()
+
+
+        if autoconfig["trainer"]["type"] == "sft":
+            args.sft = 1
+            trainsetting = autoconfig["trainer"]["args"]
+            if autoconfig["trainer"].get("sft_method",None) is not None:
+                if autoconfig["trainer"]["sft_method"] == "dft":
+                    args.dft = 1
+            args.sft_jsonmode = trainsetting.get("sft_jsonmode", args.sft_jsonmode)
+            args.sft_jsonmode_overlap_tokenshift = trainsetting.get("sft_jsonmode_overlap_tokenshift", args.sft_jsonmode_overlap_tokenshift)
+            args.sft_jsonmode_tokenizermode = trainsetting.get("sft_jsonmode_tokenizermode", args.sft_jsonmode_tokenizermode)
+            args.train_data_file = trainsetting.get("dataset_path", args.train_data_file)
+            args.random_mode = trainsetting.get("random_mode", args.random_mode)
+
+            args.epoch_count = trainsetting.get("epoch_count", args.epoch_count)
+            args.epoch_steps = trainsetting.get("epoch_steps", args.epoch_steps)
+            args.warmup_steps = trainsetting.get("warmup_steps", args.warmup_steps)
+            args.ctx_len = trainsetting.get("ctx_len", args.ctx_len) 
+            args.micro_bsz = trainsetting.get("micro_bsz", args.micro_bsz) 
+            args.infctx_dataset_multiplier = trainsetting.get("infctx_dataset_multiplier", args.infctx_dataset_multiplier) 
+            args.limited_lora = trainsetting.get("only_train_linears", args.limited_lora) 
+            args.accumulate_grad_batches = trainsetting.get("gradient_accumulation_steps", args.accumulate_grad_batches)
+          
+            args.devices = autoconfig.get("devices", args.devices)
+            args.gpu_arch = autoconfig.get("gpu_arch", args.gpu_arch)
+
+            args.layer_profile = autoconfig["profile_config"].get("profile_path", args.layer_profile)
+            args.strategy = autoconfig.get("strategy", args.strategy)
+            args.precision = autoconfig.get("internal_precision", args.precision)
+            if autoconfig.get("quantization",None) is not None:
+                args.quant_mode_att = autoconfig["quantization"].get("att_method", args.quant_mode_att)
+                args.quant_mode_ffn = autoconfig["quantization"].get("ffn_method", args.quant_mode_ffn)
+                args.quant_mode_head = autoconfig["quantization"].get("head_method", args.quant_mode_head)
+
+        args.autoconfig = True
+        #exit()
+    else:
+        args.autoconfig = False
 
 
     
@@ -293,10 +335,10 @@ if __name__ == "__main__":
     else:
         os.environ["FLA_MODE"] = "0"
 
-    if args.moe:
-        os.environ["CustomModel"] = "MoE"
-    else:
-        os.environ["CustomModel"] = ""
+    # if args.moe:
+    #     os.environ["CustomModel"] = "MoE"
+    # else:
+    os.environ["CustomModel"] = ""
 
 
     if args.dim_att <= 0:
@@ -425,13 +467,7 @@ if __name__ == "__main__":
 
 
 
-    #else:
-    #    train_data = MyDataset(args)
 
-
-
-
-    #args.vocab_size = train_data.vocab_size
     
     from src.model import RWKV #, LoraLinear
     
