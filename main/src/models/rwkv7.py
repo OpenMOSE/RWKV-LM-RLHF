@@ -466,7 +466,7 @@ if 'x070' in ModelGeneration:
                 self.key = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.key')
                 self.value = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.value')
                 self.output = make_linear_att(C, C, bias=False,n_layer=self.layer_id,pname='att.output')
-
+ 
 
                 self.ln_x = nn.GroupNorm(H, C, eps=(1e-5)*(args.head_size_divisor**2)) # !!! notice eps value !!!
 
