@@ -18,7 +18,7 @@ from einops import rearrange
 allow_ops_in_compiled_graph()
 
 # about FLA
-#from fla.ops.rwkv7 import chunk_rwkv7,fused_recurrent_rwkv7
+from fla.ops.rwkv7 import chunk_rwkv7,fused_recurrent_rwkv7
 
 # for infctx
 from ..infctx_module import *
@@ -47,7 +47,6 @@ class T5RMSNorm(nn.Module):
         super().__init__()
         self.weight = nn.Parameter(torch.ones(hidden_size))
         self.variance_epsilon = eps
-
     def forward(self, hidden_states):
         input_dtype = hidden_states.dtype
         hidden_states = hidden_states.to(torch.float32)
@@ -427,24 +426,6 @@ if 'xa07' in ModelGeneration:
             
     
         
-    class Qwen2RMSNorm(nn.Module):
-        def __init__(self, hidden_size, eps=1e-6):
-            """
-            Qwen2RMSNorm is equivalent to T5LayerNorm
-            """
-            super().__init__()
-            self.weight = nn.Parameter(torch.ones(hidden_size))
-            self.variance_epsilon = eps
-
-        def forward(self, hidden_states):
-            input_dtype = hidden_states.dtype
-            hidden_states = hidden_states.to(torch.float32)
-            variance = hidden_states.pow(2).mean(-1, keepdim=True)
-            hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
-            return self.weight * hidden_states.to(input_dtype)
-
-        def extra_repr(self):
-            return f"{tuple(self.weight.shape)}, eps={self.variance_epsilon}"
         
 
     def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
@@ -479,202 +460,15 @@ if 'xa07' in ModelGeneration:
         x2 = x[..., x.shape[-1] // 2 :]
         return torch.cat((-x2, x1), dim=-1)
     def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
-        """Applies Rotary Position Embedding to the query and key tensors.
 
-        Args:
-            q (`torch.Tensor`): The query tensor.
-            k (`torch.Tensor`): The key tensor.
-            cos (`torch.Tensor`): The cosine part of the rotary embedding.
-            sin (`torch.Tensor`): The sine part of the rotary embedding.
-            position_ids (`torch.Tensor`, *optional*):
-                Deprecated and unused.
-            unsqueeze_dim (`int`, *optional*, defaults to 1):
-                The 'unsqueeze_dim' argument specifies the dimension along which to unsqueeze cos[position_ids] and
-                sin[position_ids] so that they can be properly broadcasted to the dimensions of q and k. For example, note
-                that cos[position_ids] and sin[position_ids] have the shape [batch_size, seq_len, head_dim]. Then, if q and
-                k have the shape [batch_size, heads, seq_len, head_dim], then setting unsqueeze_dim=1 makes
-                cos[position_ids] and sin[position_ids] broadcastable to the shapes of q and k. Similarly, if q and k have
-                the shape [batch_size, seq_len, heads, head_dim], then set unsqueeze_dim=2.
-        Returns:
-            `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
-        """
         cos = cos.unsqueeze(unsqueeze_dim)
         sin = sin.unsqueeze(unsqueeze_dim)
         q_embed = (q * cos) + (rotate_half(q) * sin)
         k_embed = (k * cos) + (rotate_half(k) * sin)
         return q_embed, k_embed
     
-    def build_rope_sin_cos(seq_len, head_dim, base=10000, start_pos=0,device=None, dtype=torch.float32):
-        """
-        Args:
-            seq_len: 長さ (トークン数)
-            head_dim: ヘッド次元（64や128など）
-            base: RoPEのベース。Qwenは100000、GPT系は10000が多い
-            start_pos: position の開始点（デフォルト0）
-            device: GPU / CPU 指定（Noneで自動）
-            dtype: Tensor型（float32推奨）
-
-        Returns:
-            cos: [seq_len, head_dim]
-            sin: [seq_len, head_dim]
-        """
-        theta = 1.0 / (base ** (torch.arange(0, head_dim, 2, dtype=dtype,device=device) / head_dim))  # [head_dim//2]
-        position = torch.arange(start_pos, start_pos + seq_len, dtype=dtype,device=device)            # [seq_len]
-
-        freq = torch.einsum('i,j->ij', position, theta)  # [seq_len, head_dim//2]
-
-        sin = torch.zeros(seq_len, head_dim, dtype=dtype,device=device)
-        cos = torch.zeros(seq_len, head_dim, dtype=dtype,device=device)
-        sin[:, 0::2] = torch.sin(freq)
-        cos[:, 0::2] = torch.cos(freq)
-        sin[:, 1::2] = torch.sin(freq)
-        cos[:, 1::2] = torch.cos(freq)
-
-        return cos, sin
     
-
-    def build_hf_rope_sin_cos(seq_len, head_dim, base=10000.0, start_pos=0, device=None, dtype=torch.float32):
-        """
-        HuggingFace Transformers の RotaryEmbedding に完全互換な sin / cos を生成。
-        戻り値の shape: [seq_len, head_dim]
-        """
-        assert head_dim % 2 == 0, "head_dim must be even"
-
-        half_dim = head_dim // 2
-
-        # 周波数の逆数: [half_dim]
-        inv_freq = 1.0 / (base ** (torch.arange(0, half_dim, dtype=dtype, device=device) / half_dim))
-
-        # 位置ベクトル: [seq_len]
-        t = torch.arange(start_pos, start_pos + seq_len, dtype=dtype, device=device)
-
-        # outer product: [seq_len, half_dim]
-        freqs = torch.outer(t, inv_freq)  # == t[:, None] * inv_freq[None, :]
-
-        # even/odd interleaving のために [seq_len, head_dim] へ展開
-        emb = torch.cat([freqs, freqs], dim=-1)  # [seq_len, head_dim]
-
-        # sin, cos を計算
-        sin = torch.sin(emb)
-        cos = torch.cos(emb)
-
-        return cos, sin
-    
-    def build_noninterleaved_rope_cos_sin(seq_len, head_dim, base=1000000.0, start_pos=0, device=None, dtype=torch.float32):
-        """
-        Qwen/LLaMA系の非interleaved RoPEを生成（cos/sinの形 [1, seq_len, head_dim]）
-        """
-        assert head_dim % 2 == 0, "head_dim must be even"
-        
-        dim = torch.arange(head_dim, dtype=dtype, device=device)
-        inv_freq = 1.0 / (base ** (dim / head_dim))  # [head_dim]
-        
-        pos = torch.arange(start_pos, start_pos + seq_len, dtype=dtype, device=device)  # [seq_len]
-        freqs = torch.outer(pos, inv_freq)  # [seq_len, head_dim]
-
-        cos = torch.cos(freqs)[None, :, :]  # [1, seq_len, head_dim]
-        sin = torch.sin(freqs)[None, :, :]
-
-        return cos, sin
-    
-    def build_qwen_rope_cos_sin(seq_len, head_dim, base=1000000.0, start_pos=0, device=None, dtype=torch.bfloat16):
-        """
-        Qwen式：前半のhead_dim // 2次元にだけRoPEを適用し、後半は常に1.0
-        戻り値: cos, sin [1, seq_len, head_dim]
-        """
-        assert head_dim % 2 == 0
-        rope_dim = head_dim // 2
-
-        # 周波数割り当て
-        dim = torch.arange(0, rope_dim, dtype=torch.float32, device=device)
-        inv_freq = 1.0 / (base ** (dim / rope_dim))
-
-        # 位置ベクトル
-        pos = torch.arange(start_pos, start_pos + seq_len, dtype=torch.float32, device=device)
-        freqs = torch.outer(pos, inv_freq)  # [seq_len, rope_dim]
-
-        # cos, sin を作成
-        cos_part = torch.cos(freqs)  # [seq_len, rope_dim]
-        sin_part = torch.sin(freqs)
-
-        # 後半に1.0を埋める
-        ones = torch.ones_like(cos_part)
-        zeros = torch.zeros_like(sin_part)
-
-        cos = torch.cat([cos_part, ones], dim=-1)[None, :, :]  # [1, seq_len, head_dim]
-        sin = torch.cat([sin_part, zeros], dim=-1)[None, :, :]
-
-        return cos.to(dtype=dtype), sin.to(dtype=dtype)
-    
-    def build_qwen_rope_cos_sin2(
-    seq_len,
-    head_dim,
-    base=1000000.0,
-    start_pos=0,
-    device=None,
-    dtype=torch.bfloat16,
-):
-        """
-        Qwen互換：RoPEを head_dim//2 に適用し、後半は1.0
-        完全一致を目指す実装。
-        """
-        assert head_dim % 2 == 0
-        rope_dim = head_dim // 2
-
-        # dim / (rope_dim - 1) にすることで GPTNeoX / Qwen に近づく
-        dim = torch.arange(rope_dim, dtype=torch.float32, device=device)
-        inv_freq = 1.0 / (base ** (dim / (rope_dim - 1)))  # ← ここ重要
-
-        # 位置ベクトル
-        pos = torch.arange(start_pos, start_pos + seq_len, dtype=torch.float32, device=device)
-        freqs = torch.outer(pos, inv_freq)  # [seq_len, rope_dim]
-
-        # cos, sin 計算（float32のまま）
-        cos_part = torch.cos(freqs)  # [seq_len, rope_dim]
-        sin_part = torch.sin(freqs)
-
-        # 後半を1.0で埋める
-        ones = torch.ones((seq_len, rope_dim), dtype=torch.float32, device=device)
-        zeros = torch.zeros((seq_len, rope_dim), dtype=torch.float32, device=device)
-
-        cos = torch.cat([cos_part, ones], dim=-1)[None, :, :].to(dtype)
-        sin = torch.cat([sin_part, zeros], dim=-1)[None, :, :].to(dtype)
-
-        return cos, sin
-    
-
-    def build_qwen3_rope_cos_sin(
-    position_ids: torch.LongTensor,   # [B, T]
-    head_dim: int,                    # (必ず偶数)
-    rope_theta: float = 1e6,          # θ 値
-    attention_scaling: float = 1.0,    # config 由来の scaling
-    dtype: torch.dtype = torch.bfloat16,
-    device: str = "cuda",
-):
-        assert head_dim % 2 == 0, "head_dim must be even"
-        rope_dim = head_dim // 2
-        B, T = position_ids.shape
-        log_theta = torch.log(torch.tensor(rope_theta, dtype=torch.float32, device=device))
-        idx = torch.arange(rope_dim, dtype=torch.float32, device=device)
-        inv_freq = torch.exp(- log_theta * (idx / rope_dim))  # [rope_dim]
-        pos = position_ids.to(torch.float32).unsqueeze(-1)   # [B, T, 1]
-        freqs = pos * inv_freq[None, None, :]               # [B, T, rope_dim]
-        emb = torch.cat([freqs, freqs], dim=-1)              # [B, T, D]
-        cos = emb.cos() * attention_scaling
-        sin = emb.sin() * attention_scaling
-
-        return cos.to(dtype), sin.to(dtype)
-    
-    def build_default_rope_cos_sin(seq_len, head_dim, base=1000000.0, device="cuda", dtype=torch.bfloat16):
-        dim = head_dim
-        half_dim = dim // 2
-        inv_freq = 1.0 / (base ** (torch.arange(0, half_dim * 2, 2, dtype=torch.float32, device=device) / dim))  # [half_dim]
-        pos = torch.arange(seq_len, dtype=torch.float32, device=device)  # [seq_len]
-        freqs = torch.outer(pos, inv_freq)
-        cos = torch.stack((freqs.cos(), freqs.cos()), dim=-1).flatten(-2)  # [seq_len, head_dim]
-        sin = torch.stack((freqs.sin(), freqs.sin()), dim=-1).flatten(-2)
-        return cos[None, :, :].to(dtype), sin[None, :, :].to(dtype)
-    
+    # Same hxa079 Converter
     def compute_qwen3_rope_cache(seq_len, rotary_dim, device, dtype, rope_theta):
             half_dim = rotary_dim // 2
             freq_seq = torch.arange(half_dim, dtype=dtype, device=device)
@@ -697,46 +491,19 @@ if 'xa07' in ModelGeneration:
     is_causal: Optional[bool] = True,
     **kwargs,
     ) -> Tuple[torch.Tensor, None]:
-        # if kwargs.get("output_attentions", False) or kwargs.get("head_mask", None) is not None:
-        #     logger.warning_once(
-        #         "`sdpa` attention does not support `output_attentions=True` or `head_mask`."
-        #         " Please set your attention to `eager` if you want any of these features."
-        #     )
-
+  
         if hasattr(module, "num_key_value_groups"):
             key = repeat_kv_original(key, module.num_key_value_groups)
             value = repeat_kv_original(value, module.num_key_value_groups)
 
-        # if attention_mask is not None and attention_mask.ndim == 4:
-        #     attention_mask = attention_mask[:, :, :, : key.shape[-2]]
-
-        # SDPAに渡す際の正しい変換
-        #padding_mask = attention_mask
-        # attn_mask = (padding_mask == 0)  # 0を無効位置としてTrue/Falseに変換
-        # # または
-        # attn_mask = ~padding_mask.bool()  # 論理反転
-
-        # SDPA with memory-efficient backend is bugged with non-contiguous inputs and custom attn_mask for some torch versions
-        # Reference: https://github.com/pytorch/pytorch/issues/112577.
+     
         query = query.contiguous()
         key = key.contiguous()
         value = value.contiguous()
         is_causal = True
-        # We dispatch to SDPA's Flash Attention or Efficient kernels via this `is_causal` if statement instead of an inline conditional assignment
-        # in SDPA to support both torch.compile's dynamic shapes and full graph options. An inline conditional prevents dynamic shapes from compiling.
-        # Note that it is important to check first for the shape, otherwise compile will fail with `argument 'is_causal' must be bool, not SymBool`
-        # if is_causal is None:
-        #     # The last condition is for encoder (decoder) models which specify this by passing their own `is_causal` flag
-        #     # This is mainly due to those models having mixed implementations for encoder, decoder, and encoder-decoder attns
-        #     is_causal = query.shape[2] > 1 and attention_mask is None and getattr(module, "is_causal", True)
-
-        # Shapes (e.g. query.shape[2]) are tensors during jit tracing, resulting in `is_causal` being a tensor.
-        # We convert it to a bool for the SDPA kernel that only accepts bools.
+   
         if torch.jit.is_tracing() and isinstance(is_causal, torch.Tensor):
             is_causal = is_causal.item()
-
-
-        #print(is_causal)
 
         attn_output = torch.nn.functional.scaled_dot_product_attention(
             query,
@@ -935,7 +702,6 @@ if 'xa07' in ModelGeneration:
             
             self.Attention = 1
 
-    
             self.args = args
             self.layer_id = layer_id
             self.my_testing = args.my_testing
@@ -1041,50 +807,5 @@ if 'xa07' in ModelGeneration:
             down_proj = self.down(F.silu(self.gate(x,passthrough)) * self.up(x,passthrough),passthrough)
             return down_proj, last_state
         
-
-        
-    class Phi35MLP_infctx(nn.Module):
-        def __init__(self, args, layer_id):
-            super().__init__()
-            self.args = args
-            self.layer_id = layer_id
-
-            self.hidden_size = args.n_embd
-            self.intermediate_size = args.dim_ffn
-
-            self.gate_up = make_linear_ffn(self.hidden_size, self.intermediate_size*2, bias=False,n_layer=self.layer_id,pname='ffn.gate')
-            #self.up = make_linear_ffn(self.hidden_size, self.intermediate_size, bias=False,n_layer=self.layer_id,pname='ffn.up')
-            self.down = make_linear_ffn(self.intermediate_size, self.hidden_size, bias=False,n_layer=self.layer_id,pname='ffn.down')
-        #@torch.compile()
-        def forward(self, x,last_state: ChannelMixState,passthrough=False):
-            up_states = self.gate_up(x,passthrough)
-
-            gate, up_states = up_states.chunk(2, dim=-1)
-            up_states = up_states * F.silu(gate)
-
-            return self.down(up_states,passthrough), last_state
-        
- 
-
-        
-        
-    class Qwen2MLP_infctx(nn.Module):
-        def __init__(self, args, layer_id):
-            super().__init__()
-            self.args = args
-            self.layer_id = layer_id
-
-            self.hidden_size = args.n_embd
-            self.intermediate_size = args.dim_ffn
-
-            self.gate = make_linear_ffn(self.hidden_size, self.intermediate_size, bias=False,n_layer=self.layer_id,pname='ffn.gate')
-            self.up = make_linear_ffn(self.hidden_size, self.intermediate_size, bias=False,n_layer=self.layer_id,pname='ffn.up')
-            self.down = make_linear_ffn(self.intermediate_size, self.hidden_size, bias=False,n_layer=self.layer_id,pname='ffn.down')
-
-        def forward(self, x ,last_state: ChannelMixState,passthrough=False):
-            down_proj = self.down(F.silu(self.gate(x,passthrough)) * self.up(x,passthrough),passthrough)
-            return down_proj, last_state #dummy
-        
-
 
 

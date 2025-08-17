@@ -1,0 +1,46 @@
+{
+  "architectures": "x070",
+  "automodelconfig": true,
+  "wandb_project": "RWKV-LM-RLHF",
+  "input_model_path": "/home/client/Projects/llm/rwkv7-g0-7.2b-20250722-ctx4096.pth",
+  "input_checkpoint_path": "",
+  "output_project_path": "myfolder/output",
+  "peft_config":{
+    "peft_type": "lora",
+    "lora_r": 16,
+    "lora_alpha": 32,
+    "lora_dropout": 0.1,
+    "target_module": [
+        "att.receptance",
+        "att.key",
+        "att.value",
+        "att.output",
+        "ffn.key",
+        "ffn.value",
+        "head"
+    ]
+  },
+  "quantization": {
+    "att_method" : "int8",
+    "ffn_method" : "nf4",
+    "head_method" : "int8"
+  },
+  "trainer": {
+    "type": "sft",
+    "args": {
+      "lr_init": 2e-5,
+      "lr_final": 5e-6,
+      "weight_decay": 0.01,
+      "adam_epsilon": 1e-8,
+      "max_grad_norm": 1.0,
+      "num_train_epochs": 3,
+      "per_device_train_batch_size": 1,
+      "gradient_accumulation_steps": 32,
+      "internal_precision": "bf16",
+      "save_steps": 500,
+      "dataset_json_path":""
+    }
+  },
+  "devices":1,
+  "gpu_arch":"cuda"
+}

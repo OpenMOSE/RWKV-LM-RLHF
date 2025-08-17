@@ -6,6 +6,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 import requests
 import json
+from  src.automodelconfig import GetAutoModelConfig
 
 if __name__ == "__main__":
     from argparse import ArgumentParser
@@ -24,6 +25,11 @@ if __name__ == "__main__":
     rank_zero_info("########## work in progress ##########")
 
     parser = ArgumentParser()
+    parser.add_argument("--autoconfig", default="", type=str)
+
+
+
+
 
     parser.add_argument("--load_model", default="", type=str)  # full path, with .pth
     parser.add_argument("--load_adapter", default="", type=str)  # full path, with .pth
@@ -122,8 +128,8 @@ if __name__ == "__main__":
     parser.add_argument("--magic_prime", default=0, type=int)
     parser.add_argument("--my_random_steps", default=0, type=int)
     parser.add_argument("--my_testing", default='x060', type=str) # if RWKV x070, set 'x070'
-    parser.add_argument("--my_exit", default=99999999, type=int)
-    parser.add_argument("--my_exit_tokens", default=0, type=int)
+    # parser.add_argument("--my_exit", default=99999999, type=int)
+    # parser.add_argument("--my_exit_tokens", default=0, type=int)
 
     parser.add_argument("--gpu_arch",default="cuda",type=str)# if CUDA set cuda, but if rocm and 4bit need custom bitsandbytes for rocm
     parser.add_argument("--layer_profile",default='layerprofile/24_test_bone.csv',type=str)
@@ -132,8 +138,6 @@ if __name__ == "__main__":
 
     parser.add_argument("--limited_lora", default=0, type=int)
 
-    parser.add_argument("--svd_niter", default=4, type=int) # for PIZZA
-    
 
 
     parser.add_argument("--dpo", default=0, type=int)
@@ -204,7 +208,32 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
 
+
+    if args.autoconfig != "":
+        print("Autoconfig mode")
+        with open(args.autoconfig, "r") as f:
+            autoconfig = json.load(f)
+        # for key, value in autoconfig.items():
+        #     setattr(args, key, value)
+        args.my_testing = autoconfig.get("architectures", args.my_testing)
+        args.wandb = autoconfig.get("wandb_project", args.wandb)
+
+        args.load_adapter = autoconfig.get("input_checkpoint_path", args.load_adapter)
+        args.proj_dir = autoconfig.get("output_project_path", args.proj_dir)
+        args.load_model = autoconfig.get("input_model_path", args.load_model)
+        # args.load_model = autoconfig.get("input_model_path", args.load_model)
+        # args.load_model = autoconfig.get("input_model_path", args.load_model)
+        # args.load_model = autoconfig.get("input_model_path", args.load_model)
+        # args.load_model = autoconfig.get("input_model_path", args.load_model)
+        # args.load_model = autoconfig.get("input_model_path", args.load_model)
+        # args.load_model = autoconfig.get("input_model_path", args.load_model)
+
+        args = GetAutoModelConfig(args,args.load_model)
+        exit()
+
+
     
+
 
     ########################################################################################################
 

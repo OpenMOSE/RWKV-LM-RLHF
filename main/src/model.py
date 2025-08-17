@@ -43,7 +43,7 @@ from .trainers.orpo import training_step_orpo
 
 
 if 'x070' in os.environ["RWKV_MY_TESTING"]:
-    from .models.rwkv7 import LAYER_CONFIG,RWKV_Tmix_x070,RWKV_Tmix_x070_state,RWKV_Tmix_x070_infctx,RWKV_CMix_x070,RWKV_CMix_x070_MoLE,RWKV_CMix_x070_infctx,RWKV_Tmix_x070m,make_linear_head,make_emb
+    from .models.rwkv7 import LAYER_CONFIG,RWKV_Tmix_x070,RWKV_Tmix_x070_state,RWKV_Tmix_x070_infctx,RWKV_CMix_x070,RWKV_CMix_x070_infctx,make_linear_head,make_emb
 if 'xa07' in os.environ["RWKV_MY_TESTING"]:
     from .models.hrwkv7 import LAYER_CONFIG,HRWKV_Tmix_hxa079,HRWKV_GQA_Nope_Attention,SwiGLU_MLP,T5RMSNorm,make_linear_head,make_emb
 elif 'x060' in os.environ["RWKV_MY_TESTING"]:
@@ -74,22 +74,16 @@ if 'x070' in os.environ["RWKV_MY_TESTING"]:
             if self.layer_id == 0:
                 self.ln0 = nn.LayerNorm(args.n_embd)
 
-            if 'x070m' in os.environ["RWKV_MY_TESTING"]:
-                self.att = RWKV_Tmix_x070m(args, layer_id)  
+            if os.environ["RWKV_TRAIN_TYPE"] == 'state':
+                self.att = RWKV_Tmix_x070_state(args, layer_id) 
+            elif os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
+                self.att = RWKV_Tmix_x070_infctx(args, layer_id) 
             else:
-                if os.environ["RWKV_TRAIN_TYPE"] == 'state':
-                    self.att = RWKV_Tmix_x070_state(args, layer_id) 
-                elif os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
-                    self.att = RWKV_Tmix_x070_infctx(args, layer_id) 
-                else:
-                    self.att = RWKV_Tmix_x070(args, layer_id)  
+                self.att = RWKV_Tmix_x070(args, layer_id)  
 
             if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
                 self.ffn = RWKV_CMix_x070_infctx(args, layer_id)
             else:
-                if os.environ["CustomModel"] == 'MoE':
-                    self.ffn = RWKV_CMix_x070_MoLE(args,layer_id,self.args.moe_experts)
-                else:
                     self.ffn = RWKV_CMix_x070(args, layer_id)
 
 
@@ -122,7 +116,6 @@ if 'x070' in os.environ["RWKV_MY_TESTING"]:
                 if self.layer_id == 0:
                     x = self.ln0(x)
 
-                # x_attn, v_first = self.att(self.ln1(x), v_first, passthrough)
                 if self.args.state:
                     x_attn, v_first, out_state = self.att(self.ln1(x), v_first, passthrough)
                 else:
@@ -173,34 +166,7 @@ if 'xa07' in os.environ["RWKV_MY_TESTING"]:
             else:
                 raise "currently only support hxa"
                         
-            # else:
-            #     if os.environ["RWKV_TRAIN_TYPE"] == 'state':
-            #         self.att = ARWKV_Tmix_x070_state(args, layer_id) 
-            #     elif os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
-            #         if 'cxa075' in ModelMode:
-            #             self.att = PRWKV_Tmix_cxa075_infctx(args, layer_id) 
-            #         elif 'cxa076' in ModelMode:
-            #             self.att = PRWKV_Tmix_cxa076_infctx(args, layer_id) 
-            #         else:
-            #             self.att = ARWKV_Tmix_x070_infctx(args, layer_id) 
-            #     else:
-            #         if 'cxa075' in ModelMode:
-            #             self.att = PRWKV_Tmix_cxa075(args, layer_id)  
-            #         elif 'cxa076' in ModelMode:
-            #             self.att = PRWKV_Tmix_cxa076(args, layer_id)  
-            #         else:
-            #             self.att = ARWKV_Tmix_x070(args, layer_id)  
-
-            #     if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
-            #         if 'pxa070' in os.environ["RWKV_MY_TESTING"]:
-            #             self.ffn = Phi35MLP_infctx(args,layer_id)
-            #         else:
-            #             self.ffn = Qwen2MLP_infctx(args, layer_id)
-            #     else:
-            #         if 'pxa070' in os.environ["RWKV_MY_TESTING"]:
-            #             self.ffn = Phi35MLP(args,layer_id)
-            #         else:
-            #             self.ffn = Qwen2MLP(args, layer_id)
+ 
 
 
         if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
@@ -616,157 +582,103 @@ class RWKV(pl.LightningModule):
     def configure_optimizers(self):
         args = self.args
 
-        if args.lr_advanced:
-            print('LR Advanced Mode. will get info from LayerProfile')
-            default_lr_init = args.lr_init
-            default_lr_final = args.lr_final
+        print('LR Advanced Mode. will get info from LayerProfile')
+        default_lr_init = args.lr_init
+        default_lr_final = args.lr_final
 
 
-            param_dict = {n: p for n, p in self.named_parameters()}
-            optim_groups = []
+        param_dict = {n: p for n, p in self.named_parameters()}
+        optim_groups = []
 
-            for n, p in self.named_parameters():
-                print(f'LR Check {n}')
-                if ('emb' in n  or 'ln0' in n) and LAYER_CONFIG['emb']['mode'] == 'full':
-                    if p.requires_grad:
-                        optim_groups.append({"params":[param_dict[n]],
-                                            'lr_init':float(LAYER_CONFIG['emb']['lr_init']), 
-                                            'lr_final':float(LAYER_CONFIG['emb']['lr_final']) , 
-                                            'weight_decay':float(LAYER_CONFIG['emb']['weight_decay']), 
-                                            'pname':'emb'})
+        for n, p in self.named_parameters():
+            print(f'LR Check {n}')
+            if ('emb' in n  or 'ln0' in n) and LAYER_CONFIG['emb']['mode'] == 'full':
+                if p.requires_grad:
+                    optim_groups.append({"params":[param_dict[n]],
+                                        'lr_init':float(LAYER_CONFIG['emb']['lr_init']), 
+                                        'lr_final':float(LAYER_CONFIG['emb']['lr_final']) , 
+                                        'weight_decay':float(LAYER_CONFIG['emb']['weight_decay']), 
+                                        'pname':'emb'})
 
-                elif ('head' in n or 'ln_out' in n) and LAYER_CONFIG['head']['mode'] != 'freeze':
-                    if p.requires_grad:
-                        optim_groups.append({"params":[param_dict[n]],
-                                            'lr_init':float(LAYER_CONFIG['head']['lr_init']),
-                                            'lr_final':float(LAYER_CONFIG['head']['lr_final']),
-                                            'weight_decay':float(LAYER_CONFIG['head']['weight_decay']) ,
-                                            'pname':'head'})
-                elif ('prefix' in n):
-                    if p.requires_grad:
-                        print(f"Prefix-tuning {n} Set lr_init {float(LAYER_CONFIG['emb']['lr_init'])} lr_final {float(LAYER_CONFIG['emb']['lr_final'])}")
-                        optim_groups.append({"params":[param_dict[n]],
-                                            'lr_init':float(LAYER_CONFIG['emb']['lr_init']),
-                                            'lr_final':float(LAYER_CONFIG['emb']['lr_final']),
-                                            'weight_decay':float(LAYER_CONFIG['emb']['weight_decay']) ,
-                                            'pname':'prefix'})
-                else:
-                    print('Layer Check')
-                    Found = False
-                    for i in range(args.n_layer):
-                        blockname = f'blocks.{i}.'
-                        if blockname in n:
-                            print(n)
-                        if blockname in n and ('time_state' in n or 'time_offset' in n) and args.state:
-                            if p.requires_grad:
-                                print(f"State-tuning {n} Set lr_init {float(LAYER_CONFIG[f'{str(i)}']['lr_init_state'])} lr_final {float(LAYER_CONFIG[f'{str(i)}']['lr_final_state'])}")
-                            
-                                optim_groups.append({"params":[param_dict[n]], "weight_decay": 0.0,
-                                                    'lr_init':float(LAYER_CONFIG[f'{str(i)}']['lr_init_state']), 
-                                                    'lr_final':float(LAYER_CONFIG[f'{str(i)}']['lr_final_state']),  
-                                                    'pname':n
-                                                    })
-                                Found = True
-                            break
-                        elif blockname in n and LAYER_CONFIG[f'{str(i)}']['mode'] != 'freeze':
-                            if any(word in n for word in LAYER_CONFIG[f'{str(i)}']['RejectParts']) and LAYER_CONFIG[f'{str(i)}']['RejectParts'][0] != '':
-                                print(f'Rejected {n}')
-                                Found = True
-                                break
-
-                            lr_x = 1.0
-                            if 'time_decay' in n: # for x060
-                                lr_x = 2.0
-
-                            if p.requires_grad:
-                                print(f"WeightParameter {n} Set lr_init {float(LAYER_CONFIG[f'{str(i)}']['lr_init'])} lr_final {float(LAYER_CONFIG[f'{str(i)}']['lr_final'])}")
-                                optim_groups.append({"params":[param_dict[n]], 
-                                                    'lr_init':float(LAYER_CONFIG[f'{str(i)}']['lr_init'])*lr_x, 
-                                                    'lr_final':float(LAYER_CONFIG[f'{str(i)}']['lr_final'])*lr_x,  
-                                                    'weight_decay':float(LAYER_CONFIG[f'{str(i)}']['weight_decay']),
-                                                    'pname':n
-                                                    })
-                                Found = True
-                            break
-                    if Found==False:
-                        print( f'{n} is not found optimizer strategy')
-                        #exit()
-
-            if self.deepspeed_offload:
-                if args.optim == 'lion':
-                    print('Deepspeed CPULion Mode')
-                    return DeepSpeedCPULion(optim_groups, betas=self.args.betas)
-                else:
-                    return DeepSpeedCPUAdam(optim_groups, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=True, amsgrad=False)
-            if args.optim == 'Adam8bit':
-                print('Bitsandbytes Adam8bit Mode')
-                return Adam8bit(optim_groups,  betas=self.args.betas, eps=self.args.adam_eps)
-            elif args.optim == 'AdamW8bit':
-                print('Bitsandbytes AdamW8bit Mode')
-                return AdamW8bit(optim_groups,  betas=self.args.betas, eps=self.args.adam_eps)
-            elif args.optim == 'lion':
-                print('Deepspeed Lion Mode')
-                return FusedLion(optim_groups, betas=self.args.betas)
-            elif args.optim == 'muon':
-                print('Muon')
-                return MuAdamW(optim_groups, betas=self.args.betas)
+            elif ('head' in n or 'ln_out' in n) and LAYER_CONFIG['head']['mode'] != 'freeze':
+                if p.requires_grad:
+                    optim_groups.append({"params":[param_dict[n]],
+                                        'lr_init':float(LAYER_CONFIG['head']['lr_init']),
+                                        'lr_final':float(LAYER_CONFIG['head']['lr_final']),
+                                        'weight_decay':float(LAYER_CONFIG['head']['weight_decay']) ,
+                                        'pname':'head'})
+            elif ('prefix' in n):
+                if p.requires_grad:
+                    print(f"Prefix-tuning {n} Set lr_init {float(LAYER_CONFIG['emb']['lr_init'])} lr_final {float(LAYER_CONFIG['emb']['lr_final'])}")
+                    optim_groups.append({"params":[param_dict[n]],
+                                        'lr_init':float(LAYER_CONFIG['emb']['lr_init']),
+                                        'lr_final':float(LAYER_CONFIG['emb']['lr_final']),
+                                        'weight_decay':float(LAYER_CONFIG['emb']['weight_decay']) ,
+                                        'pname':'prefix'})
             else:
-                return FusedAdam(optim_groups,  betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
+                print('Layer Check')
+                Found = False
+                for i in range(args.n_layer):
+                    blockname = f'blocks.{i}.'
+                    if blockname in n:
+                        print(n)
+                    if blockname in n and ('time_state' in n or 'time_offset' in n) and args.state:
+                        if p.requires_grad:
+                            print(f"State-tuning {n} Set lr_init {float(LAYER_CONFIG[f'{str(i)}']['lr_init_state'])} lr_final {float(LAYER_CONFIG[f'{str(i)}']['lr_final_state'])}")
+                        
+                            optim_groups.append({"params":[param_dict[n]], "weight_decay": 0.0,
+                                                'lr_init':float(LAYER_CONFIG[f'{str(i)}']['lr_init_state']), 
+                                                'lr_final':float(LAYER_CONFIG[f'{str(i)}']['lr_final_state']),  
+                                                'pname':n
+                                                })
+                            Found = True
+                        break
+                    elif blockname in n and LAYER_CONFIG[f'{str(i)}']['mode'] != 'freeze':
+                        if any(word in n for word in LAYER_CONFIG[f'{str(i)}']['RejectParts']) and LAYER_CONFIG[f'{str(i)}']['RejectParts'][0] != '':
+                            print(f'Rejected {n}')
+                            Found = True
+                            break
 
+                        lr_x = 1.0
+                        if 'time_decay' in n: # for x060
+                            lr_x = 2.0
 
-        else:
-            lr_decay = set()
-            lr_1x = set()
-            lr_2x = set()
-            lr_3x = set()
-            for n, p in self.named_parameters():
-                if (("_w1" in n) or ("_w2" in n)) and (args.layerwise_lr > 0):
-                    if args.limited_lora == False:
-                        lr_1x.add(n)
-                elif (("time_mix" in n) or ("time_maa" in n)) and (args.layerwise_lr > 0):
-                        if args.limited_lora == False:
-                            lr_1x.add(n)
-                elif (("time_decay" in n) or ("time_faaaa" in n)) and (args.layerwise_lr > 0):
-                        if args.limited_lora == False:
-                            lr_2x.add(n)
-                elif ("time_faaaa" in n) and (args.layerwise_lr > 0):
-                        if args.limited_lora == False:
-                            lr_1x.add(n)
-                elif ("time_first" in n) and (args.layerwise_lr > 0):
-                    if args.limited_lora == False:
-                        lr_3x.add(n)
-                elif (len(p.squeeze().shape) >= 2) and (args.weight_decay > 0):
-                    lr_decay.add(n)
-                else:
-                    lr_1x.add(n)
-
-            lr_decay = sorted(list(lr_decay))
-            lr_1x = sorted(list(lr_1x))
-            lr_2x = sorted(list(lr_2x))
-            lr_3x = sorted(list(lr_3x))
-
-            param_dict = {n: p for n, p in self.named_parameters()}
-
-            
-            if args.layerwise_lr > 0:
-                    optim_groups = [
-                        {"params": [param_dict[n] for n in lr_2x], "weight_decay": 0.0, "my_lr_scale": 2.0},
-                    ]
-                    print(optim_groups)
+                        if p.requires_grad:
+                            print(f"WeightParameter {n} Set lr_init {float(LAYER_CONFIG[f'{str(i)}']['lr_init'])} lr_final {float(LAYER_CONFIG[f'{str(i)}']['lr_final'])}")
+                            optim_groups.append({"params":[param_dict[n]], 
+                                                'lr_init':float(LAYER_CONFIG[f'{str(i)}']['lr_init'])*lr_x, 
+                                                'lr_final':float(LAYER_CONFIG[f'{str(i)}']['lr_final'])*lr_x,  
+                                                'weight_decay':float(LAYER_CONFIG[f'{str(i)}']['weight_decay']),
+                                                'pname':n
+                                                })
+                            Found = True
+                        break
+                if Found==False:
+                    print( f'{n} is not found optimizer strategy')
                     #exit()
+
+        if self.deepspeed_offload:
+            if args.optim == 'lion':
+                print('Deepspeed CPULion Mode')
+                return DeepSpeedCPULion(optim_groups, betas=self.args.betas)
             else:
-                optim_groups = [{"params": [param_dict[n] for n in lr_1x], "weight_decay": 0.0, "my_lr_scale": 1.0}]
+                return DeepSpeedCPUAdam(optim_groups, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=True, amsgrad=False)
+        if args.optim == 'Adam8bit':
+            print('Bitsandbytes Adam8bit Mode')
+            return Adam8bit(optim_groups,  betas=self.args.betas, eps=self.args.adam_eps)
+        elif args.optim == 'AdamW8bit':
+            print('Bitsandbytes AdamW8bit Mode')
+            return AdamW8bit(optim_groups,  betas=self.args.betas, eps=self.args.adam_eps)
+        elif args.optim == 'lion':
+            print('Deepspeed Lion Mode')
+            return FusedLion(optim_groups, betas=self.args.betas)
+        elif args.optim == 'muon':
+            print('Muon')
+            return MuAdamW(optim_groups, betas=self.args.betas)
+        else:
+            return FusedAdam(optim_groups,  betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
 
 
-            if args.weight_decay > 0:
-                optim_groups += [{"params": [param_dict[n] for n in lr_decay], "weight_decay": args.weight_decay, "my_lr_scale": 1.0}]
-                if self.deepspeed_offload:
-                    return DeepSpeedCPUAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=True, amsgrad=False)
-                return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
-            else:
-                if self.deepspeed_offload:
-                    return DeepSpeedCPUAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=False, weight_decay=0, amsgrad=False)
-                return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=False, weight_decay=0, amsgrad=False)
     @property
     def deepspeed_offload(self) -> bool:
         strategy = self.trainer.strategy
@@ -841,53 +753,7 @@ class RWKV(pl.LightningModule):
                 return training_step_sft_infctx(self,batch,batch_idx)
 
 
-            idx, targets = batch
-            B, T = idx.shape
-            C = args.n_embd
-            H =  args.dim_att // args.head_size_a
-            assert C==H*args.head_size_a
-            states = BlockStateList.create(args.n_layer, B, C, H, idx.device,
-                self.emb.weight.dtype)
-
-            def checkpointed_step(idx, targets, prev_loss, last_shift_states,
-                                last_wkv_states, prev_token_amount):
-                logits, new_shift_states, new_wkv_states = self(idx, last_shift_states, last_wkv_states)
-                current_token_amount = (targets!=-100).sum() #这样是不是更合适？
-                current_token_amount = idx.shape[1]
-                if current_token_amount == 0:
-                    loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.reshape(-1),reduction='sum')
-                else:
-                    loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.reshape(-1))
-                    
-                    loss = L2Wrap.apply(loss, logits, current_token_amount)
-                new_token_amount = prev_token_amount+current_token_amount
-                if new_token_amount>0:
-                    new_loss = prev_loss * (prev_token_amount / new_token_amount) + loss * (
-                        current_token_amount / new_token_amount)
-                else:
-                    new_loss = prev_loss
-
-                return new_loss, new_shift_states, new_wkv_states, new_token_amount
-            
-            total_loss = torch.tensor(0.,dtype=self.emb.weight.dtype).requires_grad_()
-            token_amount = 0
-            i = 0
-            print(f'idx {idx.shape} targets {targets.shape}')
-            for i in range(math.ceil(T / T_train)):
-                print(f'start = {i * T_train} end = {(i + 1) * T_train} diff = {(i + 1) * T_train - i * T_train}' )
-                total_loss,new_shift_states, new_wkv_states,token_amount = torch_checkpoint(
-                    checkpointed_step,
-                    idx[:, i * T_train:(i + 1) * T_train],
-                    targets[:, i * T_train:(i + 1) * T_train],
-                    total_loss,
-                    states.shift_states,
-                    states.wkv_states,
-                    token_amount,
-                    use_reentrant=False
-                )
-                states = BlockStateList(new_shift_states, new_wkv_states)
-
-            return total_loss
+          
         
 
     
@@ -916,11 +782,8 @@ class RWKV(pl.LightningModule):
                 
                 for i, (block, block_state) in enumerate(zip(self.blocks,
                     BlockStateList(last_shift_states, last_wkv_states))):
-                  
                     x, v_first, new_block_state = block.forward_rnn(x,v_first, block_state,passthrough)
-            
                     new_states[i] = new_block_state 
-            
             else:
                 assert "currently only supported v7"
 
@@ -969,9 +832,7 @@ class RWKV(pl.LightningModule):
                                 
                             else:
                                 x, v_first,k_first = torch_checkpoint(block, x, v_first,k_first,passthrough,x_emb,use_reentrant=False)
-                            # else:
-                            #     x, v_first = torch_checkpoint(block, x, v_first,passthrough,x_emb,use_reentrant=False)
-                            #     #x, v_first = deepspeed.checkpointing.checkpoint(block, x, v_first )
+                      
                         else:
                             layer_mode = LAYER_CONFIG[f'{str(block.layer_id)}']['mode']
                             if layer_mode == 'full' or layer_mode == 'freeze':
@@ -1019,9 +880,6 @@ class RWKV(pl.LightningModule):
             else:
                 x = self.head(x)
 
-            if os.environ["CustomModel"] == 'MoE':
-                #print(f'Moe Router_loss = {moe_router_loss}')
-                return x, moe_router_loss
             if idx is None:
                 return StatePack
             else:
@@ -1076,23 +934,6 @@ class RWKV(pl.LightningModule):
 
             raise "Abnormal Train Mode"
                 
-            # if args.my_qa_mask != 1:
-            #     idx, targets = batch
-            #     logits = self(idx)
-            #     loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
-            # else:
-            #     idx, targets, mask = batch
-            #     mask = mask.view(-1)
-            #     sum_mask = torch.sum(mask).item()
-
-            #     logits = self(idx)
-            #     if sum_mask == mask.shape[0]:
-            #         loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
-            #     else:
-            #         loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), reduction='none')
-            #         loss = torch.sum(loss * mask) / sum_mask
-
-            # return L2Wrap.apply(loss, logits)
 
     def training_step_end(self, batch_parts):
         if pl.__version__[0]!='2':

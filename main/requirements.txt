@@ -14,3 +14,4 @@ safetensors
 fastapi
 uvicorn
 accelerate
+rwkv-fla
