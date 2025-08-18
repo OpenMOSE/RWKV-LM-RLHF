@@ -1,12 +1,12 @@
 {
   "architectures": "x070",
   "automodelconfig": true,
-  "wandb_project": "RWKV-LM-RLHF",
+  "wandb_project": "RWKV-LM-RLHF G0-7B DFT",
   "input_model_path": "/home/client/Projects/llm/rwkv7-g0-7.2b-20250722-ctx4096.pth",
   "input_checkpoint_path": "",
-  "output_project_path": "myfolder/output",
+  "output_project_path": "myfolder/output_bancho",
   "profile_config":{
-    "profile_path": "layerprofile/32_TEST_lora.csv"
+    "profile_path": "layerprofile/32_TEST_bone.csv"
   },
   "quantization": {
     "att_method" : "int8",
@@ -18,7 +18,8 @@
     "sft_method": "dft",
     "args": {
       "epoch_count": 100,
-      "epoch_steps": 500,
+      "epoch_steps": 100,
+      "epoch_save": 1,
       "warmup_steps": 100,
       "ctx_len" : 8192,
       "micro_bsz": 4,
@@ -28,7 +29,7 @@
       "sft_jsonmode_tokenizermode": "world",
       "random_mode": 1,
       "dataset_path":"myfolder/dataset",
-      "infctx_dataset_multiplier": 32
+      "infctx_dataset_multiplier": 16
     }
   },
   "devices":1,

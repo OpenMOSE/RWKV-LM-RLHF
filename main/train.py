@@ -247,7 +247,7 @@ if __name__ == "__main__":
             args.sft_jsonmode_tokenizermode = trainsetting.get("sft_jsonmode_tokenizermode", args.sft_jsonmode_tokenizermode)
             args.train_data_file = trainsetting.get("dataset_path", args.train_data_file)
             args.random_mode = trainsetting.get("random_mode", args.random_mode)
-
+            args.epoch_save = trainsetting.get("epoch_save", args.epoch_save)
             args.epoch_count = trainsetting.get("epoch_count", args.epoch_count)
             args.epoch_steps = trainsetting.get("epoch_steps", args.epoch_steps)
             args.warmup_steps = trainsetting.get("warmup_steps", args.warmup_steps)
