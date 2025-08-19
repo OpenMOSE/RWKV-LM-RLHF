@@ -459,16 +459,51 @@ if 'xa07' in ModelGeneration:
         x1 = x[..., : x.shape[-1] // 2]
         x2 = x[..., x.shape[-1] // 2 :]
         return torch.cat((-x2, x1), dim=-1)
-    def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
+    # def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
 
+    #     cos = cos.unsqueeze(unsqueeze_dim)
+    #     sin = sin.unsqueeze(unsqueeze_dim)
+    #     q_embed = (q * cos) + (rotate_half(q) * sin)
+    #     k_embed = (k * cos) + (rotate_half(k) * sin)
+    #     return q_embed, k_embed
+    def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
+        """Applies Rotary Position Embedding to the query and key tensors.
+
+        Args:
+            q (`torch.Tensor`): The query tensor.
+            k (`torch.Tensor`): The key tensor.
+            cos (`torch.Tensor`): The cosine part of the rotary embedding.
+            sin (`torch.Tensor`): The sine part of the rotary embedding.
+            position_ids (`torch.Tensor`, *optional*):
+                Deprecated and unused.
+            unsqueeze_dim (`int`, *optional*, defaults to 1):
+                The 'unsqueeze_dim' argument specifies the dimension along which to unsqueeze cos[position_ids] and
+                sin[position_ids] so that they can be properly broadcasted to the dimensions of q and k. For example, note
+                that cos[position_ids] and sin[position_ids] have the shape [batch_size, seq_len, head_dim]. Then, if q and
+                k have the shape [batch_size, heads, seq_len, head_dim], then setting unsqueeze_dim=1 makes
+                cos[position_ids] and sin[position_ids] broadcastable to the shapes of q and k. Similarly, if q and k have
+                the shape [batch_size, seq_len, heads, head_dim], then set unsqueeze_dim=2.
+        Returns:
+            `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
+        """
         cos = cos.unsqueeze(unsqueeze_dim)
         sin = sin.unsqueeze(unsqueeze_dim)
         q_embed = (q * cos) + (rotate_half(q) * sin)
         k_embed = (k * cos) + (rotate_half(k) * sin)
         return q_embed, k_embed
     
-    
     # Same hxa079 Converter
+    # def compute_qwen3_rope_cache(seq_len, rotary_dim, device, dtype, rope_theta):
+    #         half_dim = rotary_dim // 2
+    #         freq_seq = torch.arange(half_dim, dtype=dtype, device=device)
+    #         inv_freq = 1.0 / (rope_theta ** (freq_seq / half_dim))
+    #         positions = torch.arange(seq_len, dtype=dtype, device=device)
+    #         freqs = torch.einsum("i,j->ij", positions, inv_freq)
+    #         emb = torch.cat([freqs, freqs], dim=-1)
+    #         cos = emb.cos()
+    #         sin = emb.sin()
+    #         return cos.unsqueeze(0), sin.unsqueeze(0), inv_freq
+    
     def compute_qwen3_rope_cache(seq_len, rotary_dim, device, dtype, rope_theta):
             half_dim = rotary_dim // 2
             freq_seq = torch.arange(half_dim, dtype=dtype, device=device)
@@ -492,9 +527,7 @@ if 'xa07' in ModelGeneration:
     **kwargs,
     ) -> Tuple[torch.Tensor, None]:
   
-        if hasattr(module, "num_key_value_groups"):
-            key = repeat_kv_original(key, module.num_key_value_groups)
-            value = repeat_kv_original(value, module.num_key_value_groups)
+        
 
      
         query = query.contiguous()
@@ -502,14 +535,14 @@ if 'xa07' in ModelGeneration:
         value = value.contiguous()
         is_causal = True
    
-        if torch.jit.is_tracing() and isinstance(is_causal, torch.Tensor):
-            is_causal = is_causal.item()
+        # if torch.jit.is_tracing() and isinstance(is_causal, torch.Tensor):
+        #     is_causal = is_causal.item()
 
         attn_output = torch.nn.functional.scaled_dot_product_attention(
             query,
             key,
             value,
-            attn_mask=attention_mask,
+            #attn_mask=attention_mask,
             dropout_p=dropout,
             scale=scaling,
             is_causal=is_causal,
@@ -543,6 +576,61 @@ if 'xa07' in ModelGeneration:
         mask = mask.unsqueeze(1).unsqueeze(1)
         
         return mask
+    
+    def create_causal_padding_mask(seq_len, padding_mask):
+        """
+        padding_mask: (B, T) - 1 for valid, 0 for padding
+        Returns: (B, 1, T, T) float mask for SDPA
+        """
+        batch_size = padding_mask.size(0)
+        device = padding_mask.device
+        
+        # Causal mask: (T, T)
+        causal_mask = torch.tril(torch.ones(seq_len, seq_len, device=device))
+        
+        # Padding mask: (B, T) -> (B, T, T)
+        padding_expanded = padding_mask.unsqueeze(1)  # (B, 1, T)
+        padding_mask_2d = padding_expanded * padding_mask.unsqueeze(2)  # (B, T, T)
+        
+        # 統合: (B, T, T)
+        combined_mask = causal_mask.unsqueeze(0) * padding_mask_2d
+        
+        # Float mask: 0 -> -inf, 1 -> 0
+        float_mask = (1.0 - combined_mask) * torch.finfo(torch.float32).min
+        
+        # (B, 1, T, T)
+        return float_mask.unsqueeze(1).to(dtype=torch.bfloat16)
+
+    def create_causal_padding_mask(seq_len, padding_mask, device):
+        """
+        seq_len: シーケンス長
+        padding_mask: [B, T] where 1=valid, 0=padding
+        Returns: [B, 1, T, T] attention mask for SDPA
+        """
+        batch_size = padding_mask.size(0)
+        
+        # 1. Causal mask (下三角行列)
+        causal_mask = torch.tril(torch.ones(seq_len, seq_len, device=device, dtype=torch.bool))
+        
+        # 2. Padding mask (Key側)
+        # padding_mask: [B, T] -> [B, 1, T] (query軸) と [B, T, 1] (key軸)
+        query_mask = padding_mask.unsqueeze(1)  # [B, 1, T]
+        key_mask = padding_mask.unsqueeze(2)    # [B, T, 1]
+        
+        # 3. 両方のトークンが有効な場合のみ1
+        padding_2d = query_mask & key_mask  # [B, T, T]
+        
+        # 4. Causal + Padding の統合
+        combined_mask = causal_mask.unsqueeze(0) & padding_2d  # [B, T, T]
+        
+        # 5. SDPA用のfloat mask (True->0.0, False->-inf)
+        float_mask = torch.where(
+            combined_mask,
+            torch.tensor(0.0, device=device),
+            torch.tensor(float('-inf'), device=device)
+        )
+        
+        return float_mask.unsqueeze(1)  # [B, 1, T, T]
 
 
     class HRWKV_Tmix_hxa079(nn.Module):
@@ -553,7 +641,7 @@ if 'xa07' in ModelGeneration:
             self.my_testing = args.my_testing
 
             self.head_size = args.head_size_a
-            self.n_head = args.dim_att // self.head_size
+            self.n_head = args.gqa_attention_heads
             self.kv_n_head = args.gqa_kv_heads
             self.attention_n_head = args.gqa_attention_heads
             assert args.dim_att % self.n_head == 0
@@ -619,10 +707,7 @@ if 'xa07' in ModelGeneration:
 
                 self.rope_theta = float(self.args.rope_theta)
 
-                cos, sin, inv_freq_own = compute_qwen3_rope_cache(self.args.ctx_len, self.head_size, 'cuda', torch.float32, self.rope_theta)
-
-                self.cos=cos.to(dtype=torch.bfloat16)
-                self.sin=sin.to(dtype=torch.bfloat16)
+                
                 
 
                 #self.rope_cos = torch.Tensor(self.rope_cos.unsqueeze(0))
@@ -662,11 +747,18 @@ if 'xa07' in ModelGeneration:
             if self.args.rk_norm:
                 r = self.ln_r(r.view(B,T,H,self.head_size))
                 k = self.ln_k(k.view(B,T,self.kv_n_head,self.head_size))
+            else:
+                r = r.view(B,T,H,self.head_size)
 
             g = torch.sigmoid(xg @ self.g1) @ self.g2
 
             k = k.view(B, T, self.kv_n_head, self.head_size)
             v = v.view(B, T, self.kv_n_head, self.head_size)
+
+            cos, sin, inv_freq_own = compute_qwen3_rope_cache(T, self.head_size, 'cuda', torch.float32, self.rope_theta)
+
+            self.cos=cos.to(dtype=torch.bfloat16)
+            self.sin=sin.to(dtype=torch.bfloat16)
 
             r, k = apply_rotary_pos_emb(r, k, self.cos,self.sin, unsqueeze_dim=2)
 
@@ -681,6 +773,7 @@ if 'xa07' in ModelGeneration:
             #modified repeat_kv B,T,H_kv,D) -> B,T,H,D -> B,T,C
             k = repeat_kv(k, self.n_head // self.kv_n_head)#reshape(B,T,-1) #(B,T,C)
             v = repeat_kv(v, self.n_head // self.kv_n_head)#reshape(B,T,-1) #(B,T,C)
+            r = r.view(B, T, -1)
             k = k.view(B, T, -1)
             v = v.view(B, T, -1)
 
@@ -713,12 +806,13 @@ if 'xa07' in ModelGeneration:
             else:
                 self.n_head = args.gqa_attention_heads
             self.kv_n_head = args.gqa_kv_heads
+            self.num_key_value_groups = args.gqa_attention_heads // args.gqa_kv_heads
             assert args.dim_att % self.n_head == 0
             H = self.n_head
             N = self.head_size
             C = args.n_embd
 
-            self.QKNormMode = True
+            #self.QKNormMode = True
 
             print(f'layer = {layer_id} head_size {self.head_size} n_head {self.n_head}')
 
@@ -735,7 +829,7 @@ if 'xa07' in ModelGeneration:
             self.v_proj = make_linear_att(Hidden_dim, self.kv_n_head * self.head_size, bias=rkv_bias,n_layer=self.layer_id,pname = "att.v_proj")
             self.o_proj = make_linear_att(self.n_head * self.head_size, Hidden_dim, bias=False,n_layer=self.layer_id,pname = "att.o_proj")
 
-            if self.QKNormMode == True:
+            if self.args.rk_norm:
                 self.q_norm = T5RMSNorm(self.head_size, eps=self.args.rms_norm_eps) 
                 self.k_norm = T5RMSNorm(self.head_size, eps=self.args.rms_norm_eps) 
         
@@ -753,28 +847,72 @@ if 'xa07' in ModelGeneration:
             hidden_shape = (*input_shape, -1, self.head_size)
             B, T, C = hidden_states.size()
 
-            query_states = self.q_norm(self.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
-            key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
-            value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+            if self.args.rk_norm:
+                query_states = self.q_norm(self.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
+                key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
+                value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+            else:
+                query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+                key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+                value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
-            if attention_mask is not None:
-               padding_mask = prepare_mask_for_sdpa_float(attention_mask)
-               attention_mask = padding_mask
+            if hasattr(self, "num_key_value_groups"):
+               key_states = repeat_kv_original(key_states, self.num_key_value_groups)
+               value_states = repeat_kv_original(value_states, self.num_key_value_groups)
+
+            # if attention_mask is not None:
+            # #    padding_mask = prepare_mask_for_sdpa_float(attention_mask)
+            # #    attention_mask = None # padding_mask
+            # #    #padding_mask.unsqueeze(-1)
+            # #    padding_expanded = padding_mask.unsqueeze(-1)  # (B, T, 1)
+            # #    key_states = key_states * padding_expanded
+            # #    value_states = value_states * padding_expanded
+            #    padding_mask = create_causal_padding_mask(T,attention_mask)
+            #    attention_mask = padding_mask
+            #attention_mask = False
+            # mask_expanded = attention_mask.unsqueeze(1).unsqueeze(-1)  # [B, 1, T, 1]
+            # # または
+            
+            # key_states = key_states * mask_expanded  # [B, n_heads, T, head_dim] * [B, 1, T, 1]
+            # value_states = value_states * mask_expanded  # broadcasting で正しく適用される
 
 
-            attention_interface: Callable = sdpa_attention_forward
+            # attention_interface: Callable = sdpa_attention_forward
 
-            attn_output, attn_weights = attention_interface(
-                self,
+            # attn_output, attn_weights = attention_interface(
+            #     self,
+            #     query_states,
+            #     key_states,
+            #     value_states,
+            #     attention_mask,
+            #     dropout=0.0,# if not self.training else self.attention_dropout,
+            #     scaling=self.scaling,
+            #     sliding_window=False,  # diff with Llama
+            # # **kwargs,
+            # )
+
+            query_states = query_states.contiguous()
+            key_states = key_states.contiguous()
+            value_states = value_states.contiguous()
+            #is_causal = True
+    
+            # if torch.jit.is_tracing() and isinstance(is_causal, torch.Tensor):
+            #     is_causal = is_causal.item()
+             # Paddingなしの場合は、Causal maskのみ
+            # causal_mask = torch.tril(torch.ones(T, T, device=hidden_states.device))
+            # attn_mask = torch.where(causal_mask == 1, 0.0, float('-inf'))
+            # attn_mask = attn_mask.unsqueeze(0).unsqueeze(0).to(dtype=torch.bfloat16)  # [1, 1, T, T]
+
+            attn_output = torch.nn.functional.scaled_dot_product_attention(
                 query_states,
                 key_states,
                 value_states,
-                attention_mask,
-                dropout=0.0,# if not self.training else self.attention_dropout,
-                scaling=self.scaling,
-                sliding_window=False,  # diff with Llama
-            # **kwargs,
+               # attn_mask=attn_mask,
+                dropout_p=0,
+                scale=self.scaling,
+                is_causal=True,
             )
+            attn_output = attn_output.transpose(1, 2).contiguous()
 
             attn_output = attn_output.reshape(*input_shape, -1).contiguous()
             attn_output = self.o_proj(attn_output)

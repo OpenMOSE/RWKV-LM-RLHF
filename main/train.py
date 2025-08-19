@@ -179,7 +179,7 @@ if __name__ == "__main__":
     parser.add_argument("--sft_method", default="sft", type=str)
     parser.add_argument("--sft_jsonmode", default=0, type=int)
     parser.add_argument("--sft_jsonmode_overlap_tokenshift", default=1, type=int)
-    parser.add_argument("--sft_jsonmode_tokenizermode", default='world', type=str)
+    parser.add_argument("--sft_jsonmode_tokenizermode", default='rekaflash3', type=str)
     parser.add_argument("--train_data_file", default='datasets/test_jp_logits.h5', type=str)
     parser.add_argument("--random_mode", default=1, type=int)
 
@@ -192,6 +192,7 @@ if __name__ == "__main__":
     parser.add_argument("--sft_kl_temperature", default=2.0, type=float)
     parser.add_argument("--sft_kl_alpha", default=0.5, type=float)
     parser.add_argument("--sft_kl_topk", default=2000, type=int)
+    parser.add_argument("--dft", default=0, type=int)
 
     #new optim
     parser.add_argument("--optim", default="", type=str)
@@ -486,38 +487,129 @@ if __name__ == "__main__":
 
     print(LAYER_CONFIG)
 
+    # def load_split_safetensors(model_dir, device="cpu"):
+    #     from safetensors import safe_open
+    #     from safetensors.torch import load_file
+    #     """
+    #     分割されたSafeTensorファイルを読み込む関数
+        
+    #     Args:
+    #         model_dir: 分割されたSafeTensorファイルが格納されているディレクトリパス
+    #         device: ロード先のデバイス（デフォルトは"cpu"）
+        
+    #     Returns:
+    #         dict: 統合されたモデルの状態辞書
+    #     """
+    #     # ディレクトリから全てのsafetensorファイルを取得
+    #     files = sorted([f for f in os.listdir(model_dir) if f.endswith('.safetensors')])
+
+    #     # 使用例
+    #     # replacements = {
+    #     #     'self_attn': 'att',
+    #     #     'emb': 'model.embd'
+    #     # }
+    #     replacements = {
+    #         'model.': '',
+    #         'layers.': 'blocks.',
+    #         'self_attn.': 'att.',
+    #         'mlp.': 'ffn.',
+    #         'gate_up_proj' : 'gate_up',
+    #         'down_proj': 'down',
+    #         'gate_proj': 'gate',
+    #         'up_proj': 'up',
+    #         'input_layernorm': 'ln1',
+    #         'post_attention_layernorm': 'ln2',
+    #         'lm_head': 'head',
+    #         'r_norm.': 'ln_r.',
+    #         'q_norm.': 'ln_r.',
+    #         'k_norm.': 'ln_k.',
+    #         'norm.': 'ln_out.',
+    #         'embed_tokens.': 'emb.'
+    #     }
+        
+    #     if not files:
+    #         raise ValueError(f"No safetensors files found in {model_dir}")
+        
+    #     # 状態辞書を初期化
+    #     state_dict = {}
+        
+    #     # 各ファイルを読み込んで統合
+    #     for file in files:
+    #         file_path = os.path.join(model_dir, file)
+    #         # load_fileはtorch形式で読み込む
+    #         file_state_dict = load_file(file_path, device=device)
+    #         #state_dict.update(file_state_dict)
+    #         # 各ファイルの内容を追加する際にキーを置換
+    #         for old_key, value in file_state_dict.items():
+    #             new_key = old_key
+    #             for old_pattern, new_pattern in replacements.items():
+    #                 new_key = new_key.replace(old_pattern, new_pattern)
+    #             print(f"Loading key: {old_key} -> {new_key}")
+    #             state_dict[new_key] = value
+                
+    #             # 元のキーが不要な場合は削除してメモリを解放
+    #             if new_key != old_key:
+    #                 del file_state_dict[old_key]
+        
+    #     return state_dict
+    
     def load_split_safetensors(model_dir, device="cpu"):
         from safetensors import safe_open
         from safetensors.torch import load_file
-        """
-        分割されたSafeTensorファイルを読み込む関数
+        import gc  # ガベージコレクション用
         
-        Args:
-            model_dir: 分割されたSafeTensorファイルが格納されているディレクトリパス
-            device: ロード先のデバイス（デフォルトは"cpu"）
-        
-        Returns:
-            dict: 統合されたモデルの状態辞書
         """
-        # ディレクトリから全てのsafetensorファイルを取得
+        分割されたSafeTensorファイルを読み込む関数（メモリ最適化版）
+        """
         files = sorted([f for f in os.listdir(model_dir) if f.endswith('.safetensors')])
+
+        replacements = {
+            'model.': '',
+            'layers.': 'blocks.',
+            'self_attn.': 'att.',
+            'mlp.': 'ffn.',
+            'gate_up_proj': 'gate_up',
+            'down_proj': 'down',
+            'gate_proj': 'gate',
+            'up_proj': 'up',
+            'input_layernorm': 'ln1',
+            'post_attention_layernorm': 'ln2',
+            'lm_head': 'head',
+            'r_norm.': 'ln_r.',
+            'q_norm.': 'ln_r.',
+            'k_norm.': 'ln_k.',
+            'norm.': 'ln_out.',
+            'embed_tokens.': 'emb.'
+        }
         
         if not files:
             raise ValueError(f"No safetensors files found in {model_dir}")
         
-        # 状態辞書を初期化
         state_dict = {}
         
-        # 各ファイルを読み込んで統合
-        for file in files:
+        for i, file in enumerate(files):
             file_path = os.path.join(model_dir, file)
-            # load_fileはtorch形式で読み込む
+            print(f"Loading file {i+1}/{len(files)}: {file}")
+            
             file_state_dict = load_file(file_path, device=device)
-            state_dict.update(file_state_dict)
+            
+            # popitemsを使用してメモリ効率的に処理
+            while file_state_dict:
+                old_key, value = file_state_dict.popitem()
+                
+                new_key = old_key
+                for old_pattern, new_pattern in replacements.items():
+                    new_key = new_key.replace(old_pattern, new_pattern)
+                
+                print(f"Loading key: {old_key} -> {new_key}")
+                state_dict[new_key] = value
+            
+            # 明示的にメモリを解放
+            del file_state_dict
+            gc.collect()  # ガベージコレクションを強制実行
         
+        print(f"Successfully loaded {len(state_dict)} parameters")
         return state_dict
-    
-
 
     rank_zero_info(f"########## Loading {args.load_model}... ##########")
     try:
@@ -534,7 +626,10 @@ if __name__ == "__main__":
 
 
     except:
-        raise "Please check model correctly"
+        raise "Please check model correctly"\
+        
+    print(load_keys)
+   # exit()
     
 
     AdapterMethod = 'lora'

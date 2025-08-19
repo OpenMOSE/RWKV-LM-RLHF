@@ -135,7 +135,7 @@ def training_step_sft(self, batch, batch_idx):
                     target = target[:, :max_len]
                     attention_mask = attention_mask[:, :max_len]
 
-                student_logits,moe_loss = self(input_ids,attention_mask=attention_mask)
+                student_logits,moe_loss = self(input_ids,attention_mask=None)
 
                 if args.state and args.prefix_tuning:
                     student_logits = student_logits[:, args.prefix_token_len:, :]
@@ -163,7 +163,10 @@ def training_step_sft(self, batch, batch_idx):
 
                 if sum_mask == mask.shape[0]:
                     loss = smooth_loss.mean()
+                    #print('no mask')
                 else:
+                    print(smooth_loss)
+
                     smooth_loss = torch.sum(smooth_loss * mask) / sum_mask
                     loss = smooth_loss
 

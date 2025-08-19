@@ -1,17 +1,17 @@
 {
-  "architectures": "x070",
+  "architectures": "hxa079",
   "automodelconfig": true,
-  "wandb_project": "RWKV-LM-RLHF G0-7B DFT",
-  "input_model_path": "/home/client/Projects/llm/rwkv7-g0-7.2b-20250722-ctx4096.pth",
+  "wandb_project": "RWKV-LM-RLHF hxa079-21B DFT",
+  "input_model_path": "/home/client/Projects/RWKV-Reka-3.1-Flash",
   "input_checkpoint_path": "",
-  "output_project_path": "myfolder/output_psycho",
+  "output_project_path": "myfolder/hxa079_output_tsundere",
   "profile_config":{
-    "profile_path": "layerprofile/32_TEST_lora_light.csv"
+    "profile_path": "layerprofile/44_TEST_lora_light.csv"
   },
   "quantization": {
-    "att_method" : "int8",
+    "att_method" : "nf4",
     "ffn_method" : "nf4",
-    "head_method" : "int8"
+    "head_method" : "nf4"
   },
   "trainer": {
     "type": "sft",
@@ -23,13 +23,13 @@
       "warmup_steps": 100,
       "ctx_len" : 1024,
       "micro_bsz": 8,
-      "gradient_accumulation_steps": 2,
+      "gradient_accumulation_steps": 4,
       "only_train_linears": true,
       "sft_jsonmode": 1,
-      "sft_jsonmode_tokenizermode": "world",
+      "sft_jsonmode_tokenizermode": "rekaflash3",
       "random_mode": 1,
-      "dataset_path":"myfolder/dataset_psycho",
-      "infctx_dataset_multiplier": 2
+      "dataset_path":"myfolder/dataset_tsundere",
+      "infctx_dataset_multiplier": 8
     }
   },
   "devices":1,

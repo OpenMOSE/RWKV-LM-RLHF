@@ -18,6 +18,7 @@ def get_tensor_shapes(file_path: Union[str, Path]) -> Dict[str, tuple]:
     """
     file_path = Path(file_path)
     shapes_dict = {}
+    modelconfig ={}
     
     if file_path.is_file():
         if file_path.suffix == '.pth' or file_path.suffix == '.pt':
@@ -30,6 +31,9 @@ def get_tensor_shapes(file_path: Union[str, Path]) -> Dict[str, tuple]:
             raise ValueError(f"Unsupported file format: {file_path.suffix}")
     
     elif file_path.is_dir():
+        with open(f'{file_path}/config.json', 'r', encoding='utf-8') as file:
+                    modelconfig = json.load(file)
+            
         # ディレクトリの場合、SafeTensorsファイルを探す
         safetensor_files = list(file_path.glob("*.safetensors"))
         if not safetensor_files:
@@ -43,7 +47,7 @@ def get_tensor_shapes(file_path: Union[str, Path]) -> Dict[str, tuple]:
     else:
         raise ValueError(f"Path does not exist: {file_path}")
     
-    return shapes_dict
+    return shapes_dict, modelconfig
 
 
 def _extract_pytorch_shapes(file_path: Path) -> Dict[str, tuple]:
@@ -153,7 +157,7 @@ def print_tensor_info(shapes_dict: Dict[str, tuple], max_display: int = None):
 
 
 def GetAutoModelConfig(args,inputpath):
-    shapes = get_tensor_shapes(inputpath)
+    shapes, modelconfig = get_tensor_shapes(inputpath)
     rwkvarch = "x060"
     args.HFMode = False
     for name, shape in shapes.items():
@@ -161,7 +165,7 @@ def GetAutoModelConfig(args,inputpath):
             rwkvarch = "x070"
             break
     for name, shape in shapes.items():
-        if "k_first" in name:
+        if "k0" in name:
             rwkvarch = "hxa079"
             break
     headsize=64
@@ -173,6 +177,8 @@ def GetAutoModelConfig(args,inputpath):
     num_lora_g = 0
     num_lora_a = 0
 
+    num_lora_k = 0
+
     rwkvlayers = []
     gqalayers = []
 
@@ -180,20 +186,21 @@ def GetAutoModelConfig(args,inputpath):
 
     for i in range(100):
         for name, shape in shapes.items():
-            if f"blocks.{i}." in name:
+            if f"blocks.{i}." in name or f"layers.{i}." in name:
                 num_totallayers += 1
                 break
 
-    for i in range(num_totallayers):
-        for name, shape in shapes.items():
-            if f"blocks.{i}.q_proj" in name:
-                rwkvlayers.append(i)
-                break
-            else:
-                rwkvlayers.append(i)
-                break
+    
 
     if rwkvarch == "x070":
+        for i in range(num_totallayers):
+            for name, shape in shapes.items():
+                if f"blocks.{i}.q_proj" in name:
+                    rwkvlayers.append(i)
+                    break
+                else:
+                    rwkvlayers.append(i)
+                    break
         for name, shape in shapes.items():
             if "r_k" in name:
                 headsize = shape[1] #r_k[h,n]
@@ -217,6 +224,59 @@ def GetAutoModelConfig(args,inputpath):
             if "emb" in name or "embedding" in name:
                 vocabsize = shape[0]
                 break
+    
+    if rwkvarch == "hxa079":
+        args.gqa_attention_hybrid_layers = []
+        for i in range(num_totallayers):
+            for name, shape in shapes.items():
+                if f"layers.{i}.self_attn.q_proj" in name:
+                    args.gqa_attention_hybrid_layers.append(i)
+                    break
+
+        args.rope_theta = modelconfig["rope_theta"]
+        args.rms_norm_eps = modelconfig["rms_norm_eps"]
+
+        args.rk_norm = 0
+        for name, shape in shapes.items():
+            if "r_norm" in name:
+                args.rk_norm = 1
+                break
+
+        args.rkv_bias = 0
+        for name, shape in shapes.items():
+            if "receptance.bias" in name:
+                args.rkv_bias = 1
+                break
+        
+              
+        for name, shape in shapes.items():
+            if "r_k" in name:
+                headsize = shape[1] #r_k[h,n]
+            if "w1" in name:
+                num_lora_w = shape[1]
+            if "v1" in name:
+                num_lora_v = shape[1]
+            if "g1" in name:
+                num_lora_g = shape[1]
+            if "a1" in name:
+                num_lora_a = shape[1]
+            if "k1" in name:
+                num_lora_k = shape[1]
+
+        for name, shape in shapes.items():
+            if "self_attn.receptance.weight" in name:
+                hiddensize=shape[1]
+                num_attention_heads = shape[0] // headsize
+            if "self_attn.key.weight" in name:
+                num_kv_heads = shape[0] // headsize
+
+        for name, shape in shapes.items():
+            if "embed_tokens" in name or "embedding" in name:
+                vocabsize = shape[0]
+                break
+        args.gqa_attention_heads = num_attention_heads
+        args.gqa_kv_heads = num_kv_heads
+        args.dim_ffn = modelconfig["intermediate_size"]
 
     args.my_testing = rwkvarch
     args.head_size_a = headsize
@@ -239,9 +299,16 @@ def GetAutoModelConfig(args,inputpath):
     print(f"n_embd = {hiddensize}")
     print(f"num_lora_w = {num_lora_w}")
     print(f"num_lora_v = {num_lora_v}")
+    print(f"num_lora_k = {num_lora_k}")
     print(f"num_lora_g = {num_lora_g}")
     print(f"num_lora_a = {num_lora_a}")
+    print(f"rope_theta = {args.rope_theta}")
+    print(f"rms_norm_eps = {args.rms_norm_eps}")
+    print(f"gqa_attention_hybrid_layers = {args.gqa_attention_hybrid_layers}")
+    print(f"rk_norm = {args.rk_norm}")
+    print(f"rkv_bias = {args.rkv_bias}")
     print(f"-----------------------------------------------------")
+    #exit()
     return args
 
 # 使用例
