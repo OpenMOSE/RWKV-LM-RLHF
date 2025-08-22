@@ -165,7 +165,7 @@ def training_step_sft(self, batch, batch_idx):
                     loss = smooth_loss.mean()
                     #print('no mask')
                 else:
-                    print(smooth_loss)
+                    #print(smooth_loss)
 
                     smooth_loss = torch.sum(smooth_loss * mask) / sum_mask
                     loss = smooth_loss
@@ -177,8 +177,8 @@ def training_step_sft(self, batch, batch_idx):
                 self.trainer.smooth_loss = float(smooth_loss.mean())
 
                 self.trainer.realproceedtokens =float(max_len)
-
-                return L2Wrap.apply(loss, student_logits)
+                return loss
+                #return L2Wrap.apply(loss, student_logits)
             
 
 

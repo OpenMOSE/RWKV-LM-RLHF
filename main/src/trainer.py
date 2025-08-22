@@ -8,7 +8,60 @@ from pytorch_lightning.utilities import rank_zero_info, rank_zero_only
 from .model import LAYER_CONFIG
 from .layerprofiler import v7_additional_parameters
 import gc
+def RenameToHFStyle(z,inputkey,gqa=0):
+    if gqa == 1:
+        name_mapping = {
+            #'model.': '',
+            'blocks.':'model.layers.',
+            'att.':'self_attn.',
+            'ffn.': 'mlp.',
+            'gate_up.':'gate_up_proj.',
+            'down.':'down_proj.',
+            'gate.':'gate_proj.',
+            'up.':'up_proj.',
+            'ln1.':'input_layernorm.',
+            'ln2.':'post_attention_layernorm.',
+            'head.':'lm_head.',
+            'ln_r.':'q_norm.',
+            'ln_k.':'k_norm.',
+            'ln_out.':'model.norm.',
+            'emb.':'model.embed_tokens.'
+        }
+    else:
+        name_mapping = {
+            #'model.': '',
+            'blocks.':'model.layers.',
+            'att.':'self_attn.',
+            'ffn.': 'mlp.',
+            'gate_up.':'gate_up_proj.',
+            'down.':'down_proj.',
+            'gate.':'gate_proj.',
+            'up.':'up_proj.',
+            'ln1.':'input_layernorm.',
+            'ln2.':'post_attention_layernorm.',
+            'head.':'lm_head.',
+            'ln_r.':'r_norm.',
+            'ln_k.':'k_norm.',
+            'ln_out.':'model.norm.',
+            'emb.':'model.embed_tokens.'
+        }
+    
+    #new_state_dict = OrderedDict()
 
+    old_key = inputkey
+    new_key = old_key
+    for old_pattern, new_pattern in name_mapping.items():
+        new_key = new_key.replace(old_pattern, new_pattern)
+
+    if new_key != old_key:
+        z[new_key] = z[old_key].detach().clone().to(z[old_key].dtype)
+        print(f'old = {old_key} new = {new_key}')
+        z[old_key] = None
+        del z[old_key]
+
+    return z
+
+import torch
 def my_save(args, trainer, dd, ff):
     if '14b-run1' in ff:
         fn = ff.split('/')[-1]
@@ -298,11 +351,13 @@ class train_callback(pl.Callback):
                                 lora_dict[key] = LatestState[i]
                                 state_dict[key] = LatestState[i]
 
-                print(state_dict.keys())
+                #print(state_dict.keys())
 
 
 
                 try:
+
+
                     my_save(
                         args, trainer,
                         lora_dict,

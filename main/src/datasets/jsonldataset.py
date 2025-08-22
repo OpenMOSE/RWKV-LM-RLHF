@@ -302,7 +302,7 @@ class JSONLOnDemandOffsetDataset(Dataset):
 
         if seq_len > 1:
             padded_tokens_input[:seq_len - 1] = tokens[:seq_len - 1]
-            padded_tokens_target[:seq_len - 1] = tokens[1:seq_len]
+            padded_tokens_target[:seq_len - 1] =tokens[1:seq_len]
             attention_mask[:seq_len - 1] = 1.0
 
             #arraywmask = tokens[:seq_len - 1]

@@ -97,7 +97,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--warmup_steps", default=-1, type=int)  # try 50 if you load a model
     parser.add_argument("--beta1", default=0.9, type=float)
-    parser.add_argument("--beta2", default=0.99, type=float)  # use 0.999 when your model is close to convergence
+    parser.add_argument("--beta2", default=0.999, type=float)  # use 0.999 when your model is close to convergence
     parser.add_argument("--adam_eps", default=1e-8, type=float)
     parser.add_argument("--grad_cp", default=1, type=int)  # gradient checkpt: saves VRAM, but slower
     parser.add_argument("--dropout", default=0, type=float) # try 0.01 / 0.02 / 0.05 / 0.1
@@ -168,7 +168,7 @@ if __name__ == "__main__":
     parser.add_argument("--distillation", default=0, type=int)
     parser.add_argument("--temperature", default=2.0, type=float)
     parser.add_argument("--alpha", default=0.5, type=float)
-    parser.add_argument("--smoothing", default=0.001, type=float)
+    parser.add_argument("--smoothing", default=0.0, type=float)
     parser.add_argument("--top_k", default=100, type=int)
 
     
@@ -607,6 +607,8 @@ if __name__ == "__main__":
             # 明示的にメモリを解放
             del file_state_dict
             gc.collect()  # ガベージコレクションを強制実行
+
+        #exit()
         
         print(f"Successfully loaded {len(state_dict)} parameters")
         return state_dict
@@ -620,7 +622,9 @@ if __name__ == "__main__":
                 if k.startswith('_forward_module.'):
                     load_dict[k.replace('_forward_module.','')] = load_dict[k]
                     del load_dict[k]
+            args.HF_Mode = False
         else:
+            args.HF_Mode = True
             load_dict = load_split_safetensors(args.load_model)
             load_keys = list(load_dict.keys())
 

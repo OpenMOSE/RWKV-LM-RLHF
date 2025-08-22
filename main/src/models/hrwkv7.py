@@ -52,6 +52,7 @@ class T5RMSNorm(nn.Module):
         hidden_states = hidden_states.to(torch.float32)
         variance = hidden_states.pow(2).mean(-1, keepdim=True)
         hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
+        #print(self.variance_epsilon)
         return self.weight * hidden_states.to(input_dtype)
 
     def extra_repr(self):
@@ -644,6 +645,10 @@ if 'xa07' in ModelGeneration:
             self.n_head = args.gqa_attention_heads
             self.kv_n_head = args.gqa_kv_heads
             self.attention_n_head = args.gqa_attention_heads
+            self.num_attention_heads = args.gqa_attention_heads
+            self.num_key_value_heads = self.kv_n_head
+
+            self.num_key_value_groups = self.num_attention_heads // self.num_key_value_heads
             assert args.dim_att % self.n_head == 0
             H = self.n_head
             N = self.head_size
@@ -718,6 +723,8 @@ if 'xa07' in ModelGeneration:
                 else:
                     rkv_bias = False
 
+                #
+
 
                 self.receptance = make_linear_att(C, self.head_size*self.attention_n_head, bias=rkv_bias,n_layer=self.layer_id,pname='att.receptance')
                 #GQAStyle
@@ -733,28 +740,89 @@ if 'xa07' in ModelGeneration:
           
 
         #@torch.compile
-        def forward(self, x, v_first,k_first,passthrough = False):
-            B, T, C = x.size()
-            H = self.n_head
+        # def forward(self, x, v_first,k_first,passthrough = False):
+        #     B, T, C = x.size()
+        #     H = self.n_head
+
+        #    # print(HEAD_SIZE)
         
-            xr = xw = xk = xv = xa = xg = x            
+        #     xr = xw = xk = xv = xa = xg = x            
 
-            r = self.receptance(xr,passthrough)
-            w = -F.softplus(-(self.w0 + torch.tanh(xw @ self.w1) @ self.w2)) - 0.5
-            k = self.key(xk,passthrough)
-            v = self.value(xv,passthrough)
+        #     r = self.receptance(xr,passthrough)
+        #     w = -F.softplus(-(self.w0 + torch.tanh(xw @ self.w1) @ self.w2)) - 0.5
+        #     k = self.key(xk,passthrough)
+        #     v = self.value(xv,passthrough)
 
-            if self.args.rk_norm:
-                r = self.ln_r(r.view(B,T,H,self.head_size))
-                k = self.ln_k(k.view(B,T,self.kv_n_head,self.head_size))
+        #     if self.args.rk_norm:
+        #         r = self.ln_r(r.view(B,T,H,self.head_size))
+        #         k = self.ln_k(k.view(B,T,self.kv_n_head,self.head_size))
+        #     else:
+        #         r = r.view(B,T,H,self.head_size)
+
+        #     g = torch.sigmoid(xg @ self.g1) @ self.g2
+
+        #     k = k.view(B, T, self.kv_n_head, self.head_size)
+        #     v = v.view(B, T, self.kv_n_head, self.head_size)
+
+        #     cos, sin, inv_freq_own = compute_qwen3_rope_cache(T, self.head_size, 'cuda', torch.float32, self.rope_theta)
+
+        #     self.cos=cos.to(dtype=torch.bfloat16)
+        #     self.sin=sin.to(dtype=torch.bfloat16)
+
+        #     r, k = apply_rotary_pos_emb(r, k, self.cos,self.sin, unsqueeze_dim=2)
+
+        #     #print(v_first)
+        #     #print(k_first)
+
+        #     if self.layer_id == 0:
+        #         v_first = v # store the v of the first layer
+        #         k_first = k # store the k of the first layer
+        #     else:
+        #         v = v + (v_first - v) * torch.sigmoid(self.v0 + (x @ self.v1) @ self.v2).view(B,T,self.kv_n_head,-1) # add value residual
+        #         k = k + (k_first - k) * torch.sigmoid(self.k0 + (x @ self.k1) @ self.k2).view(B,T,self.kv_n_head,-1) # add key residual
+
+        #     # repeat k/v heads if n_kv_heads < n_heads
+        #     #modified repeat_kv B,T,H_kv,D) -> B,T,H,D -> B,T,C
+        #     k = repeat_kv(k, self.n_head // self.kv_n_head)#reshape(B,T,-1) #(B,T,C)
+        #     v = repeat_kv(v, self.n_head // self.kv_n_head)#reshape(B,T,-1) #(B,T,C)
+        #     r = r.view(B, T, -1)
+        #     k = k.view(B, T, -1)
+        #     v = v.view(B, T, -1)
+
+        #     #so now all B,T,C tensors
+        #     a = torch.sigmoid(self.a0 + (xa @ self.a1) @ self.a2) # a is "in-context learning rate"
+        #     kk = F.normalize(k.view(B,T,H,-1), dim=-1, p=2.0).view(B,T,C)
+        #     k = k * (1.0 - w + a)
+        #     x = RUN_CUDA_RWKV7g(r, w, k, v, -kk, kk*a,HEAD_SIZE=self.head_size).view(B, T, C)
+        #     x = x * (float(self.head_size) ** -0.5)
+        #     x = x + ((r.view(B,T,H,-1)*k.view(B,T,H,-1)*self.r_k).sum(dim=-1, keepdim=True) * v.view(B,T,H,-1)).view(B,T,C)
+        #     x = self.output(x*g,passthrough)
+        #     return x, v_first,k_first
+        
+        def forward(self, x, v_first,k_first,passthrough = False): 
+            B, T, C = x.size()
+            #removed tokenshift
+            H = self.num_attention_heads#self.n_head
+
+
+            if self.args.rk_norm == True:
+                r = self.r_norm(self.receptance(x).view(B,T,self.num_attention_heads,-1))
+                k = self.k_norm(self.key(x).view(B,T,self.num_key_value_heads,-1))
             else:
-                r = r.view(B,T,H,self.head_size)
+                r = self.receptance(x).view(B,T,self.num_attention_heads,-1)
+                k = self.key(x).view(B,T,self.num_key_value_heads,-1)
 
-            g = torch.sigmoid(xg @ self.g1) @ self.g2
+            
+            w = -F.softplus(-(self.w0 + torch.tanh(x @ self.w1) @ self.w2)) -0.5
+            
+            v = self.value(x)
 
-            k = k.view(B, T, self.kv_n_head, self.head_size)
-            v = v.view(B, T, self.kv_n_head, self.head_size)
 
+            k = k.view(B, T, self.num_key_value_heads, self.head_size)
+            v = v.view(B, T, self.num_key_value_heads, self.head_size)
+
+            #cos, sin = position_embeddings
+            #disable hf's pos calc
             cos, sin, inv_freq_own = compute_qwen3_rope_cache(T, self.head_size, 'cuda', torch.float32, self.rope_theta)
 
             self.cos=cos.to(dtype=torch.bfloat16)
@@ -766,26 +834,36 @@ if 'xa07' in ModelGeneration:
                 v_first = v # store the v of the first layer
                 k_first = k # store the k of the first layer
             else:
-                v = v + (v_first - v) * torch.sigmoid(self.v0 + (x @ self.v1) @ self.v2).view(B,T,self.kv_n_head,-1) # add value residual
-                k = k + (k_first - k) * torch.sigmoid(self.k0 + (x @ self.k1) @ self.k2).view(B,T,self.kv_n_head,-1) # add key residual
+                v = v + (v_first - v) * torch.sigmoid(self.v0 + (x @ self.v1) @ self.v2).view(B,T,self.num_key_value_heads,-1) # add value residual
+                k = k + (k_first - k) * torch.sigmoid(self.k0 + (x @ self.k1) @ self.k2).view(B,T,self.num_key_value_heads,-1) # add key residual
 
             # repeat k/v heads if n_kv_heads < n_heads
             #modified repeat_kv B,T,H_kv,D) -> B,T,H,D -> B,T,C
-            k = repeat_kv(k, self.n_head // self.kv_n_head)#reshape(B,T,-1) #(B,T,C)
-            v = repeat_kv(v, self.n_head // self.kv_n_head)#reshape(B,T,-1) #(B,T,C)
-            r = r.view(B, T, -1)
+            k = repeat_kv(k, self.num_key_value_groups)
+            v = repeat_kv(v, self.num_key_value_groups)
+
             k = k.view(B, T, -1)
             v = v.view(B, T, -1)
 
             #so now all B,T,C tensors
-            a = torch.sigmoid(self.a0 + (xa @ self.a1) @ self.a2) # a is "in-context learning rate"
-            kk = F.normalize(k.view(B,T,H,-1), dim=-1, p=2.0).view(B,T,C)
+
+            g = torch.sigmoid(x @ self.g1) @ self.g2
+            a = torch.sigmoid(self.a0 + (x @ self.a1) @ self.a2) # a is "in-context learning rate"
+
+            kk = F.normalize(k.view(B,T,H,-1), dim=-1, p=2.0).view(B,T,-1)
             k = k * (1.0 - w + a)
+
+            # x = RUN_CUDA_RWKV7g(r, w, k, v, -kk, kk*a,self.head_size,attention_mask)
+            # x = x.view(B,T,-1)
             x = RUN_CUDA_RWKV7g(r, w, k, v, -kk, kk*a,HEAD_SIZE=self.head_size).view(B, T, C)
-            x = x * (float(self.head_size) ** -0.5)
-            x = x + ((r.view(B,T,H,-1)*k.view(B,T,H,-1)*self.r_k).sum(dim=-1, keepdim=True) * v.view(B,T,H,-1)).view(B,T,C)
-            x = self.output(x*g,passthrough)
-            return x, v_first,k_first
+
+            x = x * (self.head_size ** -0.5) 
+
+            x = x + ((r.view(B,T,H,-1)*k.view(B,T,H,-1)*self.r_k).sum(dim=-1, keepdim=True) * v.view(B,T,H,-1)).view(B,T,-1)
+
+            x = self.output(x*g)
+
+            return x, v_first, k_first
 
 
     class HRWKV_GQA_Nope_Attention(nn.Module):
@@ -837,11 +915,9 @@ if 'xa07' in ModelGeneration:
         def forward(
             self,
             hidden_states: torch.Tensor,
+            x_emb,
             passthrough = False,
-            attention_mask: Optional[torch.Tensor] = None,
-        # past_key_value: Optional[Cache] = None,
-        # cache_position: Optional[torch.LongTensor] = None,
-        # **kwargs,
+   
         ):
             input_shape = hidden_states.shape[:-1]
             hidden_shape = (*input_shape, -1, self.head_size)
@@ -852,6 +928,7 @@ if 'xa07' in ModelGeneration:
                 key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
                 value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
             else:
+                #print('ugytu')
                 query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
                 key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
                 value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
@@ -860,55 +937,17 @@ if 'xa07' in ModelGeneration:
                key_states = repeat_kv_original(key_states, self.num_key_value_groups)
                value_states = repeat_kv_original(value_states, self.num_key_value_groups)
 
-            # if attention_mask is not None:
-            # #    padding_mask = prepare_mask_for_sdpa_float(attention_mask)
-            # #    attention_mask = None # padding_mask
-            # #    #padding_mask.unsqueeze(-1)
-            # #    padding_expanded = padding_mask.unsqueeze(-1)  # (B, T, 1)
-            # #    key_states = key_states * padding_expanded
-            # #    value_states = value_states * padding_expanded
-            #    padding_mask = create_causal_padding_mask(T,attention_mask)
-            #    attention_mask = padding_mask
-            #attention_mask = False
-            # mask_expanded = attention_mask.unsqueeze(1).unsqueeze(-1)  # [B, 1, T, 1]
-            # # または
-            
-            # key_states = key_states * mask_expanded  # [B, n_heads, T, head_dim] * [B, 1, T, 1]
-            # value_states = value_states * mask_expanded  # broadcasting で正しく適用される
-
-
-            # attention_interface: Callable = sdpa_attention_forward
-
-            # attn_output, attn_weights = attention_interface(
-            #     self,
-            #     query_states,
-            #     key_states,
-            #     value_states,
-            #     attention_mask,
-            #     dropout=0.0,# if not self.training else self.attention_dropout,
-            #     scaling=self.scaling,
-            #     sliding_window=False,  # diff with Llama
-            # # **kwargs,
-            # )
-
             query_states = query_states.contiguous()
             key_states = key_states.contiguous()
             value_states = value_states.contiguous()
-            #is_causal = True
-    
-            # if torch.jit.is_tracing() and isinstance(is_causal, torch.Tensor):
-            #     is_causal = is_causal.item()
-             # Paddingなしの場合は、Causal maskのみ
-            # causal_mask = torch.tril(torch.ones(T, T, device=hidden_states.device))
-            # attn_mask = torch.where(causal_mask == 1, 0.0, float('-inf'))
-            # attn_mask = attn_mask.unsqueeze(0).unsqueeze(0).to(dtype=torch.bfloat16)  # [1, 1, T, T]
+
 
             attn_output = torch.nn.functional.scaled_dot_product_attention(
                 query_states,
                 key_states,
                 value_states,
                # attn_mask=attn_mask,
-                dropout_p=0,
+                dropout_p=0.2,
                 scale=self.scaling,
                 is_causal=True,
             )

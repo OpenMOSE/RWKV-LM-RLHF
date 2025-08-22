@@ -4,18 +4,18 @@
   "wandb_project": "RWKV-LM-RLHF hxa079-21B DFT",
   "input_model_path": "/home/client/Projects/RWKV-Reka-3.1-Flash",
   "input_checkpoint_path": "",
-  "output_project_path": "myfolder/hxa079_output_tsundere",
+  "output_project_path": "myfolder/hxa079_output_tsundere5",
   "profile_config":{
-    "profile_path": "layerprofile/44_TEST_lora_light.csv"
+    "profile_path": "layerprofile/44_TEST_lora_light_wkv.csv"
   },
   "quantization": {
-    "att_method" : "nf4",
+    "att_method" : "int8",
     "ffn_method" : "nf4",
-    "head_method" : "nf4"
+    "head_method" : "int8"
   },
   "trainer": {
     "type": "sft",
-    "sft_method": "dft",
+    "sft_method": "sft",
     "args": {
       "epoch_count": 100,
       "epoch_steps": 100,
@@ -23,17 +23,17 @@
       "warmup_steps": 100,
       "ctx_len" : 1024,
       "micro_bsz": 8,
-      "gradient_accumulation_steps": 4,
+      "gradient_accumulation_steps": 2,
       "only_train_linears": true,
       "sft_jsonmode": 1,
       "sft_jsonmode_tokenizermode": "rekaflash3",
       "random_mode": 1,
       "dataset_path":"myfolder/dataset_tsundere",
-      "infctx_dataset_multiplier": 8
+      "infctx_dataset_multiplier": 2
     }
   },
   "devices":1,
   "internal_precision": "bf16",
-  "strategy":"deepspeed_stage_2_offload",
-  "gpu_arch":"cuda"
+  "strategy":"deepspeed_stage_2",
+  "gpu_arch":"backstepping_longhead"
 }

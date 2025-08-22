@@ -15,7 +15,7 @@
   },
   "trainer": {
     "type": "sft",
-    "sft_method": "dft",
+    "sft_method": "sft",
     "args": {
       "epoch_count": 100,
       "epoch_steps": 100,
@@ -28,7 +28,8 @@
       "sft_jsonmode": 1,
       "sft_jsonmode_tokenizermode": "world",
       "random_mode": 1,
-      "dataset_path":"myfolder/dataset_psycho",
+      "dataset_path":"myfolder/dataset_tsundere",
+ 
       "infctx_dataset_multiplier": 2
     }
   },

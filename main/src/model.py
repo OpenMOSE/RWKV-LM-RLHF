@@ -165,65 +165,35 @@ if 'xa07' in os.environ["RWKV_MY_TESTING"]:
                     self.ffn = SwiGLU_MLP(args, layer_id)
             else:
                 raise "currently only support hxa"
-                        
- 
 
 
-        if os.environ["RWKV_TRAIN_TYPE"] == 'infctx':
-            def forward(self, x, v_first,last_state: BlockState, x_emb=None):
-
-                x_attn, v_first, att_state = self.att(self.ln1(x), v_first, last_state.time_mix_state)
-
-                x = x + x_attn
-
-                ffn_out ,ffn_state = self.ffn(self.ln2(x), last_state.channel_mix_state)
-
-                x = x + ffn_out
-                return x, v_first ,BlockState(att_state, ffn_state)
-        else:
-            ModelMode = os.environ["RWKV_MY_TESTING"]
-
-            if 'hxa' in ModelMode:
-                def forward(self, x, v_first,k_first=None,passthrough = False,attention_mask=None,x_emb=None):
-
-                    if self.layer_id in self.args.gqa_attention_hybrid_layers:
-                        #GQA Mode
-                        x_attn = self.att(self.ln1(x),passthrough,attention_mask)                        
-                    else:
-                        #RWKV Mode
-                        x_attn, v_first, k_first = self.att(self.ln1(x), v_first,k_first, passthrough)
-                        
-                    
-                    x = x + x_attn
-
-                    x = x + self.ffn(self.ln2(x),passthrough)
-
-                    return x, v_first,k_first
+        def forward(self, x, v_first,k_first=None,passthrough = False,x_emb=None):
+            
+            if self.layer_id in self.args.gqa_attention_hybrid_layers:
+                #GQA Mode
+                #print( self.layer_id)
+                x_attn = self.att(self.ln1(x),x_emb,passthrough)                        
             else:
-                def forward(self, x, v_first,passthrough = False,x_emb=None):
-        
-                    if self.args.state:
-                        x_attn, v_first, out_state = self.att(self.ln1(x), v_first, passthrough)
-                    else:
-                        x_attn, v_first = self.att(self.ln1(x), v_first, passthrough)
-                    x = x + x_attn
+                #RWKV Mode
+                x_attn, v_first, k_first = self.att(self.ln1(x), v_first,k_first, passthrough)
+                
+            
+            x = x + x_attn
 
-                    x = x + self.ffn(self.ln2(x),passthrough)
+            x = x + self.ffn(self.ln2(x),passthrough)
 
-                    if self.args.state:
-                        return x, v_first, out_state
-                    else:
-                        return x, v_first
-            @torch.no_grad()
-            def forward_rnn(self, x, v_first,last_state: BlockState,passthrough=False):
+            return x, v_first,k_first
 
-                x_attn, v_first, att_state = self.att.forward_rnn(self.ln1(x), v_first, last_state.time_mix_state,passthrough)
-                x = x + x_attn
+        @torch.no_grad()
+        def forward_rnn(self, x, v_first,last_state: BlockState,passthrough=False):
 
-                ffn_out ,ffn_state = self.ffn.forward_rnn(self.ln2(x), last_state.channel_mix_state,passthrough)
+            x_attn, v_first, att_state = self.att.forward_rnn(self.ln1(x), v_first, last_state.time_mix_state,passthrough)
+            x = x + x_attn
 
-                x = x + ffn_out
-                return x, v_first ,BlockState(att_state, ffn_state)
+            ffn_out ,ffn_state = self.ffn.forward_rnn(self.ln2(x), last_state.channel_mix_state,passthrough)
+
+            x = x + ffn_out
+            return x, v_first ,BlockState(att_state, ffn_state)
 if 'x060' in os.environ["RWKV_MY_TESTING"]:
     class Block(nn.Module):
         def __init__(self, args, layer_id):
@@ -356,119 +326,117 @@ class RWKV(pl.LightningModule):
         assert args.dim_att % 32 == 0
         assert args.dim_ffn % 32 == 0
 
-        if cold_adapter_dict is not None:
-            cold_adapter_keys = list(cold_adapter_dict.keys())
-            mode = 'none'
-            for ckeys in cold_adapter_keys:
-                if 'lora' in ckeys:
-                    mode = 'lora'
-                elif 'bone' in ckeys:
-                    mode = 'bone'
-                load_dict[ckeys] = cold_adapter_dict[ckeys]
+        # if cold_adapter_dict is not None:
+        #     cold_adapter_keys = list(cold_adapter_dict.keys())
+        #     mode = 'none'
+        #     for ckeys in cold_adapter_keys:
+        #         if 'lora' in ckeys:
+        #             mode = 'lora'
+        #         elif 'bone' in ckeys:
+        #             mode = 'bone'
+        #         load_dict[ckeys] = cold_adapter_dict[ckeys]
 
-            def Attach_Adapter(keyname,weight,adapter,mode,scaling=2.0,device='cuda'): #from JL-er lora merge inspired
-                beforeDevice = str(weight.device)
-                if beforeDevice == 'cpu':
-                    weight = weight.to(device=device)      
+        #     def Attach_Adapter(keyname,weight,adapter,mode,scaling=2.0,device='cuda'): #from JL-er lora merge inspired
+        #         beforeDevice = str(weight.device)
+        #         if beforeDevice == 'cpu':
+        #             weight = weight.to(device=device)      
         
-                print(f'AttachAdapter = {keyname}')
-                if keyname.endswith('.weight') or keyname.endswith('head'):
-                    adapterkeys = list(adapter.keys())
+        #         print(f'AttachAdapter = {keyname}')
+        #         if keyname.endswith('.weight') or keyname.endswith('head'):
+        #             adapterkeys = list(adapter.keys())
 
-                    if mode == 'lora':
-                        print(f'scaling = {scaling}')
-                        prefix = keyname[:-len('.weight')]
-                        lora_A = prefix + '.lora_A'
-                        lora_B = prefix + '.lora_B'
-                        if lora_A in adapterkeys:
-                            w=adapter
-                            assert lora_B in adapterkeys
-                            print(f'lora merging {lora_A} and {lora_B} into {keyname}')
+        #             if mode == 'lora':
+        #                 print(f'scaling = {scaling}')
+        #                 prefix = keyname[:-len('.weight')]
+        #                 lora_A = prefix + '.lora_A'
+        #                 lora_B = prefix + '.lora_B'
+        #                 if lora_A in adapterkeys:
+        #                     w=adapter
+        #                     assert lora_B in adapterkeys
+        #                     print(f'lora merging {lora_A} and {lora_B} into {keyname}')
                             
-                            assert w[lora_B].shape[1] == w[lora_A].shape[0]
+        #                     assert w[lora_B].shape[1] == w[lora_A].shape[0]
                             
-                            lora_r = w[lora_B].shape[1]
+        #                     lora_r = w[lora_B].shape[1]
 
-                            w[lora_A] = w[lora_A].to(device=device)
+        #                     w[lora_A] = w[lora_A].to(device=device)
                             
-                            w[lora_B] = w[lora_B].to(device=device)
+        #                     w[lora_B] = w[lora_B].to(device=device)
                             
-                            weight = weight + w[lora_B] @ w[lora_A] * scaling
-                            del w[lora_A]
-                            del w[lora_B]
-                            if beforeDevice == 'cpu':
-                                weight = weight.to(device='cpu')
-                            return weight
-                        for key in adapterkeys:
-                            if key == keyname:
-                                weight = adapter[key].to(dtype=torch.bfloat16,device=device)
-                                print(f'key = {key} is swapped from Adapter')
-                        if beforeDevice == 'cpu':
-                                weight = weight.to(device='cpu')
-                        return weight
-                    elif mode == 'bone':
-                        prefix = keyname[:-len('.weight')]
-                        gbmm = prefix + '.bone'
-                        print(f'gbmm target = {gbmm}')
-                        if gbmm in adapterkeys:
-                            w=adapter
-                            print(f'bone merging {gbmm} into {keyname}')
-                            w[gbmm] = w[gbmm].to(device=device)
-                            b,r,_ = w[gbmm].shape
-                            bone = rearrange(weight, '(a r1) (b r2) -> a b r1 r2', r1 = r, r2 = r)@w[gbmm]+w[gbmm]
-                            weight += rearrange(bone, 'a b r1 r2 ->(a r1) (b r2) ')
-                            print(weight)
-                            del w[gbmm]
-                            if beforeDevice == 'cpu':
-                                weight = weight.to(device='cpu')
-                            return weight
-                        #adapterkeys = list(adapter.keys())
-                        for key in adapterkeys:
-                            if key == keyname:
-                                weight = adapter[key].to(dtype=torch.bfloat16,device=device)
-                                print(f'key = {key} is swapped from Adapter')
-                        if beforeDevice == 'cpu':
-                                weight = weight.to(device='cpu')
-                        return weight
-                    else:
-                        if beforeDevice == 'cpu':
-                                weight = weight.to(device='cpu')
-                        return weight
-                else:
-                    adapterkeys = list(adapter.keys())
-                    for key in adapterkeys:
-                        if key == keyname:
-                            weight = adapter[key].to(dtype=torch.bfloat16,device=device)
-                            print(f'key = {key} is swapped from Adapter')
-                    #print('no target bone merge')
-                    if beforeDevice == 'cpu':
-                                weight = weight.to(device='cpu')
-                    return weight
-            if mode == 'lora' or mode == 'bone':
-                print('Cold Adapter Merging Mode')
-                load_dict_keys = list(load_dict.keys())
-                for key in load_dict_keys:
-                    load_dict[key] = Attach_Adapter(key,load_dict[key],cold_adapter_dict,mode)
+        #                     weight = weight + w[lora_B] @ w[lora_A] * scaling
+        #                     del w[lora_A]
+        #                     del w[lora_B]
+        #                     if beforeDevice == 'cpu':
+        #                         weight = weight.to(device='cpu')
+        #                     return weight
+        #                 for key in adapterkeys:
+        #                     if key == keyname:
+        #                         weight = adapter[key].to(dtype=torch.bfloat16,device=device)
+        #                         print(f'key = {key} is swapped from Adapter')
+        #                 if beforeDevice == 'cpu':
+        #                         weight = weight.to(device='cpu')
+        #                 return weight
+        #             elif mode == 'bone':
+        #                 prefix = keyname[:-len('.weight')]
+        #                 gbmm = prefix + '.bone'
+        #                 print(f'gbmm target = {gbmm}')
+        #                 if gbmm in adapterkeys:
+        #                     w=adapter
+        #                     print(f'bone merging {gbmm} into {keyname}')
+        #                     w[gbmm] = w[gbmm].to(device=device)
+        #                     b,r,_ = w[gbmm].shape
+        #                     bone = rearrange(weight, '(a r1) (b r2) -> a b r1 r2', r1 = r, r2 = r)@w[gbmm]+w[gbmm]
+        #                     weight += rearrange(bone, 'a b r1 r2 ->(a r1) (b r2) ')
+        #                     print(weight)
+        #                     del w[gbmm]
+        #                     if beforeDevice == 'cpu':
+        #                         weight = weight.to(device='cpu')
+        #                     return weight
+        #                 #adapterkeys = list(adapter.keys())
+        #                 for key in adapterkeys:
+        #                     if key == keyname:
+        #                         weight = adapter[key].to(dtype=torch.bfloat16,device=device)
+        #                         print(f'key = {key} is swapped from Adapter')
+        #                 if beforeDevice == 'cpu':
+        #                         weight = weight.to(device='cpu')
+        #                 return weight
+        #             else:
+        #                 if beforeDevice == 'cpu':
+        #                         weight = weight.to(device='cpu')
+        #                 return weight
+        #         else:
+        #             adapterkeys = list(adapter.keys())
+        #             for key in adapterkeys:
+        #                 if key == keyname:
+        #                     weight = adapter[key].to(dtype=torch.bfloat16,device=device)
+        #                     print(f'key = {key} is swapped from Adapter')
+        #             #print('no target bone merge')
+        #             if beforeDevice == 'cpu':
+        #                         weight = weight.to(device='cpu')
+        #             return weight
+        #     if mode == 'lora' or mode == 'bone':
+        #         print('Cold Adapter Merging Mode')
+        #         load_dict_keys = list(load_dict.keys())
+        #         for key in load_dict_keys:
+        #             load_dict[key] = Attach_Adapter(key,load_dict[key],cold_adapter_dict,mode)
 
-            if mode != 'none':
-                del cold_adapter_dict
+        #     if mode != 'none':
+        #         del cold_adapter_dict
 
 
         
-        if args.prefix_tuning == 1:
-            print('Prefix Softtoken tuning enabled')
-            self.prefix_token = nn.Parameter(torch.zeros(self.args.prefix_token_len, args.n_embd))
+        #if args.prefix_tuning == 1:
+        #    print('Prefix Softtoken tuning enabled')
+        #    self.prefix_token = nn.Parameter(torch.zeros(self.args.prefix_token_len, args.n_embd))
 
 
-        self.emb = make_emb(args.vocab_size, args.n_embd)
+        self.emb = nn.Embedding(args.vocab_size, args.n_embd)
 
 
         if 'xa07' in os.environ["RWKV_MY_TESTING"]:
             self.ln_out = T5RMSNorm(args.n_embd,args.rms_norm_eps)
         else:
             self.ln_out = nn.LayerNorm(args.n_embd)
-
-
 
         self.head = make_linear_head(args.n_embd, args.vocab_size, bias=False)
 
@@ -790,7 +758,14 @@ class RWKV(pl.LightningModule):
             H =  args.dim_att // args.head_size_a
             assert C==H*args.head_size_a
             
-            x = self.emb(idx)
+            if LAYER_CONFIG[f'emb']['mode'] == 'freeze':
+                x = self.cpu_checkpoint_embed(self.emb, idx)
+            else:
+                x = self.emb(idx)
+            #x = self.emb(idx)
+
+
+
             x_emb = x
             new_states = BlockStateList.empty(args.n_layer, B, args.n_embd, H,
                                             x.device, x.dtype)
@@ -826,10 +801,14 @@ class RWKV(pl.LightningModule):
             else:
                 B, T = idx.size()
                 assert T <= args.ctx_len, "Cannot forward, model ctx_len is exhausted."
-                x = self.emb(idx)
-                if self.args.state and self.args.prefix_tuning:
-                    Prefix_expanded = self.prefix_token.unsqueeze(0).repeat(B, 1, 1)
-                    x = torch.cat([Prefix_expanded, x], dim=1)
+                #x = self.emb(idx)
+                # if self.args.state and self.args.prefix_tuning:
+                #     Prefix_expanded = self.prefix_token.unsqueeze(0).repeat(B, 1, 1)
+                #     x = torch.cat([Prefix_expanded, x], dim=1)
+                if LAYER_CONFIG[f'emb']['mode'] == 'freeze':
+                    x = self.cpu_checkpoint_embed(self.emb, idx)
+                else:
+                    x = self.emb(idx)
 
             x_emb = x
 
@@ -847,11 +826,12 @@ class RWKV(pl.LightningModule):
                         if 'hxa' in os.environ["RWKV_MY_TESTING"]:
                             layer_mode = LAYER_CONFIG[f'{str(block.layer_id)}']['mode']
                             #if layer_mode == 'full' or layer_mode == 'freeze':
-                            if block.layer_id in args.gqa_attention_hybrid_layers:
-                                x, v_first,k_first= torch_checkpoint(block, x, v_first,k_first,passthrough,attention_mask,x_emb,use_reentrant=False)
+                            x, v_first,k_first = torch_checkpoint(block, x, v_first,k_first,passthrough,x_emb,use_reentrant=False)
+                            # if block.layer_id in args.gqa_attention_hybrid_layers:
+                            #     x, v_first,k_first= torch_checkpoint(block, x, v_first,k_first,passthrough,attention_mask,x_emb,use_reentrant=False)
                                 
-                            else:
-                                x, v_first,k_first = torch_checkpoint(block, x, v_first,k_first,passthrough,x_emb,use_reentrant=False)
+                            # else:
+                            #     x, v_first,k_first = torch_checkpoint(block, x, v_first,k_first,passthrough,x_emb,use_reentrant=False)
                       
                         else:
                             layer_mode = LAYER_CONFIG[f'{str(block.layer_id)}']['mode']

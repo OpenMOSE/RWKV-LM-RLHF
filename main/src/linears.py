@@ -427,7 +427,7 @@ class LoraLinear(nn.Module): # from RWKV-PEFT @JL-er Thanks :) Chaos Modified
             self.r = r
             nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
             nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
-            nn.init.zeros_(self.lora_A)
+            #nn.init.zeros_(self.lora_A)
             nn.init.zeros_(self.lora_B)
             self.bonemode = False
         self.pissa = False
