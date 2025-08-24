@@ -806,16 +806,16 @@ if 'xa07' in ModelGeneration:
 
 
             if self.args.rk_norm == True:
-                r = self.r_norm(self.receptance(x).view(B,T,self.num_attention_heads,-1))
-                k = self.k_norm(self.key(x).view(B,T,self.num_key_value_heads,-1))
+                r = self.r_norm(self.receptance(x,passthrough=passthrough).view(B,T,self.num_attention_heads,-1))
+                k = self.k_norm(self.key(x,passthrough=passthrough).view(B,T,self.num_key_value_heads,-1))
             else:
-                r = self.receptance(x).view(B,T,self.num_attention_heads,-1)
-                k = self.key(x).view(B,T,self.num_key_value_heads,-1)
+                r = self.receptance(x,passthrough=passthrough).view(B,T,self.num_attention_heads,-1)
+                k = self.key(x,passthrough=passthrough).view(B,T,self.num_key_value_heads,-1)
 
             
             w = -F.softplus(-(self.w0 + torch.tanh(x @ self.w1) @ self.w2)) -0.5
-            
-            v = self.value(x)
+
+            v = self.value(x,passthrough=passthrough)
 
 
             k = k.view(B, T, self.num_key_value_heads, self.head_size)
@@ -861,9 +861,78 @@ if 'xa07' in ModelGeneration:
 
             x = x + ((r.view(B,T,H,-1)*k.view(B,T,H,-1)*self.r_k).sum(dim=-1, keepdim=True) * v.view(B,T,H,-1)).view(B,T,-1)
 
-            x = self.output(x*g)
+            x = self.output(x*g,passthrough=passthrough)
 
             return x, v_first, k_first
+        
+
+        def forward_rnn(self, x, v_first,k_first, last_state: TimeMixState,passthrough = False): 
+            B, T, C = x.size()
+            #removed tokenshift
+            H = self.num_attention_heads#self.n_head
+            shift_state = last_state.shift_state
+            wkv_state = last_state.wkv_state.clone().contiguous() 
+
+
+            if self.args.rk_norm == True:
+                r = self.r_norm(self.receptance(x,passthrough=passthrough).view(B,T,self.num_attention_heads,-1))
+                k = self.k_norm(self.key(x,passthrough=passthrough).view(B,T,self.num_key_value_heads,-1))
+            else:
+                r = self.receptance(x,passthrough=passthrough).view(B,T,self.num_attention_heads,-1)
+                k = self.key(x,passthrough=passthrough).view(B,T,self.num_key_value_heads,-1)
+
+            
+            w = -F.softplus(-(self.w0 + torch.tanh(x @ self.w1) @ self.w2)) -0.5
+
+            v = self.value(x,passthrough=passthrough)
+
+
+            k = k.view(B, T, self.num_key_value_heads, self.head_size)
+            v = v.view(B, T, self.num_key_value_heads, self.head_size)
+
+            #cos, sin = position_embeddings
+            #disable hf's pos calc
+            cos, sin, inv_freq_own = compute_qwen3_rope_cache(T, self.head_size, 'cuda', torch.float32, self.rope_theta)
+
+            self.cos=cos.to(dtype=torch.bfloat16)
+            self.sin=sin.to(dtype=torch.bfloat16)
+
+            r, k = apply_rotary_pos_emb(r, k, self.cos,self.sin, unsqueeze_dim=2)
+
+            if self.layer_id == 0:
+                v_first = v # store the v of the first layer
+                k_first = k # store the k of the first layer
+            else:
+                v = v + (v_first - v) * torch.sigmoid(self.v0 + (x @ self.v1) @ self.v2).view(B,T,self.num_key_value_heads,-1) # add value residual
+                k = k + (k_first - k) * torch.sigmoid(self.k0 + (x @ self.k1) @ self.k2).view(B,T,self.num_key_value_heads,-1) # add key residual
+
+            # repeat k/v heads if n_kv_heads < n_heads
+            #modified repeat_kv B,T,H_kv,D) -> B,T,H,D -> B,T,C
+            k = repeat_kv(k, self.num_key_value_groups)
+            v = repeat_kv(v, self.num_key_value_groups)
+
+            k = k.view(B, T, -1)
+            v = v.view(B, T, -1)
+
+            #so now all B,T,C tensors
+
+            g = torch.sigmoid(x @ self.g1) @ self.g2
+            a = torch.sigmoid(self.a0 + (x @ self.a1) @ self.a2) # a is "in-context learning rate"
+
+            kk = F.normalize(k.view(B,T,H,-1), dim=-1, p=2.0).view(B,T,-1)
+            k = k * (1.0 - w + a)
+
+ 
+            #x = RUN_CUDA_RWKV7g(r, w, k, v, -kk, kk*a,HEAD_SIZE=self.head_size).view(B, T, C)
+            x, wkv_state = RUN_RWKV7_RECURRENT(r,k,v,w,-kk, kk*a,s=wkv_state,HEAD_SIZE=self.head_size)
+
+            x = x * (self.head_size ** -0.5) 
+
+            x = x + ((r.view(B,T,H,-1)*k.view(B,T,H,-1)*self.r_k).sum(dim=-1, keepdim=True) * v.view(B,T,H,-1)).view(B,T,-1)
+
+            x = self.output(x*g,passthrough=passthrough)
+
+            return x, v_first, k_first, TimeMixState(shift_state,wkv_state)
 
 
     class HRWKV_GQA_Nope_Attention(nn.Module):
@@ -915,7 +984,6 @@ if 'xa07' in ModelGeneration:
         def forward(
             self,
             hidden_states: torch.Tensor,
-            x_emb,
             passthrough = False,
    
         ):
@@ -923,19 +991,19 @@ if 'xa07' in ModelGeneration:
             hidden_shape = (*input_shape, -1, self.head_size)
             B, T, C = hidden_states.size()
 
-            if self.args.rk_norm:
-                query_states = self.q_norm(self.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
-                key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
-                value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-            else:
-                #print('ugytu')
-                query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-                key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-                value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+            # if self.args.rk_norm:
+            #     query_states = self.q_norm(self.q_proj(hidden_states,passthrough=passthrough).view(hidden_shape)).transpose(1, 2)
+            #     key_states = self.k_norm(self.k_proj(hidden_states,passthrough=passthrough).view(hidden_shape)).transpose(1, 2)
+            #     value_states = self.v_proj(hidden_states,passthrough=passthrough).view(hidden_shape).transpose(1, 2)
+            # else:
+            #     #print('ugytu')
+            query_states = self.q_proj(hidden_states,passthrough=passthrough).view(B,T,self.n_head,-1).transpose(1, 2)
+            key_states = self.k_proj(hidden_states,passthrough=passthrough).view(B,T,self.kv_n_head,-1).transpose(1, 2)
+            value_states = self.v_proj(hidden_states,passthrough=passthrough).view(B,T,self.kv_n_head,-1).transpose(1, 2)
 
-            if hasattr(self, "num_key_value_groups"):
-               key_states = repeat_kv_original(key_states, self.num_key_value_groups)
-               value_states = repeat_kv_original(value_states, self.num_key_value_groups)
+            #if hasattr(self, "num_key_value_groups"):
+            key_states = repeat_kv_original(key_states, self.num_key_value_groups)
+            value_states = repeat_kv_original(value_states, self.num_key_value_groups)
 
             query_states = query_states.contiguous()
             key_states = key_states.contiguous()
@@ -947,14 +1015,14 @@ if 'xa07' in ModelGeneration:
                 key_states,
                 value_states,
                # attn_mask=attn_mask,
-                dropout_p=0.2,
+                dropout_p=0.0,
                 scale=self.scaling,
                 is_causal=True,
             )
             attn_output = attn_output.transpose(1, 2).contiguous()
 
-            attn_output = attn_output.reshape(*input_shape, -1).contiguous()
-            attn_output = self.o_proj(attn_output)
+            attn_output = attn_output.reshape(B,T,C).contiguous()
+            attn_output = self.o_proj(attn_output,passthrough=passthrough)
             return attn_output#, attn_weights
         
         

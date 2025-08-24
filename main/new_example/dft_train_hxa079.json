@@ -4,9 +4,9 @@
   "wandb_project": "RWKV-LM-RLHF hxa079-21B DFT",
   "input_model_path": "/home/client/Projects/RWKV-Reka-3.1-Flash",
   "input_checkpoint_path": "",
-  "output_project_path": "myfolder/hxa079_output_tsundere5",
+  "output_project_path": "myfolder/hxa079_output_may",
   "profile_config":{
-    "profile_path": "layerprofile/44_TEST_lora_light_wkv.csv"
+    "profile_path": "layerprofile/44_TEST_lora_light_may.csv"
   },
   "quantization": {
     "att_method" : "int8",
@@ -15,21 +15,21 @@
   },
   "trainer": {
     "type": "sft",
-    "sft_method": "sft",
+    "sft_method": "dft",
     "args": {
       "epoch_count": 100,
       "epoch_steps": 100,
       "epoch_save": 1,
       "warmup_steps": 100,
-      "ctx_len" : 1024,
-      "micro_bsz": 8,
-      "gradient_accumulation_steps": 2,
+      "ctx_len" : 8192,
+      "micro_bsz": 2,
+      "gradient_accumulation_steps": 8,
       "only_train_linears": true,
       "sft_jsonmode": 1,
       "sft_jsonmode_tokenizermode": "rekaflash3",
       "random_mode": 1,
-      "dataset_path":"myfolder/dataset_tsundere",
-      "infctx_dataset_multiplier": 2
+      "dataset_path":"myfolder/dataset_may",
+      "infctx_dataset_multiplier": 10
     }
   },
   "devices":1,

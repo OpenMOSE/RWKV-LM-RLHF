@@ -26,6 +26,13 @@ from multiprocessing import shared_memory
 import pickle
 import base64
 
+def BaseModel_Forward_NoGrad(self,idx): #can call anytime.
+    with torch.no_grad():
+        return self.forward(idx,frozen=True,passthrough=True)
+
+def ActorModel_Forward_Grad(self,idx): # can call 1time per step. because of gradient checkpointing
+        return self.forward(idx,frozen=False,passthrough=False)
+
 def base64_to_tensor(b64_str):
     pickle_bytes = base64.b64decode(b64_str.encode('utf-8'))
     return pickle.loads(pickle_bytes)
@@ -105,6 +112,129 @@ def training_step_sft(self, batch, batch_idx):
                 self.trainer.realproceedtokens =float(max_len)
 
                 return L2Wrap.apply(loss, student_logits)
+            
+            if args.sft and args.sft_kl_mode == 0 and args.sft_kl_protection:
+                smoothing = args.smoothing
+
+                input_ids = batch['input_ids']
+                target = batch['target_ids']
+                attention_mask = batch['attention_mask']
+
+                max_len = int(attention_mask.sum(dim=1).max().item())
+
+                def find_next_128_multiple(n):
+                    remainder = n % 128
+                    if remainder == 0:
+                        return n
+                    return n + (128 - remainder)
+
+                if 'x070' in os.environ["RWKV_MY_TESTING"] or 'xa07' in os.environ["RWKV_MY_TESTING"]:
+                    max_len = find_next_128_multiple(max_len)
+                    input_ids = input_ids[:, :max_len]
+                    target = target[:, :max_len]
+                    attention_mask = attention_mask[:, :max_len]
+
+                if 'x060' in os.environ["RWKV_MY_TESTING"]:
+                    input_ids = input_ids[:, :max_len]
+                    target = target[:, :max_len]
+                    attention_mask = attention_mask[:, :max_len]
+
+                student_logits, moe_loss = self(input_ids, attention_mask=None)
+
+                # ========== KL Protection 追加 ==========
+                kl_loss = 0
+                if args.sft_kl_protection == 1:
+                    # Baseモデル（reference）の出力を取得
+                    reference_logits, _ = BaseModel_Forward_NoGrad(self,input_ids)
+                    
+                    if args.state and args.prefix_tuning:
+                        reference_logits = reference_logits[:, args.prefix_token_len:, :]
+                    
+                    # KL divergence計算
+                    temperature = args.sft_kl_protection_temp
+                    
+                    # student/referenceの確率分布を計算
+                    student_log_probs = F.log_softmax(
+                        student_logits / temperature, dim=-1
+                    )
+                    reference_probs = F.softmax(
+                        reference_logits.detach() / temperature, dim=-1
+                    )
+                    
+                    # KL divergence (バッチ×シーケンス×語彙サイズ → バッチ×シーケンス)
+                    kl_div = F.kl_div(
+                        student_log_probs,
+                        reference_probs,
+                        reduction='none',
+                        log_target=False
+                    ).sum(dim=-1)  # 語彙次元でsum
+                    
+                    # maskを適用（バッチ×シーケンス形状に戻す）
+                    mask_2d = attention_mask[:, :max_len]
+                    kl_div = kl_div * mask_2d
+                    
+                    # 平均KL loss計算
+                    sum_mask = mask_2d.sum().item()
+                    if sum_mask > 0:
+                        kl_loss = (kl_div.sum() / sum_mask) * (temperature ** 2)
+                    
+                    # Warmup or 逆Warmup戦略
+                    current_step = self.trainer.global_step if hasattr(self.trainer, 'global_step') else 0
+                    
+                    if args.sft_kl_protection_warmup_step > 0:
+                        # 崩壊防止のため、最初は強く、徐々に設定値へ
+                        if current_step < args.sft_kl_protection_warmup_step:
+                            # 最初は2倍の強度から始めて設定値へ
+                            kl_weight = args.sft_kl_protection_weight * 2.0 * (1.0 - 0.5 * current_step / args.sft_kl_protection_warmup_step)
+                        else:
+                            kl_weight = args.sft_kl_protection_weight
+                    else:
+                        # warmup無効時は固定値
+                        kl_weight = args.sft_kl_protection_weight
+                    
+                    # デバッグ用にtrainerに記録
+                    if hasattr(self, 'trainer'):
+                        self.trainer.kl_loss = float(kl_loss.item()) if kl_loss > 0 else 0
+                        self.trainer.kl_weight = float(kl_weight)
+                # ========== KL Protection 終了 ==========
+
+                if args.state and args.prefix_tuning:
+                    student_logits = student_logits[:, args.prefix_token_len:, :]
+
+                targets = target.contiguous().view(-1)
+                mask = attention_mask.contiguous().view(-1)
+                sum_mask = torch.sum(mask).item()
+
+                if sum_mask == 0:
+                    return torch.tensor([0.0], requires_grad=True)
+
+                label_smoothing_loss = nn.CrossEntropyLoss(label_smoothing=smoothing, reduction="none")
+
+                student_logits_shifted = student_logits.contiguous().view(-1, student_logits.size(-1))
+                smooth_loss = label_smoothing_loss(student_logits_shifted, targets)
+
+                if args.dft:
+                    # DFT: 論文実装を適用
+                    smooth_loss = smooth_loss * torch.softmax(student_logits_shifted, dim=-1).gather(1, targets.unsqueeze(-1)).squeeze(-1).detach()
+
+                if sum_mask == mask.shape[0]:
+                    loss = smooth_loss.mean()
+                else:
+                    smooth_loss = torch.sum(smooth_loss * mask) / sum_mask
+                    loss = smooth_loss
+
+                # KL lossを追加
+                if args.sft_kl_protection == 1 and kl_loss > 0:
+                    loss = loss + kl_weight * kl_loss
+
+                if os.environ["CustomModel"] == "MoE":
+                    loss = loss + args.moe_balance_alpha * moe_loss
+                    self.trainer.moe_router_loss = moe_loss
+
+                self.trainer.smooth_loss = float(smooth_loss.mean())
+                self.trainer.realproceedtokens = float(max_len)
+                
+                return loss
             
 
             if args.sft and args.sft_kl_mode == 0:

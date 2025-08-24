@@ -96,8 +96,8 @@ if __name__ == "__main__":
     parser.add_argument("--lr_advanced", default=1, type=int) #Schedule from CustomLR LayerProfile
 
     parser.add_argument("--warmup_steps", default=-1, type=int)  # try 50 if you load a model
-    parser.add_argument("--beta1", default=0.9, type=float)
-    parser.add_argument("--beta2", default=0.999, type=float)  # use 0.999 when your model is close to convergence
+    parser.add_argument("--beta1", default=0.95, type=float)
+    parser.add_argument("--beta2", default=0.995, type=float)  # use 0.999 when your model is close to convergence
     parser.add_argument("--adam_eps", default=1e-8, type=float)
     parser.add_argument("--grad_cp", default=1, type=int)  # gradient checkpt: saves VRAM, but slower
     parser.add_argument("--dropout", default=0, type=float) # try 0.01 / 0.02 / 0.05 / 0.1
@@ -176,6 +176,10 @@ if __name__ == "__main__":
 
     #Hyper Parameters SFT(masked)
     parser.add_argument("--sft", default=0, type=int)
+    parser.add_argument("--sft_kl_protection", default=1, type=int)
+    parser.add_argument("--sft_kl_protection_temp", default=1.0, type=float)
+    parser.add_argument("--sft_kl_protection_weight", default=25, type=float)
+    parser.add_argument("--sft_kl_protection_warmup_step", default=50, type=int)
     parser.add_argument("--sft_method", default="sft", type=str)
     parser.add_argument("--sft_jsonmode", default=0, type=int)
     parser.add_argument("--sft_jsonmode_overlap_tokenshift", default=1, type=int)

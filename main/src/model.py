@@ -167,12 +167,12 @@ if 'xa07' in os.environ["RWKV_MY_TESTING"]:
                 raise "currently only support hxa"
 
 
-        def forward(self, x, v_first,k_first=None,passthrough = False,x_emb=None):
+        def forward(self, x, v_first,k_first,passthrough = False):
             
             if self.layer_id in self.args.gqa_attention_hybrid_layers:
                 #GQA Mode
                 #print( self.layer_id)
-                x_attn = self.att(self.ln1(x),x_emb,passthrough)                        
+                x_attn = self.att(self.ln1(x),passthrough)                        
             else:
                 #RWKV Mode
                 x_attn, v_first, k_first = self.att(self.ln1(x), v_first,k_first, passthrough)
@@ -520,6 +520,7 @@ class RWKV(pl.LightningModule):
         self.CurrentCudaNo = NowCurrentlyGPUNo
 
         print('finish blocks')
+        #exit()
 
         if args.zerocot:
             zerocot_init(self)
@@ -542,7 +543,7 @@ class RWKV(pl.LightningModule):
         else:
             print("Model initialized on CPU")
 
-    def load_block_weights(self, block, load_dict, layer_id):
+    def load_block_weights2(self, block, load_dict, layer_id):
         block_prefix = f'blocks.{layer_id}.'
         block_state_dict = {}
         keys_to_delete = []
@@ -554,8 +555,49 @@ class RWKV(pl.LightningModule):
 
 
         block.load_state_dict(block_state_dict, strict=False)
+    def load_block_weights(self, block, load_dict, layer_id):
+        block_prefix = f'blocks.{layer_id}.'
+        block_state_dict = {}
+        keys_to_delete = []
+        
+        # 読み込み対象のキーを収集（プレフィックス除去）
+        for key, value in load_dict.items():
+            if key.startswith(block_prefix):
+                new_key = key[len(block_prefix):]
+                block_state_dict[new_key] = value
+        
+        # モデルの現在のキーを取得
+        model_keys = set(block.state_dict().keys())
+        load_keys = set(block_state_dict.keys())
+        
+        # 重みを読み込み
+        missing_keys, unexpected_keys = block.load_state_dict(block_state_dict, strict=False)
+        
+        # 結果を分析・報告
+        loaded_keys = load_keys - set(unexpected_keys)
+        ignored_keys = set(unexpected_keys)
+        missing_in_dict = set(missing_keys)
+        
+        print(f"=== Block {layer_id} 重み読み込み結果 ===")
+        print(f"正常に読み込まれた: {len(loaded_keys)} 個")
+        print(f"無視された（ブロックに存在しない）: {len(ignored_keys)} 個")
+        print(f"見つからなかった（辞書に存在しない）: {len(missing_in_dict)} 個")
+        
+        if ignored_keys:
+            print(f"無視されたキー: {list(ignored_keys)[:32]}...")
+        if missing_in_dict:
+            print(f"見つからなかったキー: {list(missing_in_dict)[:32]}...")
+        
+        return {
+            'layer_id': layer_id,
+            'loaded_keys': loaded_keys,
+            'ignored_keys': ignored_keys,
+            'missing_keys': missing_in_dict,
+            'total_available': len(load_keys),
+            'total_loaded': len(loaded_keys)
+        }
 
-    def load_element_weights(self,element,element_name, load_dict):
+    def load_element_weights2(self,element,element_name, load_dict):
         block_prefix = element_name
         block_state_dict = {}
         keys_to_delete = []
@@ -566,6 +608,49 @@ class RWKV(pl.LightningModule):
                 block_state_dict[new_key] = value
 
         element.load_state_dict(block_state_dict, strict=False)
+    def load_element_weights(self, element, element_name, load_dict):
+        block_prefix = element_name
+        block_state_dict = {}
+        keys_to_delete = []
+        
+        # 読み込み対象のキーを収集
+        for key, value in load_dict.items():
+            if key.startswith(block_prefix):
+                new_key = key
+                block_state_dict[new_key] = value
+        
+        # モデルの現在のキーを取得
+        model_keys = set(element.state_dict().keys())
+        load_keys = set(block_state_dict.keys())
+        
+        # 読み込み前の状態を保存（オプション：実際の値の変化を確認したい場合）
+        # old_state = {k: v.clone() for k, v in element.state_dict().items()}
+        
+        # 重みを読み込み
+        missing_keys, unexpected_keys = element.load_state_dict(block_state_dict, strict=False)
+        
+        # 結果を分析・報告
+        loaded_keys = load_keys - set(unexpected_keys)
+        ignored_keys = set(unexpected_keys)
+        missing_in_dict = set(missing_keys)
+        
+        print(f"=== {element_name} 重み読み込み結果 ===")
+        print(f"正常に読み込まれた: {len(loaded_keys)} 個")
+        print(f"無視された（モデルに存在しない）: {len(ignored_keys)} 個")
+        print(f"見つからなかった（辞書に存在しない）: {len(missing_in_dict)} 個")
+        
+        if ignored_keys:
+            print(f"無視されたキー: {list(ignored_keys)[:5]}...")  # 最初の5個だけ表示
+        if missing_in_dict:
+            print(f"見つからなかったキー: {list(missing_in_dict)[:5]}...")
+        
+        return {
+            'loaded_keys': loaded_keys,
+            'ignored_keys': ignored_keys,
+            'missing_keys': missing_in_dict,
+            'total_available': len(load_keys),
+            'total_loaded': len(loaded_keys)
+        }
 
     def configure_optimizers(self):
         args = self.args
@@ -820,13 +905,16 @@ class RWKV(pl.LightningModule):
                     moe_total_loss = 0
                     i = 0
                     for block in self.blocks:
-                        if frozen:
-                            x, v_first = block(x, v_first,passthrough)
+                        
 
                         if 'hxa' in os.environ["RWKV_MY_TESTING"]:
                             layer_mode = LAYER_CONFIG[f'{str(block.layer_id)}']['mode']
                             #if layer_mode == 'full' or layer_mode == 'freeze':
-                            x, v_first,k_first = torch_checkpoint(block, x, v_first,k_first,passthrough,x_emb,use_reentrant=False)
+                            if frozen:
+                                x, v_first,k_first = block(x, v_first,k_first,passthrough)
+                            
+                            else:
+                                x, v_first,k_first = torch_checkpoint(block, x, v_first,k_first,passthrough,use_reentrant=False)
                             # if block.layer_id in args.gqa_attention_hybrid_layers:
                             #     x, v_first,k_first= torch_checkpoint(block, x, v_first,k_first,passthrough,attention_mask,x_emb,use_reentrant=False)
                                 
@@ -834,6 +922,8 @@ class RWKV(pl.LightningModule):
                             #     x, v_first,k_first = torch_checkpoint(block, x, v_first,k_first,passthrough,x_emb,use_reentrant=False)
                       
                         else:
+                            if frozen:
+                                x, v_first = block(x, v_first,passthrough)
                             layer_mode = LAYER_CONFIG[f'{str(block.layer_id)}']['mode']
                             if layer_mode == 'full' or layer_mode == 'freeze':
                                 #x, v_first = deepspeed.checkpointing.checkpoint(block, x, v_first)
