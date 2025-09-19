@@ -198,13 +198,16 @@ if 'xa07' in ModelGeneration:
 
                 load_backstepping_longhead(HEAD_SIZE,BATCH_SIZE*HEAD)
 
-                def RUN_CUDA_RWKV7g(r,w,k,v,a,b, HEAD_SIZE, mask=None,  dot_prec = 'fp32'):
+                def RUN_CUDA_RWKV7g(r,w,k,v,a,b, HEAD_SIZE, init_state=None,  dot_prec = 'fp32'):
                     #mask and dot_prec is dummy
                     B,T,HC = w.shape
                     C = HEAD_SIZE
                     H = HC//C
                     r,w,k,v,a,b = [i.view(B,T,H,C) for i in [r,w,k,v,a,b]]
-                    s0 = th.zeros(B,H,C,C, dtype=th.bfloat16,device=w.device)
+                    if init_state is None:
+                        s0 = th.zeros(B,H,C,C, dtype=th.bfloat16,device=w.device)
+                    else:
+                        s0 = init_state
                     return attn_backstepping_longhead(r,w,k,v,a,b,s0)[0].view(B,T,HC)
                 def RUN_CUDA_RWKV7g_chunk(r,w,k,v,a,b, HEAD_SIZE, state=None,  dot_prec = 'fp32'):
                     #mask and dot_prec is dummy
@@ -724,6 +727,8 @@ if 'xa07' in ModelGeneration:
                     rkv_bias = False
 
                 #
+                if self.args.state == 1 and self.args.direct_state_tuning:
+                        self.time_state = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
 
 
                 self.receptance = make_linear_att(C, self.head_size*self.attention_n_head, bias=rkv_bias,n_layer=self.layer_id,pname='att.receptance')
@@ -855,7 +860,11 @@ if 'xa07' in ModelGeneration:
 
             # x = RUN_CUDA_RWKV7g(r, w, k, v, -kk, kk*a,self.head_size,attention_mask)
             # x = x.view(B,T,-1)
-            x = RUN_CUDA_RWKV7g(r, w, k, v, -kk, kk*a,HEAD_SIZE=self.head_size).view(B, T, C)
+            if self.args.state == 1 and self.args.direct_state_tuning and passthrough == False:
+                x = RUN_CUDA_RWKV7g(r, w, k, v, -kk, kk*a,HEAD_SIZE=self.head_size,init_state=self.time_state).view(B, T, C)
+            else:
+
+                x = RUN_CUDA_RWKV7g(r, w, k, v, -kk, kk*a,HEAD_SIZE=self.head_size).view(B, T, C)
 
             x = x * (self.head_size ** -0.5) 
 
@@ -979,6 +988,9 @@ if 'xa07' in ModelGeneration:
             if self.args.rk_norm:
                 self.q_norm = T5RMSNorm(self.head_size, eps=self.args.rms_norm_eps) 
                 self.k_norm = T5RMSNorm(self.head_size, eps=self.args.rms_norm_eps) 
+
+            if self.args.state == 1 and self.args.prefix_tuning:
+                        self.time_kv = nn.Parameter(torch.zeros(2, self.args.prefix_token_len,self.kv_n_head * self.head_size))
         
 
         def forward(
@@ -991,15 +1003,24 @@ if 'xa07' in ModelGeneration:
             hidden_shape = (*input_shape, -1, self.head_size)
             B, T, C = hidden_states.size()
 
-            # if self.args.rk_norm:
-            #     query_states = self.q_norm(self.q_proj(hidden_states,passthrough=passthrough).view(hidden_shape)).transpose(1, 2)
-            #     key_states = self.k_norm(self.k_proj(hidden_states,passthrough=passthrough).view(hidden_shape)).transpose(1, 2)
-            #     value_states = self.v_proj(hidden_states,passthrough=passthrough).view(hidden_shape).transpose(1, 2)
-            # else:
-            #     #print('ugytu')
-            query_states = self.q_proj(hidden_states,passthrough=passthrough).view(B,T,self.n_head,-1).transpose(1, 2)
-            key_states = self.k_proj(hidden_states,passthrough=passthrough).view(B,T,self.kv_n_head,-1).transpose(1, 2)
-            value_states = self.v_proj(hidden_states,passthrough=passthrough).view(B,T,self.kv_n_head,-1).transpose(1, 2)
+            if self.args.rk_norm:
+                query_states = self.q_norm(self.q_proj(hidden_states,passthrough=passthrough).view(hidden_shape)).transpose(1, 2)
+                key_states = self.k_norm(self.k_proj(hidden_states,passthrough=passthrough).view(hidden_shape)).transpose(1, 2)
+                value_states = self.v_proj(hidden_states,passthrough=passthrough).view(hidden_shape).transpose(1, 2)
+            else:
+                #print('ugytu')
+                query_states = self.q_proj(hidden_states,passthrough=passthrough).view(B,T,self.n_head,-1).transpose(1, 2)
+                key_states = self.k_proj(hidden_states,passthrough=passthrough).view(B,T,self.kv_n_head,-1).transpose(1, 2)
+                value_states = self.v_proj(hidden_states,passthrough=passthrough).view(B,T,self.kv_n_head,-1).transpose(1, 2)
+
+            if self.args.state == 1 and self.args.prefix_tuning and passthrough == False:
+                prefix_k = self.time_kv[0].unsqueeze(0).expand(B, -1, -1)  # (B, P, dim)
+                prefix_v = self.time_kv[1].unsqueeze(0).expand(B, -1, -1)
+                prefix_k = prefix_k.view(B, -1, self.kv_n_head, self.head_size).transpose(1, 2)  # (B, kv_head, P, head_size)
+                prefix_v = prefix_v.view(B, -1, self.kv_n_head, self.head_size).transpose(1, 2)
+                key_states = torch.cat([prefix_k, key_states], dim=2)       # prefixを先頭に追加
+                value_states = torch.cat([prefix_v, value_states], dim=2)
+
 
             #if hasattr(self, "num_key_value_groups"):
             key_states = repeat_kv_original(key_states, self.num_key_value_groups)

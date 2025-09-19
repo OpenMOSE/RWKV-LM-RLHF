@@ -306,14 +306,14 @@ class train_callback(pl.Callback):
 
                 param_dict = {n: p for n, p in pl_module.named_parameters()}
 
-                HaveLatestState = False
-                if self.args.state and self.args.prefix_tuning:
-                    pl_module.eval()
-                    with torch.no_grad():
-                        LatestState = pl_module(idx=None).to(dtype=torch.bfloat16)
-                    pl_module.train()
-                    HaveLatestState = True
-                    print(f'Created Prefix State {LatestState.shape} {LatestState.dtype}')
+                # HaveLatestState = False
+                # if self.args.state and self.args.prefix_tuning:
+                #     pl_module.eval()
+                #     with torch.no_grad():
+                #         LatestState = pl_module(idx=None).to(dtype=torch.bfloat16)
+                #     pl_module.train()
+                #     HaveLatestState = True
+                #     print(f'Created Prefix State {LatestState.shape} {LatestState.dtype}')
 
                 for name, state in to_save_dict.items():
                     #print(f'{name} {param_dict[name].requires_grad}')
@@ -328,9 +328,9 @@ class train_callback(pl.Callback):
                                 if LAYER_CONFIG[f'{str(i)}']['mode']=='full' and text in name:
                                     lora_dict[name] = state
                                     break
-                            if ('.time_state' in name or '.time_offset' in name ) and args.state_output_mode == 0:
+                            if ('.time_state' in name or '.time_kv' in name ) and args.state_output_mode == 0:
                                     lora_dict[name] = state
-                            elif ('.time_state' in name or '.time_offset' in name ):
+                            elif ('.time_state' in name or '.time_kv' in name ):
                                     lora_dict[name] = state
                                     state_dict[name] = state
                             elif ('.bone' in name or '.lora_' in name or '.time' in name or 'ln' in name or 'router' in name):
@@ -349,14 +349,14 @@ class train_callback(pl.Callback):
                         #print(f'{name} not found')
                         pass
 
-                if HaveLatestState:
-                    for i in range(self.args.n_layer):
-                        key=f'blocks.{i}.att.time_state'
-                        if args.state_output_mode == 0:
-                                lora_dict[key] = LatestState[i]
-                        else:
-                                lora_dict[key] = LatestState[i]
-                                state_dict[key] = LatestState[i]
+                # if HaveLatestState:
+                #     for i in range(self.args.n_layer):
+                #         key=f'blocks.{i}.att.time_state'
+                #         if args.state_output_mode == 0:
+                #                 lora_dict[key] = LatestState[i]
+                #         else:
+                #                 lora_dict[key] = LatestState[i]
+                #                 state_dict[key] = LatestState[i]
 
                 #print(state_dict.keys())
 

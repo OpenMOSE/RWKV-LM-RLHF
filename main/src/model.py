@@ -99,18 +99,7 @@ if 'x070' in os.environ["RWKV_MY_TESTING"]:
 
                 x = x + ffn_out
                 return x, v_first ,BlockState(att_state, ffn_state)
-        elif os.environ["CustomModel"] == 'MoE':
-            def forward(self, x, v_first,input_ids):
-                if self.layer_id == 0:
-                    x = self.ln0(x)
-
-                x_attn, v_first = self.att(self.ln1(x), v_first)
-                x = x + x_attn
-
-                ffn_out ,moe_router_loss = self.ffn(self.ln2(x),input_ids)
-
-                x  = x + ffn_out
-                return x, v_first,moe_router_loss
+   
         else:
             def forward(self, x, v_first,passthrough = False,x_emb=None):
                 if self.layer_id == 0:
@@ -706,6 +695,17 @@ class RWKV(pl.LightningModule):
                                                 })
                             Found = True
                         break
+                    elif blockname in n and ('time_kv' in n) and args.state:
+                        if p.requires_grad:
+                            print(f"KV Prefix Tuning {n} Set lr_init {float(LAYER_CONFIG[f'{str(i)}']['lr_init'])} lr_final {float(LAYER_CONFIG[f'{str(i)}']['lr_final'])}")
+                        
+                            optim_groups.append({"params":[param_dict[n]], "weight_decay": 0.0,
+                                                'lr_init':float(LAYER_CONFIG[f'{str(i)}']['lr_init']), 
+                                                'lr_final':float(LAYER_CONFIG[f'{str(i)}']['lr_final']),  
+                                                'pname':n
+                                                })
+                            Found = True
+                        break
                     elif blockname in n and LAYER_CONFIG[f'{str(i)}']['mode'] != 'freeze':
                         if any(word in n for word in LAYER_CONFIG[f'{str(i)}']['RejectParts']) and LAYER_CONFIG[f'{str(i)}']['RejectParts'][0] != '':
                             print(f'Rejected {n}')
@@ -878,22 +878,22 @@ class RWKV(pl.LightningModule):
         def forward(self, idx,passthrough=False,attention_mask=None,frozen=False,clitic=False):
             args = self.args
             StatePack = torch.zeros(self.args.n_layer,self.args.n_embd // self.args.head_size_a, self.args.head_size_a,self.args.head_size_a )
-            if idx is None:
-                B = 1
-                T = self.args.prefix_token_len
-                x = self.prefix_token.unsqueeze(0).expand(B, -1, -1)
-                StatePack = torch.zeros(self.args.n_layer,self.args.n_embd // self.args.head_size_a, self.args.head_size_a,self.args.head_size_a )
+            # if idx is None:
+            #     B = 1
+            #     T = self.args.prefix_token_len
+            #     x = self.prefix_token.unsqueeze(0).expand(B, -1, -1)
+            #     StatePack = torch.zeros(self.args.n_layer,self.args.n_embd // self.args.head_size_a, self.args.head_size_a,self.args.head_size_a )
+        # else:
+            B, T = idx.size()
+            assert T <= args.ctx_len, "Cannot forward, model ctx_len is exhausted."
+            #x = self.emb(idx)
+            # if self.args.state and self.args.prefix_tuning:
+            #     Prefix_expanded = self.prefix_token.unsqueeze(0).repeat(B, 1, 1)
+            #     x = torch.cat([Prefix_expanded, x], dim=1)
+            if LAYER_CONFIG[f'emb']['mode'] == 'freeze':
+                x = self.cpu_checkpoint_embed(self.emb, idx)
             else:
-                B, T = idx.size()
-                assert T <= args.ctx_len, "Cannot forward, model ctx_len is exhausted."
-                #x = self.emb(idx)
-                # if self.args.state and self.args.prefix_tuning:
-                #     Prefix_expanded = self.prefix_token.unsqueeze(0).repeat(B, 1, 1)
-                #     x = torch.cat([Prefix_expanded, x], dim=1)
-                if LAYER_CONFIG[f'emb']['mode'] == 'freeze':
-                    x = self.cpu_checkpoint_embed(self.emb, idx)
-                else:
-                    x = self.emb(idx)
+                x = self.emb(idx)
 
             x_emb = x
 
@@ -924,29 +924,30 @@ class RWKV(pl.LightningModule):
                         else:
                             if frozen:
                                 x, v_first = block(x, v_first,passthrough)
-                            layer_mode = LAYER_CONFIG[f'{str(block.layer_id)}']['mode']
-                            if layer_mode == 'full' or layer_mode == 'freeze':
-                                #x, v_first = deepspeed.checkpointing.checkpoint(block, x, v_first)
-                                if os.environ["CustomModel"] == 'MoE':
-                                    x, v_first,moe_router_loss = torch_checkpoint(block, x, v_first, idx, use_reentrant=False)
-                                    moe_total_loss += (moe_router_loss+0.001) / float(args.n_layer)
-                                else:
-                                    if self.args.state:
-                                        x, v_first,out_state = torch_checkpoint(block, x, v_first,passthrough,x_emb,use_reentrant=False)
-                                        StatePack[i] = out_state[0]
-                                    else:
-                                        x, v_first = torch_checkpoint(block, x, v_first,passthrough,x_emb,use_reentrant=False)
                             else:
-                                if os.environ["CustomModel"] == 'MoE':
-                                    x, v_first ,moe_router_loss = torch_checkpoint(block, x, v_first,idx,use_reentrant=False)
-                                    moe_total_loss += (moe_router_loss+0.001) / float(args.n_layer)
-                                else:
+                                layer_mode = LAYER_CONFIG[f'{str(block.layer_id)}']['mode']
+                                if layer_mode == 'full' or layer_mode == 'freeze':
+                                    #x, v_first = deepspeed.checkpointing.checkpoint(block, x, v_first)
+                                    # if os.environ["CustomModel"] == 'MoE':
+                                    #     x, v_first,moe_router_loss = torch_checkpoint(block, x, v_first, idx, use_reentrant=False)
+                                    #     moe_total_loss += (moe_router_loss+0.001) / float(args.n_layer)
+                                    # else:
                                     if self.args.state:
                                         x, v_first,out_state = torch_checkpoint(block, x, v_first,passthrough,x_emb,use_reentrant=False)
                                         StatePack[i] = out_state[0]
                                     else:
                                         x, v_first = torch_checkpoint(block, x, v_first,passthrough,x_emb,use_reentrant=False)
-                                #x, v_first = deepspeed.checkpointing.checkpoint(block, x, v_first )
+                                else:
+                                    # if os.environ["CustomModel"] == 'MoE':
+                                    #     x, v_first ,moe_router_loss = torch_checkpoint(block, x, v_first,idx,use_reentrant=False)
+                                    #     moe_total_loss += (moe_router_loss+0.001) / float(args.n_layer)
+                                    # else:
+                                    if self.args.state:
+                                        x, v_first,out_state = torch_checkpoint(block, x, v_first,passthrough,x_emb,use_reentrant=False)
+                                        StatePack[i] = out_state[0]
+                                    else:
+                                        x, v_first = torch_checkpoint(block, x, v_first,passthrough,x_emb,use_reentrant=False)
+                                    #x, v_first = deepspeed.checkpointing.checkpoint(block, x, v_first )
                 
                         i = i + 1
             else:

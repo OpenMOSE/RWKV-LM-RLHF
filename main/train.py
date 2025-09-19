@@ -49,9 +49,12 @@ if __name__ == "__main__":
 
     parser.add_argument("--state", default=0, type=int) #for state-tuning x060
 
-    parser.add_argument("--prefix_tuning", default=1, type=int) #for prefix soft-token tuning
+    parser.add_argument("--prefix_tuning", default=1, type=int) #for prefix soft-token tuning only works hxa079 hybrid
     parser.add_argument("--prefix_token_len", default=128, type=int) #for prefix soft-token tuning
     parser.add_argument("--direct_state_tuning", default=1, type=int) # direct wkv state-tuning
+
+
+
     parser.add_argument("--post_wkv_tuning", default=0, type=int) #for post wkv output offset tuning
 
     
@@ -79,7 +82,7 @@ if __name__ == "__main__":
     parser.add_argument("--epoch_steps", default=1000, type=int)  # a mini "epoch" has [epoch_steps] steps
     parser.add_argument("--epoch_count", default=500, type=int)  # train for this many "epochs". will continue afterwards with lr = lr_final
     parser.add_argument("--epoch_begin", default=0, type=int)  # if you load a model trained for x "epochs", set epoch_begin = x
-    parser.add_argument("--epoch_save", default=5, type=int)  # save the model every [epoch_save] "epochs"
+    parser.add_argument("--epoch_save", default=1, type=int)  # save the model every [epoch_save] "epochs"
     parser.add_argument("--micro_bsz", default=1, type=int)  # micro batch size (batch size per GPU) maybe not working on lisa
     parser.add_argument("--n_layer", default=6, type=int)
     parser.add_argument("--n_embd", default=512, type=int)
@@ -116,7 +119,7 @@ if __name__ == "__main__":
     parser.add_argument("--gqa_attention_hybrid_layers", nargs='+', type=int, default=[-1])  #Set GQA SelfAttention Layer from head
 
     parser.add_argument("--rk_norm", default=0, type=int) 
-    parser.add_argument("--rkv_bias", default=1, type=int) 
+    parser.add_argument("--rkv_bias", default=0, type=int) 
 
     parser.add_argument("--rope_theta", default=1000000.0, type=float) 
 
@@ -178,7 +181,7 @@ if __name__ == "__main__":
     parser.add_argument("--sft", default=0, type=int)
     parser.add_argument("--sft_kl_protection", default=1, type=int)
     parser.add_argument("--sft_kl_protection_temp", default=1.0, type=float)
-    parser.add_argument("--sft_kl_protection_weight", default=25, type=float)
+    parser.add_argument("--sft_kl_protection_weight", default=2, type=float)
     parser.add_argument("--sft_kl_protection_warmup_step", default=50, type=int)
     parser.add_argument("--sft_method", default="sft", type=str)
     parser.add_argument("--sft_jsonmode", default=0, type=int)
@@ -238,6 +241,18 @@ if __name__ == "__main__":
         # args.load_model = autoconfig.get("input_model_path", args.load_model)
         # args.load_model = autoconfig.get("input_model_path", args.load_model)
 
+
+        # parser.add_argument("--state", default=0, type=int) #for state-tuning x060
+
+        # parser.add_argument("--prefix_tuning", default=1, type=int) #for prefix soft-token tuning only works hxa079 hybrid
+        # parser.add_argument("--prefix_token_len", default=128, type=int) #for prefix soft-token tuning
+        # parser.add_argument("--direct_state_tuning", default=1, type=int) # direct wkv state-tuning
+        args.state = autoconfig.get("state", args.state)
+        args.prefix_tuning = autoconfig.get("prefix_tuning", args.prefix_tuning)
+        args.prefix_token_len = autoconfig.get("prefix_token_len", args.prefix_token_len)
+        args.direct_state_tuning = autoconfig.get("direct_state_tuning", args.direct_state_tuning)
+        
+
         args = GetAutoModelConfig(args,args.load_model)
 
 
@@ -247,6 +262,16 @@ if __name__ == "__main__":
             if autoconfig["trainer"].get("sft_method",None) is not None:
                 if autoconfig["trainer"]["sft_method"] == "dft":
                     args.dft = 1
+
+            # parser.add_argument("--sft_kl_protection", default=1, type=int)
+            # parser.add_argument("--sft_kl_protection_temp", default=1.0, type=float)
+            # parser.add_argument("--sft_kl_protection_weight", default=2, type=float)
+            # parser.add_argument("--sft_kl_protection_warmup_step", default=50, type=int)
+            args.sft_kl_protection = trainsetting.get("sft_kl_protection", args.sft_kl_protection)
+            args.sft_kl_protection_temp = trainsetting.get("sft_kl_protection_temp", args.sft_kl_protection_temp)
+            args.sft_kl_protection_weight = trainsetting.get("sft_kl_protection_weight", args.sft_kl_protection_weight)
+            args.sft_kl_protection_warmup_step = trainsetting.get("sft_kl_protection_warmup_step", args.sft_kl_protection_warmup_step)
+
             args.sft_jsonmode = trainsetting.get("sft_jsonmode", args.sft_jsonmode)
             args.sft_jsonmode_overlap_tokenshift = trainsetting.get("sft_jsonmode_overlap_tokenshift", args.sft_jsonmode_overlap_tokenshift)
             args.sft_jsonmode_tokenizermode = trainsetting.get("sft_jsonmode_tokenizermode", args.sft_jsonmode_tokenizermode)
@@ -746,7 +771,7 @@ if __name__ == "__main__":
                 if LAYER_CONFIG[f'{str(i)}']['mode'] == 'full' and text in pname:
                     print(f'  FullParameter additionally training parameter {pname}')
                     param.requires_grad = True
-                elif LAYER_CONFIG[f'{str(i)}']['mode'] == 'freeze' and text in pname and ('time_state' in pname or 'time_offset' in pname) :
+                elif LAYER_CONFIG[f'{str(i)}']['mode'] == 'freeze' and text in pname and ('time_state' in pname or 'time_offset' in pname or 'time_kv' in pname) :
                     print(f'  State-tuning additionally training parameter {pname}')
                     param.requires_grad = True
                 elif LAYER_CONFIG[f'{str(i)}']['mode'] == 'freeze' and text in pname:

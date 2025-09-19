@@ -147,8 +147,8 @@ def training_step_sft(self, batch, batch_idx):
                     # Baseモデル（reference）の出力を取得
                     reference_logits, _ = BaseModel_Forward_NoGrad(self,input_ids)
                     
-                    if args.state and args.prefix_tuning:
-                        reference_logits = reference_logits[:, args.prefix_token_len:, :]
+                    # if args.state and args.prefix_tuning:
+                    #     reference_logits = reference_logits[:, args.prefix_token_len:, :]
                     
                     # KL divergence計算
                     temperature = args.sft_kl_protection_temp
@@ -198,8 +198,8 @@ def training_step_sft(self, batch, batch_idx):
                         self.trainer.kl_weight = float(kl_weight)
                 # ========== KL Protection 終了 ==========
 
-                if args.state and args.prefix_tuning:
-                    student_logits = student_logits[:, args.prefix_token_len:, :]
+                # if args.state and args.prefix_tuning:
+                #     student_logits = student_logits[:, args.prefix_token_len:, :]
 
                 targets = target.contiguous().view(-1)
                 mask = attention_mask.contiguous().view(-1)
@@ -267,8 +267,8 @@ def training_step_sft(self, batch, batch_idx):
 
                 student_logits,moe_loss = self(input_ids,attention_mask=None)
 
-                if args.state and args.prefix_tuning:
-                    student_logits = student_logits[:, args.prefix_token_len:, :]
+                # if args.state and args.prefix_tuning:
+                #     student_logits = student_logits[:, args.prefix_token_len:, :]
 
 
 

@@ -1,0 +1,43 @@
+{
+  "architectures": "hxa079",
+  "automodelconfig": true,
+  "wandb_project": "RWKV-LM-RLHF hxa079-21B DFT",
+  "input_model_path": "/home/client/Projects/RWKV-Reka-3.1-Flash",
+  "input_checkpoint_path": "",
+  "output_project_path": "myfolder/hxa079_output_may",
+  "profile_config":{
+    "profile_path": "layerprofile/44_TEST_Prefix.csv"
+  },
+  "quantization": {
+    "att_method" : "int8",
+    "ffn_method" : "nf4",
+    "head_method" : "int8"
+  },
+  "state" : 1,
+  "prefix_tuning" : 1,
+  "prefix_token_len" : 128,
+  "direct_state_tuning" : 0,
+  "trainer": {
+    "type": "sft",
+    "sft_method": "dft",
+    "args": {
+      "epoch_count": 100,
+      "epoch_steps": 100,
+      "epoch_save": 1,
+      "warmup_steps": 100,
+      "ctx_len" : 1024,
+      "micro_bsz": 2,
+      "gradient_accumulation_steps": 8,
+      "only_train_linears": true,
+      "sft_jsonmode": 1,
+      "sft_jsonmode_tokenizermode": "rekaflash3",
+      "random_mode": 1,
+      "dataset_path":"myfolder/dataset_may",
+      "infctx_dataset_multiplier": 10
+    }
+  },
+  "devices":1,
+  "internal_precision": "bf16",
+  "strategy":"deepspeed_stage_2",
+  "gpu_arch":"backstepping_longhead"
+}

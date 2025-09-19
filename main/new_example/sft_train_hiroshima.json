@@ -1,0 +1,37 @@
+{
+  "architectures": "x070",
+  "automodelconfig": true,
+  "wandb_project": "RWKV-LM-RLHF",
+  "input_model_path": "/media/client/backup/models/rwkv7-g1-2.9b-20250519-ctx4096.pth",
+  "input_checkpoint_path": "/home/client/Projects/RWKV-LM-RLHF/main/myfolder/output/hiroshima/g1-2b9-hiroshima-lora.pth",
+  "output_project_path": "myfolder/output/hiroshima2",
+  "profile_config":{
+    "profile_path": "layerprofile/32_TEST_lora.csv"
+  },
+  "quantization": {
+    "att_method" : "int8",
+    "ffn_method" : "nf4",
+    "head_method" : "int8"
+  },
+  "trainer": {
+    "type": "sft",
+    "args": {
+      "epoch_count": 100,
+      "epoch_steps": 100,
+      "warmup_steps": 100,
+      "ctx_len" : 4096,
+      "micro_bsz": 3,
+      "gradient_accumulation_steps": 2,
+      "only_train_linears": true,
+      "sft_jsonmode": 1,
+      "sft_jsonmode_tokenizermode": "world",
+      "random_mode": 1,
+      "dataset_path":"/home/client/Projects/RWKV-LM-RLHF_/main/myfolder/jsonl_dataset_hiroshima",
+      "infctx_dataset_multiplier": 32
+    }
+  },
+  "devices":1,
+  "internal_precision": "bf16",
+  "strategy":"deepspeed_stage_2_offload",
+  "gpu_arch":"cuda"
+}
